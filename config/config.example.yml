@@ -1,0 +1,53 @@
+---
+environment: "debug"
+db:
+  driver: "mysql"
+  connection: "user:mypass@(127.0.0.1:3306)/crynux_as?parseTime=true"
+  log:
+    level: "info"
+    output: "data/logs/db.log"
+    max_file_size: 100
+    max_days: 30
+    max_file_num: 5
+log:
+  level: "debug"
+  output: "data/logs/crynux_as.log"
+  max_file_size: 100
+  max_days: 30
+  max_file_num: 5
+http:
+  host: "0.0.0.0"
+  port: "8090"
+  max_body_bytes: 33554432
+  jwt:
+    secret_key_file: "config/secrets/jwt_secret_key.txt"
+    expires_in: 3600
+blockchains:
+  ethereum:
+    chain_id: 1
+    rpc_endpoint: ""
+    rps: 20
+    start_block_num: 0
+    log_block_range: 1000
+    receiving_address: "0x0000000000000000000000000000000000000001"
+    tokens:
+      usdt:
+        address: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+        decimals: 6
+      usdc:
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        decimals: 6
+  base:
+    chain_id: 8453
+    rpc_endpoint: ""
+    rps: 20
+    start_block_num: 0
+    log_block_range: 1000
+    receiving_address: "0x0000000000000000000000000000000000000001"
+    tokens:
+      usdc:
+        address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+        decimals: 6
+bridge:
+  base_url: ""
+  api_key_file: "config/secrets/bridge_api_key.txt"

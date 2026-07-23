@@ -1,0 +1,7 @@
+.idea/
+.cursor/
+config/config.yml
+config/secrets/
+data/
+*.exe
+*.log
