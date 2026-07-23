@@ -60,7 +60,7 @@ Configuration loading MUST fail with an error when a required item is missing. E
 |-------|---------|
 | `users` | Wallet address as the unique user identity |
 | `credit_accounts` | One row per user; the current Credits balance |
-| `credit_events` | Append-only Credits ledger; every balance change is one event |
+| `credit_events` | Append-only Credits ledger; every balance change is one event referencing its source record by `ref_id`; unique by type + `ref_id` |
 | `deposits` | Detected ERC20 transfers; unique by network + tx hash + log index |
 | `blockchain_cursors` | Per-network scan cursor; unique by network |
 | `projects` | User projects; unique `endpoint_token` forms the private base URL |
@@ -73,7 +73,7 @@ Configuration loading MUST fail with an error when a required item is missing. E
 1. The user transfers a supported ERC20 token from the login wallet to the receiving address of a configured network.
 2. The network's blockchain processor reads the scan cursor, fetches `Transfer` logs of all configured token contracts filtered by `to == receiving_address` in ranges of at most `log_block_range` blocks, with each RPC request passing the network RPS limiter.
 3. Each log becomes a `deposits` row identified by network + tx hash + log index. The unique index makes re-processing idempotent.
-4. The deposit is attributed to the user whose address equals the `from` address of the transfer. The token amount is converted to Credits, a `credit_events` row of type deposit is created, and the `credit_accounts` balance is updated.
+4. The deposit is attributed to the user whose address equals the `from` address of the transfer. The token amount is converted to Credits, a `credit_events` row of type deposit referencing the deposit ID is created, and the `credit_accounts` balance is updated.
 5. The cursor advances only after all logs in the range are durably recorded.
 
 ## LLM Call Charging Flow
@@ -81,12 +81,12 @@ Configuration loading MUST fail with an error when a required item is missing. E
 1. The client sends an OpenAI-compatible request to `/api/<endpoint_token>/v1/...` with a project API key in the `Authorization` header.
 2. The API server locates the project by `endpoint_token`, validates the API key hash against the project's active keys, and checks the account Credits balance. Requests with insufficient balance are rejected with HTTP 402.
 3. The request is forwarded to the Crynux Bridge (`/v1/llm/chat/completions` or `/v1/llm/completions`) with the platform Bridge API key. For streaming requests, `stream_options.include_usage: true` is injected so the final stream chunk carries the `usage` payload; this chunk is not exposed to clients that did not request it.
-4. The charge is calculated from the response `usage` token counts and the configured per-model unit prices. A `credit_events` row of type LLM charge decreases the account balance, and one `llm_call_records` row records the call.
+4. The charge is calculated from the response `usage` token counts and the configured per-model unit prices. One `llm_call_records` row records the call, and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance.
 5. The stats task periodically aggregates call records into `project_usage_stats`.
 
 ## Credits Ledger Consistency Rules
 
 * Every Credits balance change MUST be recorded as a `credit_events` row; the `credit_accounts` balance MUST equal the sum of its processed events.
 * Ledger event creation and the corresponding balance update MUST be committed atomically in one database transaction.
-* Event identity (`reason`) is unique; retrying an operation MUST NOT produce a duplicate event.
+* Every ledger event references its source record by `ref_id`: the `deposits` row ID for deposit events, and the `llm_call_records` row ID for LLM charge events. The event type + `ref_id` pair is unique; retrying an operation MUST NOT produce a duplicate event.
 * Deposit crediting and LLM charging may be delayed, but processed data MUST remain correct and consistent across unexpected exceptions and shutdown.

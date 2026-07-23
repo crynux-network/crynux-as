@@ -35,9 +35,9 @@ type creditEventForM20260723 struct {
 	CreatedAt time.Time `gorm:"not null"`
 	UserID    uint      `gorm:"not null;index"`
 	Amount    string    `gorm:"type:string;size:255;not null"`
-	Type      int8      `gorm:"not null;index"`
+	Type      int8      `gorm:"not null;uniqueIndex:idx_credit_events_type_ref"`
+	RefID     uint      `gorm:"not null;uniqueIndex:idx_credit_events_type_ref"`
 	Status    int8      `gorm:"not null;default:0;index"`
-	Reason    string    `gorm:"type:string;size:255;not null;uniqueIndex"`
 }
 
 func (creditEventForM20260723) TableName() string {
@@ -57,7 +57,6 @@ type depositForM20260723 struct {
 	Amount        string    `gorm:"type:string;size:255;not null"`
 	Credits       string    `gorm:"type:string;size:255;not null"`
 	Status        int8      `gorm:"not null;default:0;index"`
-	CreditEventID uint      `gorm:"not null;default:0;index"`
 }
 
 func (depositForM20260723) TableName() string {
@@ -117,7 +116,6 @@ type llmCallRecordForM20260723 struct {
 	Status           int8      `gorm:"not null;default:0;index"`
 	Credits          string    `gorm:"type:string;size:255;not null"`
 	DurationMs       uint64    `gorm:"not null;default:0"`
-	CreditEventID    uint      `gorm:"not null;default:0;index"`
 }
 
 func (llmCallRecordForM20260723) TableName() string {

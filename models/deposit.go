@@ -23,5 +23,4 @@ type Deposit struct {
 	Amount        BigInt        `json:"amount" gorm:"type:string;size:255;not null"`
 	Credits       BigInt        `json:"credits" gorm:"type:string;size:255;not null"`
 	Status        DepositStatus `json:"status" gorm:"not null;default:0;index"`
-	CreditEventID uint          `json:"credit_event_id" gorm:"not null;default:0;index"`
 }

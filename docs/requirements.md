@@ -41,9 +41,9 @@ For each detected transfer log, the service MUST:
 
 1. Record a deposit row identified by network, transaction hash, and log index. This identity MUST be unique; re-scanning the same log MUST NOT create a second deposit or credit the account twice.
 2. Attribute the deposit to the user account whose wallet address equals the `from` address of the transfer. If no account exists for the `from` address, the deposit MUST be recorded and MUST NOT be credited to any account.
-3. Convert the token amount to Credits using the configured conversion for that token, create a Credits ledger event of type deposit, and update the account balance.
+3. Convert the token amount to Credits using the configured conversion for that token, create a Credits ledger event of type deposit referencing the deposit row ID, and update the account balance.
 
-Deposits and Credits balance changes MUST go through the Credits ledger: every balance change MUST be recorded as a `credit_events` row, and the `credit_accounts` balance MUST equal the sum of its processed events.
+Deposits and Credits balance changes MUST go through the Credits ledger: every balance change MUST be recorded as a `credit_events` row referencing its source record ID (`ref_id`), and the `credit_accounts` balance MUST equal the sum of its processed events. The event type + `ref_id` pair MUST be unique so one source record produces at most one ledger event.
 
 ## Projects and Private LLM API Endpoints
 
@@ -96,7 +96,7 @@ For streaming requests, the Bridge returns the result as server-sent events emit
 Each LLM call is charged from the Credits balance of the owning account:
 
 1. The charge amount is calculated from the `usage` field of the Bridge response (`prompt_tokens`, `completion_tokens`, `total_tokens`) and the configured per-model unit prices.
-2. Each successful call MUST create a Credits ledger event of type LLM charge and decrease the account balance.
+2. Each successful call MUST create a Credits ledger event of type LLM charge referencing the LLM call record ID, and decrease the account balance.
 3. If the account balance is insufficient for the request, the service MUST reject the request with HTTP 402 before forwarding it to the Bridge.
 
 ### Call Records
