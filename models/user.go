@@ -16,32 +16,44 @@ type User struct {
 	Address   string    `json:"address" gorm:"type:string;size:64;not null;uniqueIndex"`
 }
 
-// EnsureUserWithCreditAccount returns the user for address, creating the user and a
-// zero-balance credit account in one transaction when the user does not exist.
-func EnsureUserWithCreditAccount(ctx context.Context, db *gorm.DB, address string) (*User, error) {
+// FindUserByAddress returns the user for the given wallet address.
+func FindUserByAddress(ctx context.Context, db *gorm.DB, address string) (*User, error) {
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	var user User
-	err := db.WithContext(dbCtx).Where("address = ?", address).First(&user).Error
+	if err := db.WithContext(dbCtx).Where("address = ?", address).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// EnsureUserWithCreditAccount returns the user for address, creating the user and a
+// zero-balance credit account in one transaction when the user does not exist.
+func EnsureUserWithCreditAccount(ctx context.Context, db *gorm.DB, address string) (*User, error) {
+	user, err := FindUserByAddress(ctx, db, address)
 	if err == nil {
-		return &user, nil
+		return user, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var created User
 	err = db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
-		user = User{Address: address}
-		if err := tx.Create(&user).Error; err != nil {
+		created = User{Address: address}
+		if err := tx.Create(&created).Error; err != nil {
 			if errors.Is(err, gorm.ErrDuplicatedKey) {
-				return tx.Where("address = ?", address).First(&user).Error
+				return tx.Where("address = ?", address).First(&created).Error
 			}
 			return err
 		}
 
 		account := CreditAccount{
-			UserID:  user.ID,
+			UserID:  created.ID,
 			Balance: BigInt{Int: *big.NewInt(0)},
 		}
 		return tx.Create(&account).Error
@@ -50,5 +62,5 @@ func EnsureUserWithCreditAccount(ctx context.Context, db *gorm.DB, address strin
 		return nil, err
 	}
 
-	return &user, nil
+	return &created, nil
 }

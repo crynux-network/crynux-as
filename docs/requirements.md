@@ -58,13 +58,15 @@ A user account can create multiple projects. Each project has:
 
 * A name.
 * A unique `endpoint_token`: a cryptographically random string generated at project creation. The private LLM API base URL of the project is `/api/<endpoint_token>/v1`.
-* Project API keys: each key is a cryptographically random secret shown to the user only once at creation. The server MUST store only the key hash and a short public prefix.
+* Exactly one API key: a cryptographically random secret generated at project creation and stored on the project as a key hash and a short public prefix. The plaintext key is shown to the user only once at creation and when reset.
 
 Project management APIs:
 
 * `POST /v1/projects`, `GET /v1/projects`, `GET /v1/projects/:project_id`, `PUT /v1/projects/:project_id`, `DELETE /v1/projects/:project_id`.
-* `POST /v1/projects/:project_id/api_keys`, `GET /v1/projects/:project_id/api_keys`, `DELETE /v1/projects/:project_id/api_keys/:api_key_id`.
+* `POST /v1/projects/:project_id/api_key/reset`.
 * `GET /v1/projects/:project_id/stats`.
+
+`POST /v1/projects` creates the project and its API key together and returns the plaintext API key once. `POST /v1/projects/:project_id/api_key/reset` regenerates the API key for the same project, invalidates the previous secret immediately, and returns the new plaintext once.
 
 A project MUST only be visible to and manageable by its owning account.
 
@@ -85,7 +87,7 @@ The request and response formats are OpenAI-compatible.
 A request to a private LLM endpoint MUST be authenticated by both:
 
 1. The `endpoint_token` in the URL, which locates the project.
-2. A project API key in the `Authorization: Bearer <api_key>` header, which MUST belong to the located project and MUST be active.
+2. The project API key in the `Authorization: Bearer <api_key>` header, which MUST match the located project's stored key hash.
 
 A request failing either check MUST be rejected with HTTP 401.
 
@@ -108,7 +110,7 @@ Each LLM call is charged from the Credits balance of the owning account:
 
 ### Call Records
 
-Every LLM call, successful or failed, MUST be recorded as one `llm_call_records` row containing the project, API key, model, prompt/completion/total token counts, success or failure status, charged Credits, and call duration.
+Every LLM call, successful or failed, MUST be recorded as one `llm_call_records` row containing the project, model, prompt/completion/total token counts, success or failure status, charged Credits, and call duration.
 
 ## Usage Statistics
 

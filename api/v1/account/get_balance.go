@@ -34,7 +34,7 @@ func GetBalance(c *gin.Context) (*GetBalanceResponse, error) {
 	db := config.GetDB()
 	ctx := c.Request.Context()
 
-	user, err := findUserByAddress(ctx, db, address)
+	user, err := models.FindUserByAddress(ctx, db, address)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, response.NewValidationErrorResponse("address", "User not found")
@@ -66,15 +66,4 @@ func GetBalance(c *gin.Context) (*GetBalanceResponse, error) {
 			Balance: account.Balance,
 		},
 	}, nil
-}
-
-func findUserByAddress(ctx context.Context, db *gorm.DB, address string) (*models.User, error) {
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var user models.User
-	if err := db.WithContext(dbCtx).Where("address = ?", address).First(&user).Error; err != nil {
-		return nil, err
-	}
-	return &user, nil
 }

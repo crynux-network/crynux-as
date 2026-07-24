@@ -13,7 +13,6 @@ type LLMCallRecord struct {
 	ID               uint          `json:"id" gorm:"primarykey"`
 	CreatedAt        time.Time     `json:"created_at" gorm:"not null;index"`
 	ProjectID        uint          `json:"project_id" gorm:"not null;index"`
-	APIKeyID         uint          `json:"api_key_id" gorm:"not null;index"`
 	Model            string        `json:"model" gorm:"type:string;size:255;not null"`
 	PromptTokens     uint64        `json:"prompt_tokens" gorm:"not null;default:0"`
 	CompletionTokens uint64        `json:"completion_tokens" gorm:"not null;default:0"`

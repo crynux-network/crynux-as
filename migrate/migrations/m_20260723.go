@@ -83,6 +83,8 @@ type projectForM20260723 struct {
 	UserID        uint      `gorm:"not null;index"`
 	Name          string    `gorm:"type:string;size:255;not null"`
 	EndpointToken string    `gorm:"type:string;size:128;not null;uniqueIndex"`
+	APIKeyHash    string    `gorm:"column:api_key_hash;type:string;size:128;not null;uniqueIndex"`
+	APIKeyPrefix  string    `gorm:"column:api_key_prefix;type:string;size:16;not null"`
 	Status        int8      `gorm:"not null;default:0;index"`
 }
 
@@ -90,25 +92,10 @@ func (projectForM20260723) TableName() string {
 	return "projects"
 }
 
-type apiKeyForM20260723 struct {
-	ID        uint      `gorm:"primarykey"`
-	CreatedAt time.Time `gorm:"not null"`
-	UpdatedAt time.Time `gorm:"not null"`
-	ProjectID uint      `gorm:"not null;index"`
-	KeyHash   string    `gorm:"type:string;size:128;not null;uniqueIndex"`
-	Prefix    string    `gorm:"type:string;size:16;not null"`
-	Status    int8      `gorm:"not null;default:0;index"`
-}
-
-func (apiKeyForM20260723) TableName() string {
-	return "api_keys"
-}
-
 type llmCallRecordForM20260723 struct {
 	ID               uint      `gorm:"primarykey"`
 	CreatedAt        time.Time `gorm:"not null;index"`
 	ProjectID        uint      `gorm:"not null;index"`
-	APIKeyID         uint      `gorm:"not null;index"`
 	Model            string    `gorm:"type:string;size:255;not null"`
 	PromptTokens     uint64    `gorm:"not null;default:0"`
 	CompletionTokens uint64    `gorm:"not null;default:0"`
@@ -153,7 +140,6 @@ func M20260723(db *gorm.DB) *gormigrate.Gormigrate {
 					&depositForM20260723{},
 					&blockchainCursorForM20260723{},
 					&projectForM20260723{},
-					&apiKeyForM20260723{},
 					&llmCallRecordForM20260723{},
 					&projectUsageStatForM20260723{},
 				)
@@ -162,7 +148,6 @@ func M20260723(db *gorm.DB) *gormigrate.Gormigrate {
 				return tx.Migrator().DropTable(
 					&projectUsageStatForM20260723{},
 					&llmCallRecordForM20260723{},
-					&apiKeyForM20260723{},
 					&projectForM20260723{},
 					&blockchainCursorForM20260723{},
 					&depositForM20260723{},

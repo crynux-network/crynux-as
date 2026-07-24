@@ -50,7 +50,7 @@ func GetDeposits(c *gin.Context, in *GetDepositsInput) (*GetDepositsResponse, er
 	db := config.GetDB()
 	ctx := c.Request.Context()
 
-	user, err := findUserByAddress(ctx, db, address)
+	user, err := models.FindUserByAddress(ctx, db, address)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, response.NewValidationErrorResponse("address", "User not found")

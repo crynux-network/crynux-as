@@ -63,24 +63,12 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(projects.DeleteProject, 200))
 
-	projectsGroup.POST("/:project_id/api_keys", []fizz.OperationOption{
-		fizz.Summary("Create an API key for a project"),
+	projectsGroup.POST("/:project_id/api_key/reset", []fizz.OperationOption{
+		fizz.Summary("Reset the API key of a project"),
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("404", "project not found", response.NotFoundErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
-	}, tonic.Handler(projects.CreateAPIKey, 200))
-	projectsGroup.GET("/:project_id/api_keys", []fizz.OperationOption{
-		fizz.Summary("List the API keys of a project"),
-		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
-		fizz.Response("404", "project not found", response.NotFoundErrorResponse{}, nil, nil),
-		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
-	}, tonic.Handler(projects.ListAPIKeys, 200))
-	projectsGroup.DELETE("/:project_id/api_keys/:api_key_id", []fizz.OperationOption{
-		fizz.Summary("Delete an API key of a project"),
-		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
-		fizz.Response("404", "api key not found", response.NotFoundErrorResponse{}, nil, nil),
-		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
-	}, tonic.Handler(projects.DeleteAPIKey, 200))
+	}, tonic.Handler(projects.ResetAPIKey, 200))
 
 	projectsGroup.GET("/:project_id/stats", []fizz.OperationOption{
 		fizz.Summary("Get the usage stats of a project"),
