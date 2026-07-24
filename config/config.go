@@ -53,6 +53,9 @@ func InitConfig(configPath string) error {
 	if err := checkBridgeConfig(); err != nil {
 		return err
 	}
+	if err := checkLLMConfig(); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -108,6 +111,19 @@ func checkBridgeConfig() error {
 	}
 	if appConfig.Environment != EnvTest && appConfig.Bridge.APIKey == "" {
 		return errors.New("bridge api key is not set")
+	}
+	return nil
+}
+
+func checkLLMConfig() error {
+	if appConfig.LLM.PromptCreditsPerToken == 0 {
+		return errors.New("llm.prompt_credits_per_token is not set")
+	}
+	if appConfig.LLM.CompletionCreditsPerToken == 0 {
+		return errors.New("llm.completion_credits_per_token is not set")
+	}
+	if appConfig.LLM.DefaultMaxTokens == 0 {
+		return errors.New("llm.default_max_tokens is not set")
 	}
 	return nil
 }

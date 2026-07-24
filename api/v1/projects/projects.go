@@ -6,6 +6,7 @@ import (
 	"crynux_as/api/v1/response"
 	"crynux_as/config"
 	"crynux_as/models"
+	"crynux_as/service"
 	"crynux_as/utils"
 	"errors"
 	"time"
@@ -16,12 +17,13 @@ import (
 )
 
 type ProjectData struct {
-	ID            uint   `json:"id" description:"The project ID"`
-	Name          string `json:"name" description:"The project name"`
-	EndpointToken string `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
-	APIKeyPrefix  string `json:"api_key_prefix" description:"The public prefix of the project API key"`
-	Status        int8   `json:"status" description:"The project status"`
-	CreatedAt     int64  `json:"created_at" description:"The unix timestamp when the project is created"`
+	ID            uint    `json:"id" description:"The project ID"`
+	Name          string  `json:"name" description:"The project name"`
+	EndpointToken string  `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
+	APIKeyPrefix  string  `json:"api_key_prefix" description:"The public prefix of the project API key"`
+	TokenRatio    float64 `json:"token_ratio" description:"The billed-to-consumed token ratio for LLM charging"`
+	Status        int8    `json:"status" description:"The project status"`
+	CreatedAt     int64   `json:"created_at" description:"The unix timestamp when the project is created"`
 }
 
 type ProjectResponse struct {
@@ -30,7 +32,8 @@ type ProjectResponse struct {
 }
 
 type CreateProjectInput struct {
-	Name string `json:"name" validate:"required" description:"The project name"`
+	Name       string   `json:"name" validate:"required" description:"The project name"`
+	TokenRatio *float64 `json:"token_ratio" description:"The billed-to-consumed token ratio. Defaults to 1.0"`
 }
 
 type CreateProjectData struct {
@@ -61,12 +64,22 @@ func CreateProject(c *gin.Context, in *CreateProjectInput) (*CreateProjectRespon
 		return nil, response.NewExceptionResponse(err)
 	}
 
+	tokenRatio := service.DefaultTokenRatioStored
+	if in.TokenRatio != nil {
+		parsed, err := service.ParseTokenRatio(*in.TokenRatio)
+		if err != nil {
+			return nil, response.NewValidationErrorResponse("token_ratio", err.Error())
+		}
+		tokenRatio = parsed
+	}
+
 	project := models.Project{
 		UserID:        user.ID,
 		Name:          in.Name,
 		EndpointToken: endpointToken,
 		APIKeyHash:    utils.HashToken(apiKey),
 		APIKeyPrefix:  apiKeyPrefix(apiKey),
+		TokenRatio:    tokenRatio,
 		Status:        models.ProjectStatusActive,
 	}
 
@@ -149,8 +162,9 @@ func GetProject(c *gin.Context, in *GetProjectInput) (*ProjectResponse, error) {
 }
 
 type UpdateProjectInput struct {
-	ProjectID uint   `path:"project_id" validate:"required" description:"The project ID"`
-	Name      string `json:"name" validate:"required" description:"The new project name"`
+	ProjectID  uint     `path:"project_id" validate:"required" description:"The project ID"`
+	Name       string   `json:"name" validate:"required" description:"The new project name"`
+	TokenRatio *float64 `json:"token_ratio" description:"The billed-to-consumed token ratio"`
 }
 
 func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, error) {
@@ -167,6 +181,14 @@ func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, er
 		}
 		log.Errorf("Error loading project %d for user %d: %v", in.ProjectID, user.ID, err)
 		return nil, response.NewExceptionResponse(err)
+	}
+
+	if in.TokenRatio != nil {
+		parsed, err := service.ParseTokenRatio(*in.TokenRatio)
+		if err != nil {
+			return nil, response.NewValidationErrorResponse("token_ratio", err.Error())
+		}
+		project.TokenRatio = parsed
 	}
 
 	dbCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
@@ -303,6 +325,7 @@ func toProjectData(p *models.Project) ProjectData {
 		Name:          p.Name,
 		EndpointToken: p.EndpointToken,
 		APIKeyPrefix:  p.APIKeyPrefix,
+		TokenRatio:    service.DisplayTokenRatio(p.TokenRatio),
 		Status:        int8(p.Status),
 		CreatedAt:     p.CreatedAt.Unix(),
 	}

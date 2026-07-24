@@ -11,17 +11,10 @@ import (
 // Authorization header authenticates the caller.
 func InitRoutes(engine *gin.Engine) {
 	group := engine.Group("/api/:endpoint_token/v1")
+	group.Use(ProjectAuthMiddleware())
 	group.POST("/chat/completions", ChatCompletions)
 	group.POST("/completions", Completions)
 	group.GET("/models", Models)
-}
-
-func ChatCompletions(ctx *gin.Context) {
-	ctx.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
-}
-
-func Completions(ctx *gin.Context) {
-	ctx.JSON(http.StatusNotImplemented, gin.H{"error": "not implemented"})
 }
 
 func Models(ctx *gin.Context) {

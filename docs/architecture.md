@@ -22,7 +22,7 @@ flowchart LR
 * **API server** (`api/`): gin + fizz + tonic HTTP server. Serves the management APIs under `/v1` (auth, account, projects, project API key reset, stats) and the private OpenAI-compatible LLM endpoints under `/api/<endpoint_token>/v1`. The tonic error and render hooks in `api/v1/response` produce the uniform `{"message": ...}` response envelope, and the OpenAPI specification is generated from the route declarations.
 * **Blockchain processors** (`service/`): one worker goroutine per configured network that scans ERC20 `Transfer` logs to the receiving address and converts them into deposits and Credits ledger events.
 * **Blockchain clients** (`blockchain/`): one eth client per configured network with a per-network RPS rate limiter. All RPC requests of a network MUST pass through its limiter. The package also provides Ethereum personal-sign signature verification used by wallet login.
-* **Bridge client**: forwards LLM requests to the Crynux Bridge using the platform-level Bridge API key from the configuration.
+* **Bridge client** (`bridge/`): forwards LLM chat and completions requests to the Crynux Bridge using the platform-level Bridge API key from the configuration. See [llm-api.md](./llm-api.md).
 * **Stats tasks** (`tasks/`): background aggregation of `llm_call_records` into `project_usage_stats`.
 * **MySQL database**: all persistent state. Schema changes are applied by versioned gormigrate migrations in `migrate/` at startup.
 
@@ -52,9 +52,13 @@ blockchains:
 bridge:
   base_url: ""
   api_key_file: "config/secrets/bridge_api_key.txt"
+llm:
+  prompt_credits_per_token: 1
+  completion_credits_per_token: 1
+  default_max_tokens: 2048
 ```
 
-Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic.
+Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. LLM unit prices and `default_max_tokens` are specified in [llm-api.md](./llm-api.md).
 
 ## Data Model
 
@@ -65,7 +69,7 @@ Configuration loading MUST fail with an error when a required item is missing. E
 | `credit_events` | Append-only Credits ledger; every balance change is one event referencing its source record by `ref_id`; unique by type + `ref_id` |
 | `deposits` | Detected ERC20 transfers; unique by network + tx hash + log index |
 | `blockchain_cursors` | Per-network scan cursor; unique by network |
-| `projects` | User projects; unique `endpoint_token` forms the private base URL; stores the project API key hash and public prefix |
+| `projects` | User projects; unique `endpoint_token` forms the private base URL; stores the project API key hash, public prefix, and `token_ratio` |
 | `llm_call_records` | One row per LLM call with token usage, status, charged Credits, and duration |
 | `project_usage_stats` | Aggregated usage per project and time period; unique by project + period start |
 
@@ -79,10 +83,12 @@ Configuration loading MUST fail with an error when a required item is missing. E
 
 ## LLM Call Charging Flow
 
+The authoritative charging rules are specified in [llm-api.md](./llm-api.md). The high-level flow is:
+
 1. The client sends an OpenAI-compatible request to `/api/<endpoint_token>/v1/...` with a project API key in the `Authorization` header.
-2. The API server locates the project by `endpoint_token`, validates the API key hash against the project's stored key hash, and checks the account Credits balance. Requests with insufficient balance are rejected with HTTP 402.
+2. The API server locates the project by `endpoint_token`, validates the API key hash against the project's stored key hash, and estimates the charge from the request. Requests with insufficient balance for the estimate are rejected with HTTP 402.
 3. The request is forwarded to the Crynux Bridge (`/v1/llm/chat/completions` or `/v1/llm/completions`) with the platform Bridge API key. For streaming requests, `stream_options.include_usage: true` is injected so the final stream chunk carries the `usage` payload; this chunk is not exposed to clients that did not request it.
-4. The charge is calculated from the response `usage` token counts and the configured per-model unit prices. One `llm_call_records` row records the call, and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance.
+4. The charge is calculated from the response `usage` token counts, the project `token_ratio`, and the configured global unit prices. One `llm_call_records` row records the call, and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance when settle succeeds.
 5. The stats task periodically aggregates call records into `project_usage_stats`.
 
 ## Credits Ledger Consistency Rules

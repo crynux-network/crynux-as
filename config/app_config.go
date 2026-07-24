@@ -65,4 +65,10 @@ type AppConfig struct {
 		APIKey     string `mapstructure:"api_key"`
 		APIKeyFile string `mapstructure:"api_key_file"`
 	} `mapstructure:"bridge"`
+
+	LLM struct {
+		PromptCreditsPerToken     uint64 `mapstructure:"prompt_credits_per_token"`
+		CompletionCreditsPerToken uint64 `mapstructure:"completion_credits_per_token"`
+		DefaultMaxTokens          uint64 `mapstructure:"default_max_tokens"`
+	} `mapstructure:"llm"`
 }

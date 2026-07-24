@@ -56,3 +56,7 @@ blockchains:
 bridge:
   base_url: ""
   api_key_file: "config/secrets/bridge_api_key.txt"
+llm:
+  prompt_credits_per_token: 1
+  completion_credits_per_token: 1
+  default_max_tokens: 2048

@@ -59,6 +59,7 @@ A user account can create multiple projects. Each project has:
 * A name.
 * A unique `endpoint_token`: a cryptographically random string generated at project creation. The private LLM API base URL of the project is `/api/<endpoint_token>/v1`.
 * Exactly one API key: a cryptographically random secret generated at project creation and stored on the project as a key hash and a short public prefix. The plaintext key is shown to the user only once at creation and when reset.
+* A `token_ratio` that scales billed tokens relative to consumed tokens. See [llm-api.md](./llm-api.md) for the allowed values, storage format, and charging rules.
 
 Project management APIs:
 
@@ -71,6 +72,8 @@ Project management APIs:
 A project MUST only be visible to and manageable by its owning account.
 
 ## OpenAI-Compatible LLM API
+
+The detailed endpoint, Bridge forwarding, token-ratio, pricing, balance precheck, and Credits settle rules are specified in [llm-api.md](./llm-api.md).
 
 ### Endpoints
 
@@ -93,20 +96,11 @@ A request failing either check MUST be rejected with HTTP 401.
 
 ### Forwarding to the Crynux Bridge
 
-The service forwards LLM requests to the Crynux Bridge LLM API:
-
-* Bridge endpoints: `/v1/llm/chat/completions` and `/v1/llm/completions`.
-* Bridge authentication: the platform-level Bridge API key from the service configuration, sent as `Authorization: Bearer <api_key>`. The Bridge API key MUST have the `chat` role.
-
-For streaming requests, the Bridge returns the result as server-sent events emitted after the task completes, and includes the `usage` payload in the final chunk only when the request contains `stream_options.include_usage: true`. When forwarding a streaming request, the service MUST inject `stream_options.include_usage: true` into the request sent to the Bridge to guarantee usage metering, and MUST return the streamed response to the client in the shape the client requested: the injected usage chunk MUST NOT be exposed to a client that did not request `include_usage`.
+The service forwards LLM requests to the Crynux Bridge LLM API. Streaming requests MUST inject `stream_options.include_usage: true` toward the Bridge for metering and MUST NOT expose the injected usage chunk to clients that did not request it. See [llm-api.md](./llm-api.md).
 
 ### Charging
 
-Each LLM call is charged from the Credits balance of the owning account:
-
-1. The charge amount is calculated from the `usage` field of the Bridge response (`prompt_tokens`, `completion_tokens`, `total_tokens`) and the configured per-model unit prices.
-2. Each successful call MUST create a Credits ledger event of type LLM charge referencing the LLM call record ID, and decrease the account balance.
-3. If the account balance is insufficient for the request, the service MUST reject the request with HTTP 402 before forwarding it to the Bridge.
+Each LLM call is charged from the Credits balance of the owning account using Bridge `usage` token counts, the project `token_ratio`, and the configured global unit prices. Insufficient balance for the pre-forward estimate MUST be rejected with HTTP 402. See [llm-api.md](./llm-api.md).
 
 ### Call Records
 
