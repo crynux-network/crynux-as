@@ -29,25 +29,30 @@ blockchains:
     rps: 20
     start_block_num: 0
     log_block_range: 1000
+    scan_interval: 5
     receiving_address: "0x0000000000000000000000000000000000000001"
     tokens:
       usdt:
         address: "0xdAC17F958D2ee523a2206206994597C13D831ec7"
         decimals: 6
+        credits_per_token: 1
       usdc:
         address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
         decimals: 6
+        credits_per_token: 1
   base:
     chain_id: 8453
     rpc_endpoint: ""
     rps: 20
     start_block_num: 0
     log_block_range: 1000
+    scan_interval: 5
     receiving_address: "0x0000000000000000000000000000000000000001"
     tokens:
       usdc:
         address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
         decimals: 6
+        credits_per_token: 1
 bridge:
   base_url: ""
   api_key_file: "config/secrets/bridge_api_key.txt"

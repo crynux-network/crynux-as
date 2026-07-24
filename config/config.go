@@ -78,6 +78,9 @@ func checkBlockchainNetworks() error {
 		if blockchain.LogBlockRange == 0 {
 			return fmt.Errorf("blockchain %s log block range not set", network)
 		}
+		if blockchain.ScanInterval == 0 {
+			return fmt.Errorf("blockchain %s scan interval not set", network)
+		}
 		if !common.IsHexAddress(blockchain.ReceivingAddress) {
 			return fmt.Errorf("blockchain %s receiving address is invalid", network)
 		}
@@ -90,6 +93,9 @@ func checkBlockchainNetworks() error {
 			}
 			if tokenConfig.Decimals == 0 {
 				return fmt.Errorf("blockchain %s token %s decimals not set", network, token)
+			}
+			if tokenConfig.CreditsPerToken == 0 {
+				return fmt.Errorf("blockchain %s token %s credits_per_token not set", network, token)
 			}
 		}
 	}

@@ -7,8 +7,9 @@ const (
 )
 
 type TokenConfig struct {
-	Address  string `mapstructure:"address"`
-	Decimals uint8  `mapstructure:"decimals"`
+	Address         string `mapstructure:"address"`
+	Decimals        uint8  `mapstructure:"decimals"`
+	CreditsPerToken uint64 `mapstructure:"credits_per_token"`
 }
 
 type BlockchainNetworkConfig struct {
@@ -17,6 +18,7 @@ type BlockchainNetworkConfig struct {
 	RPS              uint64                 `mapstructure:"rps"`
 	StartBlockNum    uint64                 `mapstructure:"start_block_num"`
 	LogBlockRange    uint64                 `mapstructure:"log_block_range"`
+	ScanInterval     uint64                 `mapstructure:"scan_interval"`
 	ReceivingAddress string                 `mapstructure:"receiving_address"`
 	Tokens           map[string]TokenConfig `mapstructure:"tokens"`
 }

@@ -24,24 +24,31 @@ Users purchase Credits by transferring supported ERC20 tokens from their login w
 
 ### Supported Networks and Tokens
 
-The set of supported blockchain networks and the supported ERC20 tokens on each network are defined in the service configuration. Each network configuration MUST define the chain ID, RPC endpoint, request rate limit, scan start block, log scan block range, the receiving address, and the contract address and decimals of every supported token.
+The set of supported blockchain networks and the supported ERC20 tokens on each network are defined in the service configuration. Each network configuration MUST define the chain ID, RPC endpoint, request rate limit, scan start block, log scan block range, scan interval in seconds, the receiving address, and for every supported token the contract address, decimals, and `credits_per_token`.
+
+`credits_per_token` is the number of Credits awarded for one whole token (`10^decimals` raw units). The conversion MUST use integer arithmetic:
+
+```text
+credits = amount * credits_per_token / 10^decimals
+```
 
 ### Deposit Detection
 
 For each configured blockchain network, the service MUST run a scanning worker that:
 
 1. Maintains a per-network scan cursor (`blockchain_cursors`) recording the last processed block number.
-2. Fetches ERC20 `Transfer(address,address,uint256)` logs of all configured token contracts on that network where the `to` address is the receiving address, in block ranges no larger than the configured `log_block_range`.
-3. Rate-limits all RPC requests to the configured RPS.
-4. Advances the cursor only after all logs in the scanned range have been durably recorded.
+2. Polls for new blocks on the configured `scan_interval`.
+3. Fetches ERC20 `Transfer(address,address,uint256)` logs of all configured token contracts on that network where the `to` address is the receiving address, in block ranges no larger than the configured `log_block_range`.
+4. Rate-limits all RPC requests to the configured RPS.
+5. Advances the cursor only after all logs in the scanned range have been handled (credited or deliberately ignored).
 
 ### Crediting Rules
 
 For each detected transfer log, the service MUST:
 
-1. Record a deposit row identified by network, transaction hash, and log index. This identity MUST be unique; re-scanning the same log MUST NOT create a second deposit or credit the account twice.
-2. Attribute the deposit to the user account whose wallet address equals the `from` address of the transfer. If no account exists for the `from` address, the deposit MUST be recorded and MUST NOT be credited to any account.
-3. Convert the token amount to Credits using the configured conversion for that token, create a Credits ledger event of type deposit referencing the deposit row ID, and update the account balance.
+1. Attribute the transfer to the user account whose wallet address equals the `from` address of the transfer. If no account exists for the `from` address, the service MUST emit a warning log and MUST NOT create a deposit row or Credits ledger event.
+2. When the user account exists, record a deposit row identified by network, transaction hash, and log index. This identity MUST be unique; re-scanning the same log MUST NOT create a second deposit or credit the account twice.
+3. Convert the token amount to Credits using `credits_per_token`, create a Credits ledger event of type deposit referencing the deposit row ID, and update the account balance.
 
 Deposits and Credits balance changes MUST go through the Credits ledger: every balance change MUST be recorded as a `credit_events` row referencing its source record ID (`ref_id`), and the `credit_accounts` balance MUST equal the sum of its processed events. The event type + `ref_id` pair MUST be unique so one source record produces at most one ledger event.
 
