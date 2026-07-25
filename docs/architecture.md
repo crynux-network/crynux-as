@@ -2,7 +2,7 @@
 
 ## System Boundary
 
-Crynux AS is one off-chain backend service backed by one MySQL database. It works with multiple configured blockchain networks for receiving ERC20 payments, and with one Crynux Bridge instance for LLM inference. The term `network` in this document means blockchain network.
+Crynux AS is one off-chain backend service backed by one MySQL database. It works with multiple configured blockchain networks for receiving ERC20 payments, with one Crynux Bridge instance for LLM inference, and with one Crynux Relay instance for the loaded LLM model catalog. The term `network` in this document means blockchain network.
 
 ## Components
 
@@ -15,6 +15,8 @@ flowchart LR
   API --> Ledger
   API -->|forward| Bridge[Crynux Bridge LLM API]
   API --> Records[(llm_call_records)]
+  Relay[Crynux Relay] -->|"GET /v2/loaded-models"| Cache[Loaded-Models Cache]
+  Cache --> API
   Stats[Stats Tasks] --> Records
   Stats --> Usage[(project_usage_stats)]
 ```
@@ -22,13 +24,15 @@ flowchart LR
 * **API server** (`api/`): gin + fizz + tonic HTTP server. Serves the management APIs under `/v1` (auth, account, projects, project API key reset, stats) and the private OpenAI-compatible LLM endpoints under `/api/<endpoint_token>/v1`. The tonic error and render hooks in `api/v1/response` produce the uniform `{"message": ...}` response envelope, and the OpenAPI specification is generated from the route declarations.
 * **Blockchain processors** (`service/`): one worker goroutine per configured network that scans ERC20 `Transfer` logs to the receiving address and converts them into deposits and Credits ledger events.
 * **Blockchain clients** (`blockchain/`): one eth client per configured network with a per-network RPS rate limiter. All RPC requests of a network MUST pass through its limiter. The package also provides Ethereum personal-sign signature verification used by wallet login.
-* **Bridge client** (`bridge/`): forwards LLM chat and completions requests to the Crynux Bridge using the platform-level Bridge API key from the configuration. See [llm-api.md](./llm-api.md).
+* **Bridge client** (`bridge/`): forwards LLM chat and completions requests to the Crynux Bridge using the platform-level Bridge API key from the configuration. The resolved effective VRAM is sent in the Bridge URL path (`/v1/llm/<effective_vram>/...`). See [llm-api.md](./llm-api.md).
+* **Relay client** (`relay/`): fetches the loaded models from the public Relay API `GET {relay.base_url}/v2/loaded-models` without authentication.
+* **Loaded-models cache** (`service/`): one in-memory snapshot of the Relay loaded models with `model_type == "llm"`, keyed by lowercase `model_id`. The cache MUST be refreshed once at startup before the HTTP server starts and then every `llm.loaded_models_refresh_interval` seconds by a background task in `tasks/`. A failed startup refresh MUST be logged, MUST leave the cache empty, and MUST NOT prevent startup. A failed periodic refresh MUST retain the last successful snapshot and retry at the next interval. A successful refresh MUST replace the whole snapshot. The cache is not persisted to the database.
 * **Stats tasks** (`tasks/`): background aggregation of `llm_call_records` into `project_usage_stats`.
 * **MySQL database**: all persistent state. Schema changes are applied by versioned gormigrate migrations in `migrate/` at startup.
 
 ## Startup Order
 
-`main.go` initializes components in this order: config (`config.InitConfig`), logging (`config.InitLog`), database (`config.InitDB`), database migrations (`migrate.InitMigration` + `migrate.Migrate`), blockchain clients (`blockchain.Init`), background workers (blockchain processors, stats tasks), and finally the HTTP server.
+`main.go` initializes components in this order: config (`config.InitConfig`), logging (`config.InitLog`), database (`config.InitDB`), database migrations (`migrate.InitMigration` + `migrate.Migrate`), blockchain clients (`blockchain.Init`), background workers (blockchain processors, stats tasks), the initial loaded-models cache refresh and its periodic refresh task, and finally the HTTP server.
 
 ## Multi-Chain Multi-Token Configuration Model
 
@@ -52,13 +56,22 @@ blockchains:
 bridge:
   base_url: ""
   api_key_file: "config/secrets/bridge_api_key.txt"
+relay:
+  base_url: ""
 llm:
   prompt_credits_per_token: 1
   completion_credits_per_token: 1
   default_max_tokens: 2048
+  default_vram_limit: 24
+  loaded_models_refresh_interval: 1800
+  vram_ratios:
+    - max_vram: 24
+      ratio: 0.5
+    - max_vram: 96
+      ratio: 1.5
 ```
 
-Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. LLM unit prices and `default_max_tokens` are specified in [llm-api.md](./llm-api.md).
+Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. `relay.base_url` is the public Relay URL for the loaded-models refresh. The LLM unit prices, `default_max_tokens`, `default_vram_limit`, `loaded_models_refresh_interval`, and `vram_ratios` items are specified in [llm-api.md](./llm-api.md).
 
 ## Data Model
 
@@ -70,7 +83,7 @@ Configuration loading MUST fail with an error when a required item is missing. E
 | `deposits` | Detected ERC20 transfers; unique by network + tx hash + log index |
 | `blockchain_cursors` | Per-network scan cursor; unique by network |
 | `projects` | User projects; unique `endpoint_token` forms the private base URL; stores the project API key hash, public prefix, and `token_ratio` |
-| `llm_call_records` | One row per LLM call with token usage, status, charged Credits, and duration |
+| `llm_call_records` | One row per LLM call with token usage, status, charged Credits, duration, and billed effective VRAM |
 | `project_usage_stats` | Aggregated usage per project and time period; unique by project + period start |
 
 ## Deposit Flow
@@ -86,9 +99,9 @@ Configuration loading MUST fail with an error when a required item is missing. E
 The authoritative charging rules are specified in [llm-api.md](./llm-api.md). The high-level flow is:
 
 1. The client sends an OpenAI-compatible request to `/api/<endpoint_token>/v1/...` with a project API key in the `Authorization` header.
-2. The API server locates the project by `endpoint_token`, validates the API key hash against the project's stored key hash, and estimates the charge from the request. Requests with insufficient balance for the estimate are rejected with HTTP 402.
-3. The request is forwarded to the Crynux Bridge (`/v1/llm/chat/completions` or `/v1/llm/completions`) with the platform Bridge API key. For streaming requests, `stream_options.include_usage: true` is injected so the final stream chunk carries the `usage` payload; this chunk is not exposed to clients that did not request it.
-4. The charge is calculated from the response `usage` token counts, the project `token_ratio`, and the configured global unit prices. One `llm_call_records` row records the call, and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance when settle succeeds.
+2. The API server locates the project by `endpoint_token`, validates the API key hash against the project's stored key hash, resolves the effective VRAM from the user `vram_limit`, the loaded-models cache, and the configured default, and estimates the charge from the request using the VRAM tier ratio. Requests with insufficient balance for the estimate are rejected with HTTP 402.
+3. The request is forwarded to the Crynux Bridge (`/v1/llm/<effective_vram>/chat/completions` or `/v1/llm/<effective_vram>/completions`) with the platform Bridge API key. For streaming requests, `stream_options.include_usage: true` is injected so the final stream chunk carries the `usage` payload; this chunk is not exposed to clients that did not request it.
+4. The charge is calculated from the response `usage` token counts, the project `token_ratio`, the VRAM tier ratio, and the configured global unit prices. One `llm_call_records` row records the call together with the billed effective VRAM, and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance when settle succeeds.
 5. The stats task periodically aggregates call records into `project_usage_stats`.
 
 ## Credits Ledger Consistency Rules

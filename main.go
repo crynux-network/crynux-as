@@ -6,6 +6,7 @@ import (
 	"crynux_as/blockchain"
 	"crynux_as/config"
 	"crynux_as/migrate"
+	"crynux_as/relay"
 	"crynux_as/service"
 	"crynux_as/tasks"
 	"fmt"
@@ -42,6 +43,12 @@ func main() {
 
 	service.StartBlockchainProcessors(context.Background())
 	go tasks.StartStatsProjectUsage(context.Background())
+
+	service.InitLoadedModelsCache(relay.NewClient(conf.Relay.BaseURL))
+	if err := service.RefreshLoadedModels(context.Background()); err != nil {
+		log.Errorf("initial loaded models refresh failed: %v", err)
+	}
+	go tasks.StartLoadedModelsRefresh(context.Background())
 
 	startServer()
 }

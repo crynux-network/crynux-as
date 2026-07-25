@@ -81,9 +81,16 @@ Each project exposes the following endpoints under its private base URL:
 
 * `POST /api/<endpoint_token>/v1/chat/completions`
 * `POST /api/<endpoint_token>/v1/completions`
+* `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
+* `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `GET /api/<endpoint_token>/v1/models`
+* `GET /api/<endpoint_token>/v1/models/<model>`
 
 The request and response formats are OpenAI-compatible.
+
+The models endpoints return the shared LLM model catalog built from the in-memory loaded-models cache refreshed from the Relay. Each model object includes the extra field `min_vram`. See [llm-api.md](./llm-api.md).
+
+A request MAY specify a VRAM limit in GB through the `<vram_limit>` URL path segment or the `vram_limit` body field; the path value overrides the body value. The resolved effective VRAM selects the billing tier and is forwarded to the Bridge in the URL path. See [llm-api.md](./llm-api.md).
 
 ### Authentication
 
@@ -100,11 +107,13 @@ The service forwards LLM requests to the Crynux Bridge LLM API. Streaming reques
 
 ### Charging
 
-Each LLM call is charged from the Credits balance of the owning account using Bridge `usage` token counts, the project `token_ratio`, and the configured global unit prices. Insufficient balance for the pre-forward estimate MUST be rejected with HTTP 402. See [llm-api.md](./llm-api.md).
+Each LLM call is charged from the Credits balance of the owning account using Bridge `usage` token counts, the project `token_ratio`, the VRAM tier ratio selected from the resolved effective VRAM, and the configured global unit prices. Insufficient balance for the pre-forward estimate MUST be rejected with HTTP 402. The complete billing specification is the LLM Charging Rules chapter in [llm-api.md](./llm-api.md).
+
+`GET /v1/llm/vram_ratios` is a JWT-authenticated management API that returns the configured VRAM billing tiers.
 
 ### Call Records
 
-Every LLM call, successful or failed, MUST be recorded as one `llm_call_records` row containing the project, model, prompt/completion/total token counts, success or failure status, charged Credits, and call duration.
+Every LLM call, successful or failed, MUST be recorded as one `llm_call_records` row containing the project, model, prompt/completion/total token counts, success or failure status, charged Credits, call duration, and the billed effective VRAM.
 
 ## Usage Statistics
 

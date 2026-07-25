@@ -20,4 +20,5 @@ type LLMCallRecord struct {
 	Status           LLMCallStatus `json:"status" gorm:"not null;default:0;index"`
 	Credits          BigInt        `json:"credits" gorm:"type:string;size:255;not null"`
 	DurationMs       uint64        `json:"duration_ms" gorm:"not null;default:0"`
+	BilledVram       uint64        `json:"billed_vram" gorm:"not null;default:0"`
 }

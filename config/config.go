@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 
@@ -51,6 +52,9 @@ func InitConfig(configPath string) error {
 		return err
 	}
 	if err := checkBridgeConfig(); err != nil {
+		return err
+	}
+	if err := checkRelayConfig(); err != nil {
 		return err
 	}
 	if err := checkLLMConfig(); err != nil {
@@ -115,6 +119,13 @@ func checkBridgeConfig() error {
 	return nil
 }
 
+func checkRelayConfig() error {
+	if strings.TrimSpace(appConfig.Relay.BaseURL) == "" {
+		return errors.New("relay.base_url is not set")
+	}
+	return nil
+}
+
 func checkLLMConfig() error {
 	if appConfig.LLM.PromptCreditsPerToken == 0 {
 		return errors.New("llm.prompt_credits_per_token is not set")
@@ -125,7 +136,39 @@ func checkLLMConfig() error {
 	if appConfig.LLM.DefaultMaxTokens == 0 {
 		return errors.New("llm.default_max_tokens is not set")
 	}
+	if appConfig.LLM.DefaultVramLimit == 0 {
+		return errors.New("llm.default_vram_limit is not set")
+	}
+	if appConfig.LLM.LoadedModelsRefreshInterval == 0 {
+		return errors.New("llm.loaded_models_refresh_interval is not set")
+	}
+	if len(appConfig.LLM.VramRatios) == 0 {
+		return errors.New("llm.vram_ratios is not set")
+	}
+	for i, tier := range appConfig.LLM.VramRatios {
+		if tier.MaxVram == 0 {
+			return fmt.Errorf("llm.vram_ratios[%d].max_vram is not set", i)
+		}
+		if i > 0 && tier.MaxVram <= appConfig.LLM.VramRatios[i-1].MaxVram {
+			return fmt.Errorf("llm.vram_ratios must be sorted by strictly ascending max_vram at index %d", i)
+		}
+		if _, err := VramRatioStored(tier.Ratio); err != nil {
+			return fmt.Errorf("llm.vram_ratios[%d].ratio is invalid: %w", i, err)
+		}
+	}
 	return nil
+}
+
+// VramRatioStored converts a display VRAM ratio to the stored integer (ratio * 10).
+func VramRatioStored(ratio float64) (uint, error) {
+	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio <= 0 {
+		return 0, errors.New("must be a positive number")
+	}
+	stored := uint(math.Round(ratio * 10))
+	if stored == 0 || math.Abs(float64(stored)/10.0-ratio) > 1e-9 {
+		return 0, errors.New("must have at most one decimal place")
+	}
+	return stored, nil
 }
 
 func ReadFromFile(file string) string {

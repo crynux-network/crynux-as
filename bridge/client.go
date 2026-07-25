@@ -33,14 +33,14 @@ type Response struct {
 	Body       io.ReadCloser
 }
 
-// ChatCompletions POSTs to /v1/llm/chat/completions.
-func (c *Client) ChatCompletions(ctx context.Context, body []byte) (*Response, error) {
-	return c.post(ctx, "/v1/llm/chat/completions", body)
+// ChatCompletions POSTs to /v1/llm/:vram_limit/chat/completions.
+func (c *Client) ChatCompletions(ctx context.Context, vramLimit uint64, body []byte) (*Response, error) {
+	return c.post(ctx, fmt.Sprintf("/v1/llm/%d/chat/completions", vramLimit), body)
 }
 
-// Completions POSTs to /v1/llm/completions.
-func (c *Client) Completions(ctx context.Context, body []byte) (*Response, error) {
-	return c.post(ctx, "/v1/llm/completions", body)
+// Completions POSTs to /v1/llm/:vram_limit/completions.
+func (c *Client) Completions(ctx context.Context, vramLimit uint64, body []byte) (*Response, error) {
+	return c.post(ctx, fmt.Sprintf("/v1/llm/%d/completions", vramLimit), body)
 }
 
 func (c *Client) post(ctx context.Context, path string, body []byte) (*Response, error) {

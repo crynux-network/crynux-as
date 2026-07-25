@@ -12,6 +12,11 @@ type TokenConfig struct {
 	CreditsPerToken uint64 `mapstructure:"credits_per_token"`
 }
 
+type VramRatioConfig struct {
+	MaxVram uint64  `mapstructure:"max_vram"`
+	Ratio   float64 `mapstructure:"ratio"`
+}
+
 type BlockchainNetworkConfig struct {
 	ChainID          uint64                 `mapstructure:"chain_id"`
 	RpcEndpoint      string                 `mapstructure:"rpc_endpoint"`
@@ -66,9 +71,16 @@ type AppConfig struct {
 		APIKeyFile string `mapstructure:"api_key_file"`
 	} `mapstructure:"bridge"`
 
+	Relay struct {
+		BaseURL string `mapstructure:"base_url"`
+	} `mapstructure:"relay"`
+
 	LLM struct {
-		PromptCreditsPerToken     uint64 `mapstructure:"prompt_credits_per_token"`
-		CompletionCreditsPerToken uint64 `mapstructure:"completion_credits_per_token"`
-		DefaultMaxTokens          uint64 `mapstructure:"default_max_tokens"`
+		PromptCreditsPerToken       uint64            `mapstructure:"prompt_credits_per_token"`
+		CompletionCreditsPerToken   uint64            `mapstructure:"completion_credits_per_token"`
+		DefaultMaxTokens            uint64            `mapstructure:"default_max_tokens"`
+		DefaultVramLimit            uint64            `mapstructure:"default_vram_limit"`
+		LoadedModelsRefreshInterval uint64            `mapstructure:"loaded_models_refresh_interval"`
+		VramRatios                  []VramRatioConfig `mapstructure:"vram_ratios"`
 	} `mapstructure:"llm"`
 }

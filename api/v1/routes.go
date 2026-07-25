@@ -3,6 +3,7 @@ package v1
 import (
 	"crynux_as/api/v1/account"
 	"crynux_as/api/v1/auth"
+	"crynux_as/api/v1/llm"
 	"crynux_as/api/v1/middleware"
 	"crynux_as/api/v1/projects"
 	"crynux_as/api/v1/response"
@@ -76,4 +77,11 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("404", "project not found", response.NotFoundErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(projects.GetProjectStats, 200))
+
+	llmGroup := v1g.Group("llm", "LLM", "LLM configuration APIs", middleware.JWTAuthMiddleware())
+	llmGroup.GET("/vram_ratios", []fizz.OperationOption{
+		fizz.Summary("Get the configured VRAM billing ratio tiers"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(llm.GetVramRatios, 200))
 }

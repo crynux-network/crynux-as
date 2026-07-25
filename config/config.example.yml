@@ -56,7 +56,16 @@ blockchains:
 bridge:
   base_url: ""
   api_key_file: "config/secrets/bridge_api_key.txt"
+relay:
+  base_url: ""
 llm:
   prompt_credits_per_token: 1
   completion_credits_per_token: 1
   default_max_tokens: 2048
+  default_vram_limit: 24
+  loaded_models_refresh_interval: 1800
+  vram_ratios:
+    - max_vram: 24
+      ratio: 0.5
+    - max_vram: 96
+      ratio: 1.5

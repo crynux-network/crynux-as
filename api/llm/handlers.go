@@ -28,8 +28,8 @@ func ChatCompletions(c *gin.Context) {
 	handleLLMProxy(
 		c,
 		service.EstimatePromptTokensFromChatBody,
-		func(ctx context.Context, body []byte) (*bridge.Response, error) {
-			return client.ChatCompletions(ctx, body)
+		func(ctx context.Context, vramLimit uint64, body []byte) (*bridge.Response, error) {
+			return client.ChatCompletions(ctx, vramLimit, body)
 		},
 	)
 }
@@ -39,8 +39,8 @@ func Completions(c *gin.Context) {
 	handleLLMProxy(
 		c,
 		service.EstimatePromptTokensFromCompletionsBody,
-		func(ctx context.Context, body []byte) (*bridge.Response, error) {
-			return client.Completions(ctx, body)
+		func(ctx context.Context, vramLimit uint64, body []byte) (*bridge.Response, error) {
+			return client.Completions(ctx, vramLimit, body)
 		},
 	)
 }

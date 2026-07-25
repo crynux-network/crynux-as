@@ -25,8 +25,13 @@ type LLMPrices struct {
 
 // CalcCredits computes Credits from token usage, project token ratio, and unit prices:
 // credits = (prompt_tokens * ratioInt * promptPrice + completion_tokens * ratioInt * completionPrice) / 10
-func CalcCredits(promptTokens, completionTokens uint64, tokenRatio uint, prices LLMPrices) *big.Int {
+// CalcCredits computes credits = (P * R * V * Pp + C * R * V * Cp) / 100, where
+// R is the stored token ratio (display * 10) and V is the stored VRAM tier ratio
+// (display * 10). The result truncates toward zero.
+func CalcCredits(promptTokens, completionTokens uint64, tokenRatio uint, vramRatio uint, prices LLMPrices) *big.Int {
 	ratio := new(big.Int).SetUint64(uint64(tokenRatio))
+	ratio.Mul(ratio, new(big.Int).SetUint64(uint64(vramRatio)))
+
 	promptPart := new(big.Int).SetUint64(promptTokens)
 	promptPart.Mul(promptPart, ratio)
 	promptPart.Mul(promptPart, new(big.Int).SetUint64(prices.PromptCreditsPerToken))
@@ -36,7 +41,7 @@ func CalcCredits(promptTokens, completionTokens uint64, tokenRatio uint, prices 
 	completionPart.Mul(completionPart, new(big.Int).SetUint64(prices.CompletionCreditsPerToken))
 
 	total := new(big.Int).Add(promptPart, completionPart)
-	return total.Div(total, big.NewInt(10))
+	return total.Div(total, big.NewInt(100))
 }
 
 // ResolveMaxCompletionTokens returns max_completion_tokens, else max_tokens, else defaultMax.
@@ -141,6 +146,7 @@ type RecordLLMCallInput struct {
 	Status           models.LLMCallStatus
 	Credits          *big.Int
 	DurationMs       uint64
+	BilledVram       uint64
 	Charge           bool
 }
 
@@ -202,6 +208,7 @@ func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) err
 			Status:           in.Status,
 			Credits:          models.BigInt{Int: *chargeCredits},
 			DurationMs:       in.DurationMs,
+			BilledVram:       in.BilledVram,
 		}
 		if err := tx.Create(&record).Error; err != nil {
 			return err

@@ -5,7 +5,7 @@
 | [requirements.md](./requirements.md) | Functional requirements: wallet login and accounts, multi-chain multi-token deposits and Credits crediting, projects and private LLM API endpoints, Bridge forwarding and usage-based charging, and per-project usage statistics |
 | [architecture.md](./architecture.md) | Technical architecture: components, deposit and LLM charging data flows, multi-chain multi-token configuration model, and Credits ledger consistency rules |
 | [deposit-processing.md](./deposit-processing.md) | Deposit processing specification: per-network scan workers, cursor and log filter rules, `credits_per_token` conversion, unknown-sender ignore rules, and atomic Credits ledger updates |
-| [llm-api.md](./llm-api.md) | OpenAI-compatible LLM API specification: private endpoints, Bridge forwarding, project token-ratio billing, global unit prices, balance precheck, and Credits settle rules |
+| [llm-api.md](./llm-api.md) | OpenAI-compatible LLM API specification: private endpoints, model catalog from the loaded-models cache, VRAM limit and effective VRAM resolution, Bridge forwarding, and the consolidated LLM Charging Rules chapter (token ratio, VRAM tiers, unit prices, precheck, settle, call records) |
 
 ## Doc Update Requirements
 
