@@ -17,6 +17,7 @@ type LLMCallRecord struct {
 	PromptTokens     uint64        `json:"prompt_tokens" gorm:"not null;default:0"`
 	CompletionTokens uint64        `json:"completion_tokens" gorm:"not null;default:0"`
 	TotalTokens      uint64        `json:"total_tokens" gorm:"not null;default:0"`
+	TokenRatio       uint          `json:"token_ratio" gorm:"not null;default:0"`
 	Status           LLMCallStatus `json:"status" gorm:"not null;default:0;index"`
 	Credits          BigInt        `json:"credits" gorm:"type:string;size:255;not null"`
 	DurationMs       uint64        `json:"duration_ms" gorm:"not null;default:0"`

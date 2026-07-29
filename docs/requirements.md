@@ -109,7 +109,7 @@ The service forwards LLM requests to the Crynux Bridge LLM API. Streaming reques
 
 Each LLM call is charged from the Credits balance of the owning account using Bridge `usage` token counts, the project `token_ratio`, the VRAM tier ratio selected from the resolved effective VRAM, and the configured global unit prices. Insufficient balance for the pre-forward estimate MUST be rejected with HTTP 402. The complete billing specification is the LLM Charging Rules chapter in [llm-api.md](./llm-api.md).
 
-`GET /v1/llm/vram_ratios` is a JWT-authenticated management API that returns the configured VRAM billing tiers.
+`GET /v1/llm/billing_config` is a JWT-authenticated management API that returns the configured prompt and completion unit prices together with the VRAM billing tiers.
 
 ### Call Records
 

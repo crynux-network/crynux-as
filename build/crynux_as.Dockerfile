@@ -9,7 +9,7 @@ RUN CGO_ENABLED=1 go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 go build
+RUN CGO_ENABLED=1 CGO_CFLAGS="-D_LARGEFILE64_SOURCE" go build
 
 FROM alpine:3.23
 

@@ -213,7 +213,7 @@ After a successful Bridge response:
 
 1. The service MUST read `usage.prompt_tokens`, `usage.completion_tokens`, and `usage.total_tokens`.
 2. The service MUST compute Credits with the charge formula, using the same `V` resolved before forwarding.
-3. The service MUST create one `llm_call_records` row with success status, token counts, charged Credits, the billed effective VRAM, and call duration.
+3. The service MUST create one `llm_call_records` row with success status, token counts, the project `token_ratio` used for the charge, charged Credits, the billed effective VRAM, and call duration.
 4. When the computed Credits are greater than zero and the account balance is sufficient, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by the same amount in the same database transaction.
 
 When the Bridge call succeeds but the account balance is insufficient for the computed Credits at settle time, the service MUST still create a success `llm_call_records` row with charged Credits set to `0`, MUST NOT create a Credits ledger event, and MUST emit an error log for operators.
@@ -231,21 +231,26 @@ Each `llm_call_records` row MUST contain:
 * `project_id`
 * `model`
 * `prompt_tokens`, `completion_tokens`, `total_tokens`
+* `token_ratio` (the project cost level used for the charge, stored as display × 10)
 * `status` (success or failed)
 * `credits` (charged Credits; `0` when not charged)
 * `duration_ms`
 * `billed_vram` (the resolved effective VRAM in GB used for tier selection and Bridge forwarding)
 
-## VRAM Ratio Query API
+## Billing Config Query API
 
-`GET /v1/llm/vram_ratios` is a management API that requires a valid JWT token. It MUST NOT be exposed on the private LLM surface. It returns the configured VRAM billing tiers with display float ratios:
+`GET /v1/llm/billing_config` is a management API that requires a valid JWT token. It MUST NOT be exposed on the private LLM surface. It returns the configured prompt and completion unit prices together with the VRAM billing tiers (display float ratios):
 
 ```json
 {
   "message": "success",
-  "data": [
-    { "max_vram": 24, "ratio": 0.5 },
-    { "max_vram": 96, "ratio": 1.5 }
-  ]
+  "data": {
+    "prompt_credits_per_token": 1,
+    "completion_credits_per_token": 1,
+    "vram_ratios": [
+      { "max_vram": 24, "ratio": 0.5 },
+      { "max_vram": 96, "ratio": 1.5 }
+    ]
+  }
 }
 ```

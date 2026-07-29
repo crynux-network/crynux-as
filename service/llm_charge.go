@@ -143,6 +143,7 @@ type RecordLLMCallInput struct {
 	PromptTokens     uint64
 	CompletionTokens uint64
 	TotalTokens      uint64
+	TokenRatio       uint
 	Status           models.LLMCallStatus
 	Credits          *big.Int
 	DurationMs       uint64
@@ -205,6 +206,7 @@ func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) err
 			PromptTokens:     in.PromptTokens,
 			CompletionTokens: in.CompletionTokens,
 			TotalTokens:      in.TotalTokens,
+			TokenRatio:       in.TokenRatio,
 			Status:           in.Status,
 			Credits:          models.BigInt{Int: *chargeCredits},
 			DurationMs:       in.DurationMs,
