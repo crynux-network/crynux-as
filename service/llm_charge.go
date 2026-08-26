@@ -137,18 +137,22 @@ func promptRuneCount(raw json.RawMessage) int {
 }
 
 type RecordLLMCallInput struct {
-	UserID           uint
-	ProjectID        uint
-	Model            string
-	PromptTokens     uint64
-	CompletionTokens uint64
-	TotalTokens      uint64
-	TokenRatio       uint
-	Status           models.LLMCallStatus
-	Credits          *big.Int
-	DurationMs       uint64
-	BilledVram       uint64
-	Charge           bool
+	UserID               uint
+	ProjectID            uint
+	Model                string
+	PromptTokens         uint64
+	CompletionTokens     uint64
+	TotalTokens          uint64
+	TokenRatio           uint
+	Status               models.LLMCallStatus
+	Credits              *big.Int
+	DurationMs           uint64
+	BilledVram           uint64
+	TaskFeeGwei          *big.Int
+	MedianPriorityGwei   *big.Int
+	EstimatedNodeSeconds *float64
+	VramWeight           *float64
+	Charge               bool
 }
 
 // ProcessLLMCall writes an llm_call_records row and, for a successful chargeable call,
@@ -201,16 +205,24 @@ func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) err
 		}
 
 		record := models.LLMCallRecord{
-			ProjectID:        in.ProjectID,
-			Model:            in.Model,
-			PromptTokens:     in.PromptTokens,
-			CompletionTokens: in.CompletionTokens,
-			TotalTokens:      in.TotalTokens,
-			TokenRatio:       in.TokenRatio,
-			Status:           in.Status,
-			Credits:          models.BigInt{Int: *chargeCredits},
-			DurationMs:       in.DurationMs,
-			BilledVram:       in.BilledVram,
+			ProjectID:            in.ProjectID,
+			Model:                in.Model,
+			PromptTokens:         in.PromptTokens,
+			CompletionTokens:     in.CompletionTokens,
+			TotalTokens:          in.TotalTokens,
+			TokenRatio:           in.TokenRatio,
+			Status:               in.Status,
+			Credits:              models.BigInt{Int: *chargeCredits},
+			DurationMs:           in.DurationMs,
+			BilledVram:           in.BilledVram,
+			EstimatedNodeSeconds: cloneFloat64Ptr(in.EstimatedNodeSeconds),
+			VramWeight:           cloneFloat64Ptr(in.VramWeight),
+		}
+		if in.TaskFeeGwei != nil {
+			record.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
+		}
+		if in.MedianPriorityGwei != nil {
+			record.MedianPriorityGwei = &models.BigInt{Int: *new(big.Int).Set(in.MedianPriorityGwei)}
 		}
 		if err := tx.Create(&record).Error; err != nil {
 			return err
@@ -246,4 +258,12 @@ func EnsureSufficientBalance(balance, required *big.Int) error {
 		return ErrInsufficientBalance
 	}
 	return nil
+}
+
+func cloneFloat64Ptr(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	copied := *v
+	return &copied
 }

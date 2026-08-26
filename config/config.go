@@ -142,6 +142,18 @@ func checkLLMConfig() error {
 	if appConfig.LLM.LoadedModelsRefreshInterval == 0 {
 		return errors.New("llm.loaded_models_refresh_interval is not set")
 	}
+	if appConfig.LLM.QueuedPriorityRefreshInterval == 0 {
+		return errors.New("llm.queued_priority_refresh_interval is not set")
+	}
+	if appConfig.LLM.ExecutionTimeCacheTTL == 0 {
+		return errors.New("llm.execution_time_cache_ttl is not set")
+	}
+	if appConfig.LLM.BaseVRAM == 0 {
+		return errors.New("llm.base_vram is not set")
+	}
+	if appConfig.LLM.EmptyQueueMedianPriorityGwei == 0 {
+		return errors.New("llm.empty_queue_median_priority_gwei is not set")
+	}
 	if len(appConfig.LLM.VramRatios) == 0 {
 		return errors.New("llm.vram_ratios is not set")
 	}
@@ -190,3 +202,9 @@ func GetTestBridgeAPIKey() string {
 func GetConfig() *AppConfig {
 	return appConfig
 }
+
+// SetConfigForTest replaces the process-wide config. Pass nil to clear it.
+func SetConfigForTest(cfg *AppConfig) {
+	appConfig = cfg
+}
+

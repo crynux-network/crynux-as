@@ -44,11 +44,18 @@ func main() {
 	service.StartBlockchainProcessors(context.Background())
 	go tasks.StartStatsProjectUsage(context.Background())
 
-	service.InitLoadedModelsCache(relay.NewClient(conf.Relay.BaseURL))
+	relayClient := relay.NewClient(conf.Relay.BaseURL)
+	service.InitLoadedModelsCache(relayClient)
+	service.InitQueuedPriorityCache(relayClient)
+	service.InitExecutionTimeCache(relayClient, conf.LLM.ExecutionTimeCacheTTL)
 	if err := service.RefreshLoadedModels(context.Background()); err != nil {
 		log.Errorf("initial loaded models refresh failed: %v", err)
 	}
+	if err := service.RefreshQueuedPriority(context.Background()); err != nil {
+		log.Errorf("initial queued priority refresh failed: %v", err)
+	}
 	go tasks.StartLoadedModelsRefresh(context.Background())
+	go tasks.StartQueuedPriorityRefresh(context.Background())
 
 	startServer()
 }

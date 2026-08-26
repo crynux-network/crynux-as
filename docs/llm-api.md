@@ -166,6 +166,10 @@ llm:
   default_max_tokens: 2048
   default_vram_limit: 24
   loaded_models_refresh_interval: 1800
+  queued_priority_refresh_interval: 300
+  execution_time_cache_ttl: 300
+  base_vram: 8
+  empty_queue_median_priority_gwei: 1
   vram_ratios:
     - max_vram: 24
       ratio: 0.5
@@ -178,6 +182,10 @@ llm:
 * `default_max_tokens` is used in the pre-forward balance estimate when the request omits both `max_tokens` and `max_completion_tokens`.
 * `default_vram_limit` is the effective VRAM in GB for an unknown model when the user did not specify a `vram_limit`.
 * `loaded_models_refresh_interval` is the loaded-models cache refresh interval in seconds. Every YAML configuration template MUST set it to `1800`.
+* `queued_priority_refresh_interval` is the queued-task priority snapshot refresh interval in seconds. Every YAML configuration template MUST set it to `300`.
+* `execution_time_cache_ttl` is the per-key TTL in seconds for LLM execution-time coefficients cached from Relay. Every YAML configuration template MUST set it to `300`.
+* `base_vram` is the VRAM weight base in GB used by Task Fee Estimation. Operators MUST keep it aligned with Relay `task_pricing.base_vram`. Every YAML configuration template MUST set it to `8`.
+* `empty_queue_median_priority_gwei` is the median priority in Gwei used when the queued-priority cache has never observed a non-empty queue. Every YAML configuration template MUST set it to a positive integer.
 * `vram_ratios` is the ordered list of VRAM billing tiers.
 
 Configuration loading MUST fail when any of these values is zero or missing, when `vram_ratios` is empty or not sorted by strictly ascending `max_vram`, or when any tier `ratio` is not a positive number with at most one decimal place.
@@ -213,7 +221,7 @@ After a successful Bridge response:
 
 1. The service MUST read `usage.prompt_tokens`, `usage.completion_tokens`, and `usage.total_tokens`.
 2. The service MUST compute Credits with the charge formula, using the same `V` resolved before forwarding.
-3. The service MUST create one `llm_call_records` row with success status, token counts, the project `token_ratio` used for the charge, charged Credits, the billed effective VRAM, and call duration.
+3. The service MUST create one `llm_call_records` row with success status, token counts, the project `token_ratio` used for the charge, charged Credits, the billed effective VRAM, call duration, and the Task Fee Estimation fields computed before forwarding.
 4. When the computed Credits are greater than zero and the account balance is sufficient, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by the same amount in the same database transaction.
 
 When the Bridge call succeeds but the account balance is insufficient for the computed Credits at settle time, the service MUST still create a success `llm_call_records` row with charged Credits set to `0`, MUST NOT create a Credits ledger event, and MUST emit an error log for operators.
@@ -236,6 +244,65 @@ Each `llm_call_records` row MUST contain:
 * `credits` (charged Credits; `0` when not charged)
 * `duration_ms`
 * `billed_vram` (the resolved effective VRAM in GB used for tier selection and Bridge forwarding)
+
+When Task Fee Estimation succeeds before Bridge forwarding, a success `llm_call_records` row MUST also contain:
+
+* `task_fee_gwei`
+* `median_priority_gwei`
+* `estimated_node_seconds`
+* `vram_weight`
+
+When Task Fee Estimation fails and the request is aborted before Bridge forwarding, the failure `llm_call_records` row MUST leave those four fields empty. Management query APIs MUST NOT expose these four fields.
+
+## Task Fee Estimation
+
+After the Credits balance precheck succeeds and before the request is forwarded to the Bridge, the service MUST estimate a task fee in Gwei. The estimate is recorded on successful call rows. The estimate MUST NOT be sent to the Bridge. The Credits charge formula MUST NOT use the task fee.
+
+### Formula
+
+Version 1 covers text work only. The model-switch term MUST be zero. Image work MUST NOT be included.
+
+```text
+estimated_node_seconds =
+    constant_seconds
+    + seconds_per_input_token * estimated_prompt_tokens
+    + seconds_per_output_token * max_completion_tokens
+
+vram_weight =
+    max(effective_vram, base_vram) / base_vram
+
+target_priority_gwei =
+    median_priority_gwei * token_ratio_display
+
+task_fee_gwei =
+    floor(target_priority_gwei * estimated_node_seconds * vram_weight)
+```
+
+* `estimated_prompt_tokens` and `max_completion_tokens` MUST be the same values used by the Credits balance precheck.
+* `token_ratio_display` MUST be the project token ratio display float (`projects.token_ratio` stored integer divided by `10`).
+* `effective_vram` MUST be the resolved effective VRAM of the request.
+* `base_vram` MUST come from `llm.base_vram`.
+* `vram_weight` MUST be computed locally by Crynux AS. The service MUST NOT query Relay for `vram_weight`.
+* `constant_seconds`, `seconds_per_input_token`, and `seconds_per_output_token` MUST come from Relay `GET /v2/models/llm/execution-time` with query `model=<request model>` and `min_vram=<effective_vram>`.
+* `median_priority_gwei` MUST come from the queued-task priority snapshot cache fed by Relay `GET /v2/tasks/queued/priority`.
+
+`task_fee_gwei` MUST be computed with floating-point intermediates and MUST truncate toward zero to a non-negative integer Gwei value.
+
+### Empty Queue Median
+
+When the latest priority snapshot has `queued_task_count = 0` or a null `median_priority_gwei`:
+
+1. If the cache still holds the most recent non-empty `median_priority_gwei`, the service MUST use that value.
+2. Otherwise the service MUST use `llm.empty_queue_median_priority_gwei`.
+
+### Estimation Failure
+
+When Task Fee Estimation fails, the service MUST:
+
+1. Log the concrete error cause.
+2. Create one failure `llm_call_records` row without the four fee fields.
+3. Return HTTP 500 to the client.
+4. MUST NOT forward the request to the Bridge.
 
 ## Billing Config Query API
 

@@ -64,3 +64,9 @@ func InitDB(appConfig *AppConfig) error {
 func GetDB() *gorm.DB {
 	return db
 }
+
+// SetDBForTest replaces the process-wide DB handle. Pass nil to clear it.
+func SetDBForTest(database *gorm.DB) {
+	db = database
+}
+

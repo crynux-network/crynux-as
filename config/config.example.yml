@@ -64,6 +64,10 @@ llm:
   default_max_tokens: 2048
   default_vram_limit: 24
   loaded_models_refresh_interval: 1800
+  queued_priority_refresh_interval: 300
+  execution_time_cache_ttl: 300
+  base_vram: 8
+  empty_queue_median_priority_gwei: 1
   vram_ratios:
     - max_vram: 24
       ratio: 0.5

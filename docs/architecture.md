@@ -16,7 +16,11 @@ flowchart LR
   API -->|forward| Bridge[Crynux Bridge LLM API]
   API --> Records[(llm_call_records)]
   Relay[Crynux Relay] -->|"GET /v2/loaded-models"| Cache[Loaded-Models Cache]
+  Relay -->|"GET /v2/tasks/queued/priority"| PriorityCache[Queued-Priority Cache]
+  Relay -->|"GET /v2/models/llm/execution-time"| ExecTimeCache[Execution-Time Cache]
   Cache --> API
+  PriorityCache --> API
+  ExecTimeCache --> API
   Stats[Stats Tasks] --> Records
   Stats --> Usage[(project_usage_stats)]
 ```
@@ -25,14 +29,16 @@ flowchart LR
 * **Blockchain processors** (`service/`): one worker goroutine per configured network that scans ERC20 `Transfer` logs to the receiving address and converts them into deposits and Credits ledger events.
 * **Blockchain clients** (`blockchain/`): one eth client per configured network with a per-network RPS rate limiter. All RPC requests of a network MUST pass through its limiter. The package also provides Ethereum personal-sign signature verification used by wallet login.
 * **Bridge client** (`bridge/`): forwards LLM chat and completions requests to the Crynux Bridge using the platform-level Bridge API key from the configuration. The resolved effective VRAM is sent in the Bridge URL path (`/v1/llm/<effective_vram>/...`). See [llm-api.md](./llm-api.md).
-* **Relay client** (`relay/`): fetches the loaded models from the public Relay API `GET {relay.base_url}/v2/loaded-models` without authentication.
+* **Relay client** (`relay/`): calls the public Relay APIs without authentication: `GET {relay.base_url}/v2/loaded-models`, `GET {relay.base_url}/v2/tasks/queued/priority`, and `GET {relay.base_url}/v2/models/llm/execution-time`.
 * **Loaded-models cache** (`service/`): one in-memory snapshot of the Relay loaded models with `model_type == "llm"`, keyed by lowercase `model_id`. The cache MUST be refreshed once at startup before the HTTP server starts and then every `llm.loaded_models_refresh_interval` seconds by a background task in `tasks/`. A failed startup refresh MUST be logged, MUST leave the cache empty, and MUST NOT prevent startup. A failed periodic refresh MUST retain the last successful snapshot and retry at the next interval. A successful refresh MUST replace the whole snapshot. The cache is not persisted to the database.
+* **Queued-priority cache** (`service/`): one in-memory snapshot of the Relay queued-task priority range from `GET /v2/tasks/queued/priority`. The cache MUST be refreshed once at startup before the HTTP server starts and then every `llm.queued_priority_refresh_interval` seconds by a background task in `tasks/`. A failed startup refresh MUST be logged and MUST NOT prevent startup. A failed periodic refresh MUST retain the last successful snapshot and retry at the next interval. A successful refresh MUST replace the snapshot. When a successful refresh returns an empty queue, the cache MUST retain the most recent non-empty `median_priority_gwei` for Task Fee Estimation fallback. The cache is not persisted to the database.
+* **Execution-time cache** (`service/`): an in-memory TTL cache of LLM execution-time coefficients keyed by `(model, effective_vram)`. Entries MUST be fetched on demand from Relay `GET /v2/models/llm/execution-time` with `model` and `min_vram=effective_vram`. The TTL MUST be `llm.execution_time_cache_ttl` seconds. The cache MUST NOT run a full-catalog refresh timer. The cache is not persisted to the database.
 * **Stats tasks** (`tasks/`): background aggregation of `llm_call_records` into `project_usage_stats`.
 * **MySQL database**: all persistent state. Schema changes are applied by versioned gormigrate migrations in `migrate/` at startup.
 
 ## Startup Order
 
-`main.go` initializes components in this order: config (`config.InitConfig`), logging (`config.InitLog`), database (`config.InitDB`), database migrations (`migrate.InitMigration` + `migrate.Migrate`), blockchain clients (`blockchain.Init`), background workers (blockchain processors, stats tasks), the initial loaded-models cache refresh and its periodic refresh task, and finally the HTTP server.
+`main.go` initializes components in this order: config (`config.InitConfig`), logging (`config.InitLog`), database (`config.InitDB`), database migrations (`migrate.InitMigration` + `migrate.Migrate`), blockchain clients (`blockchain.Init`), background workers (blockchain processors, stats tasks), the initial loaded-models and queued-priority cache refreshes and their periodic refresh tasks, and finally the HTTP server.
 
 ## Multi-Chain Multi-Token Configuration Model
 
@@ -64,6 +70,10 @@ llm:
   default_max_tokens: 2048
   default_vram_limit: 24
   loaded_models_refresh_interval: 1800
+  queued_priority_refresh_interval: 300
+  execution_time_cache_ttl: 300
+  base_vram: 8
+  empty_queue_median_priority_gwei: 1
   vram_ratios:
     - max_vram: 24
       ratio: 0.5
@@ -71,7 +81,7 @@ llm:
       ratio: 1.5
 ```
 
-Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. `relay.base_url` is the public Relay URL for the loaded-models refresh. The LLM unit prices, `default_max_tokens`, `default_vram_limit`, `loaded_models_refresh_interval`, and `vram_ratios` items are specified in [llm-api.md](./llm-api.md).
+Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. `relay.base_url` is the public Relay URL for loaded-models, queued-priority, and execution-time fetches. The LLM unit prices, `default_max_tokens`, `default_vram_limit`, `loaded_models_refresh_interval`, `queued_priority_refresh_interval`, `execution_time_cache_ttl`, `base_vram`, `empty_queue_median_priority_gwei`, and `vram_ratios` items are specified in [llm-api.md](./llm-api.md).
 
 ## Data Model
 
@@ -83,7 +93,7 @@ Configuration loading MUST fail with an error when a required item is missing. E
 | `deposits` | Detected ERC20 transfers; unique by network + tx hash + log index |
 | `blockchain_cursors` | Per-network scan cursor; unique by network |
 | `projects` | User projects; unique `endpoint_token` forms the private base URL; stores the project API key hash, public prefix, and `token_ratio` |
-| `llm_call_records` | One row per LLM call with token usage, status, charged Credits, duration, and billed effective VRAM |
+| `llm_call_records` | One row per LLM call with token usage, status, charged Credits, duration, billed effective VRAM, and optional task-fee estimation fields |
 | `project_usage_stats` | Aggregated usage per project and time period; unique by project + period start |
 
 ## Deposit Flow
@@ -100,9 +110,10 @@ The authoritative charging rules are specified in [llm-api.md](./llm-api.md). Th
 
 1. The client sends an OpenAI-compatible request to `/api/<endpoint_token>/v1/...` with a project API key in the `Authorization` header.
 2. The API server locates the project by `endpoint_token`, validates the API key hash against the project's stored key hash, resolves the effective VRAM from the user `vram_limit`, the loaded-models cache, and the configured default, and estimates the charge from the request using the VRAM tier ratio. Requests with insufficient balance for the estimate are rejected with HTTP 402.
-3. The request is forwarded to the Crynux Bridge (`/v1/llm/<effective_vram>/chat/completions` or `/v1/llm/<effective_vram>/completions`) with the platform Bridge API key. For streaming requests, `stream_options.include_usage: true` is injected so the final stream chunk carries the `usage` payload; this chunk is not exposed to clients that did not request it.
-4. The charge is calculated from the response `usage` token counts, the project `token_ratio`, the VRAM tier ratio, and the configured global unit prices. One `llm_call_records` row records the call together with the billed effective VRAM, and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance when settle succeeds.
-5. The stats task periodically aggregates call records into `project_usage_stats`.
+3. The API server estimates the task fee from the queued-priority cache, the execution-time cache, the project token ratio, and the resolved effective VRAM. A fee estimation failure MUST return HTTP 500, MUST record a failed call without fee fields, and MUST NOT forward to the Bridge. The estimated fee MUST NOT be sent to the Bridge.
+4. The request is forwarded to the Crynux Bridge (`/v1/llm/<effective_vram>/chat/completions` or `/v1/llm/<effective_vram>/completions`) with the platform Bridge API key. For streaming requests, `stream_options.include_usage: true` is injected so the final stream chunk carries the `usage` payload; this chunk is not exposed to clients that did not request it.
+5. The charge is calculated from the response `usage` token counts, the project `token_ratio`, the VRAM tier ratio, and the configured global unit prices. One `llm_call_records` row records the call together with the billed effective VRAM and the pre-forward task-fee estimate, and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance when settle succeeds.
+6. The stats task periodically aggregates call records into `project_usage_stats`.
 
 ## Credits Ledger Consistency Rules
 

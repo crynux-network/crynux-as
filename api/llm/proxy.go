@@ -38,6 +38,8 @@ type requestMeta struct {
 	} `json:"stream_options"`
 }
 
+var estimateTaskFeeFn = service.EstimateTaskFee
+
 func handleLLMProxy(c *gin.Context, estimatePrompt func([]byte) uint64, forward func(context.Context, uint64, []byte) (*bridge.Response, error)) {
 	project := GetProject(c)
 	if project == nil {
@@ -91,6 +93,22 @@ func handleLLMProxy(c *gin.Context, estimatePrompt func([]byte) uint64, forward 
 		return
 	}
 
+	started := time.Now()
+	taskFee, err := estimateTaskFeeFn(
+		c.Request.Context(),
+		meta.Model,
+		effectiveVram,
+		project.TokenRatio,
+		estPrompt,
+		maxCompletion,
+	)
+	if err != nil {
+		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, meta.Model, err)
+		_ = recordFailedCall(c.Request.Context(), project, meta.Model, effectiveVram, time.Since(started), nil)
+		writeServerError(c)
+		return
+	}
+
 	clientRequestedIncludeUsage := meta.Stream && meta.StreamOptions != nil && meta.StreamOptions.IncludeUsage
 	forwardBody := body
 	if meta.Stream {
@@ -102,11 +120,10 @@ func handleLLMProxy(c *gin.Context, estimatePrompt func([]byte) uint64, forward 
 		forwardBody = injected
 	}
 
-	started := time.Now()
 	bridgeResp, err := forward(c.Request.Context(), effectiveVram, forwardBody)
 	if err != nil {
 		log.Errorf("Bridge request failed for project %d: %v", project.ID, err)
-		_ = recordFailedCall(c.Request.Context(), project, meta.Model, effectiveVram, time.Since(started))
+		_ = recordFailedCall(c.Request.Context(), project, meta.Model, effectiveVram, time.Since(started), nil)
 		writeServerError(c)
 		return
 	}
@@ -114,7 +131,7 @@ func handleLLMProxy(c *gin.Context, estimatePrompt func([]byte) uint64, forward 
 	if bridgeResp.StatusCode >= 400 {
 		respBody, readErr := bridgeResp.ReadAll()
 		duration := time.Since(started)
-		_ = recordFailedCall(c.Request.Context(), project, meta.Model, effectiveVram, duration)
+		_ = recordFailedCall(c.Request.Context(), project, meta.Model, effectiveVram, duration, nil)
 		if readErr != nil {
 			log.Errorf("Error reading bridge error body for project %d: %v", project.ID, readErr)
 			writeServerError(c)
@@ -129,19 +146,19 @@ func handleLLMProxy(c *gin.Context, estimatePrompt func([]byte) uint64, forward 
 	}
 
 	if meta.Stream {
-		proxyStreamResponse(c, bridgeResp, project, meta.Model, effectiveVram, vramRatio, clientRequestedIncludeUsage, prices, started)
+		proxyStreamResponse(c, bridgeResp, project, meta.Model, effectiveVram, vramRatio, clientRequestedIncludeUsage, prices, started, taskFee)
 		return
 	}
 
-	proxyJSONResponse(c, bridgeResp, project, meta.Model, effectiveVram, vramRatio, prices, started)
+	proxyJSONResponse(c, bridgeResp, project, meta.Model, effectiveVram, vramRatio, prices, started, taskFee)
 }
 
-func proxyJSONResponse(c *gin.Context, bridgeResp *bridge.Response, project *models.Project, model string, billedVram uint64, vramRatio uint, prices service.LLMPrices, started time.Time) {
+func proxyJSONResponse(c *gin.Context, bridgeResp *bridge.Response, project *models.Project, model string, billedVram uint64, vramRatio uint, prices service.LLMPrices, started time.Time, taskFee *service.CalcTaskFeeResult) {
 	respBody, err := bridgeResp.ReadAll()
 	duration := time.Since(started)
 	if err != nil {
 		log.Errorf("Error reading bridge response for project %d: %v", project.ID, err)
-		_ = recordFailedCall(c.Request.Context(), project, model, billedVram, duration)
+		_ = recordFailedCall(c.Request.Context(), project, model, billedVram, duration, nil)
 		writeServerError(c)
 		return
 	}
@@ -151,26 +168,15 @@ func proxyJSONResponse(c *gin.Context, bridgeResp *bridge.Response, project *mod
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		log.Errorf("Error parsing bridge usage for project %d: %v", project.ID, err)
-		_ = recordFailedCall(c.Request.Context(), project, model, billedVram, duration)
+		_ = recordFailedCall(c.Request.Context(), project, model, billedVram, duration, nil)
 		writeServerError(c)
 		return
 	}
 
 	credits := service.CalcCredits(parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, project.TokenRatio, vramRatio, prices)
-	if err := service.ProcessLLMCall(c.Request.Context(), config.GetDB(), service.RecordLLMCallInput{
-		UserID:           project.UserID,
-		ProjectID:        project.ID,
-		Model:            model,
-		PromptTokens:     parsed.Usage.PromptTokens,
-		CompletionTokens: parsed.Usage.CompletionTokens,
-		TotalTokens:      parsed.Usage.TotalTokens,
-		TokenRatio:       project.TokenRatio,
-		Status:           models.LLMCallStatusSuccess,
-		Credits:          credits,
-		DurationMs:       uint64(duration.Milliseconds()),
-		BilledVram:       billedVram,
-		Charge:           true,
-	}); err != nil {
+	if err := service.ProcessLLMCall(c.Request.Context(), config.GetDB(), buildSuccessCallInput(
+		project, model, parsed.Usage, credits, duration, billedVram, taskFee,
+	)); err != nil {
 		log.Errorf("Error recording LLM call for project %d: %v", project.ID, err)
 		writeServerError(c)
 		return
@@ -193,6 +199,7 @@ func proxyStreamResponse(
 	clientRequestedIncludeUsage bool,
 	prices service.LLMPrices,
 	started time.Time,
+	taskFee *service.CalcTaskFeeResult,
 ) {
 	defer bridgeResp.Close()
 
@@ -204,7 +211,7 @@ func proxyStreamResponse(
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		log.Errorf("ResponseWriter does not support flushing for project %d", project.ID)
-		_ = recordFailedCall(c.Request.Context(), project, model, billedVram, time.Since(started))
+		_ = recordFailedCall(c.Request.Context(), project, model, billedVram, time.Since(started), nil)
 		writeServerError(c)
 		return
 	}
@@ -265,12 +272,28 @@ func proxyStreamResponse(
 
 	duration := time.Since(started)
 	if streamErr || usage == nil {
-		_ = recordFailedCall(c.Request.Context(), project, model, billedVram, duration)
+		_ = recordFailedCall(c.Request.Context(), project, model, billedVram, duration, nil)
 		return
 	}
 
 	credits := service.CalcCredits(usage.PromptTokens, usage.CompletionTokens, project.TokenRatio, vramRatio, prices)
-	if err := service.ProcessLLMCall(c.Request.Context(), config.GetDB(), service.RecordLLMCallInput{
+	if err := service.ProcessLLMCall(c.Request.Context(), config.GetDB(), buildSuccessCallInput(
+		project, model, *usage, credits, duration, billedVram, taskFee,
+	)); err != nil {
+		log.Errorf("Error recording streamed LLM call for project %d: %v", project.ID, err)
+	}
+}
+
+func buildSuccessCallInput(
+	project *models.Project,
+	model string,
+	usage usagePayload,
+	credits *big.Int,
+	duration time.Duration,
+	billedVram uint64,
+	taskFee *service.CalcTaskFeeResult,
+) service.RecordLLMCallInput {
+	in := service.RecordLLMCallInput{
 		UserID:           project.UserID,
 		ProjectID:        project.ID,
 		Model:            model,
@@ -283,9 +306,16 @@ func proxyStreamResponse(
 		DurationMs:       uint64(duration.Milliseconds()),
 		BilledVram:       billedVram,
 		Charge:           true,
-	}); err != nil {
-		log.Errorf("Error recording streamed LLM call for project %d: %v", project.ID, err)
 	}
+	if taskFee != nil {
+		in.TaskFeeGwei = taskFee.TaskFeeGwei
+		in.MedianPriorityGwei = taskFee.MedianPriorityGwei
+		estimated := taskFee.EstimatedNodeSeconds
+		weight := taskFee.VramWeight
+		in.EstimatedNodeSeconds = &estimated
+		in.VramWeight = &weight
+	}
+	return in
 }
 
 func isUsageOnlyChunk(chunk map[string]json.RawMessage) bool {
@@ -324,8 +354,8 @@ func loadCreditAccount(ctx context.Context, db *gorm.DB, userID uint) (*models.C
 	return &account, nil
 }
 
-func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, duration time.Duration) error {
-	return service.ProcessLLMCall(ctx, config.GetDB(), service.RecordLLMCallInput{
+func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, duration time.Duration, taskFee *service.CalcTaskFeeResult) error {
+	in := service.RecordLLMCallInput{
 		UserID:     project.UserID,
 		ProjectID:  project.ID,
 		Model:      model,
@@ -335,7 +365,16 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 		DurationMs: uint64(duration.Milliseconds()),
 		BilledVram: billedVram,
 		Charge:     false,
-	})
+	}
+	if taskFee != nil {
+		in.TaskFeeGwei = taskFee.TaskFeeGwei
+		in.MedianPriorityGwei = taskFee.MedianPriorityGwei
+		estimated := taskFee.EstimatedNodeSeconds
+		weight := taskFee.VramWeight
+		in.EstimatedNodeSeconds = &estimated
+		in.VramWeight = &weight
+	}
+	return service.ProcessLLMCall(ctx, config.GetDB(), in)
 }
 
 func writeClientError(c *gin.Context, status int, message string) {
