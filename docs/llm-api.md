@@ -10,12 +10,79 @@ Implemented endpoints:
 
 * `POST /api/<endpoint_token>/v1/chat/completions`
 * `POST /api/<endpoint_token>/v1/completions`
+* `POST /api/<endpoint_token>/v1/responses`
+* `GET /api/<endpoint_token>/v1/responses/<response_id>`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `GET /api/<endpoint_token>/v1/models`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
-The request and response formats MUST be OpenAI-compatible.
+The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields.
+
+## Responses API
+
+### `POST /api/<endpoint_token>/v1/responses`
+
+Creates a persisted LLM job and returns an OpenAI Responses object.
+
+Supported request fields in the first version:
+
+* `model`
+* `input` as a string or array of input items
+* `instructions`
+* function `tools`
+* function-call and function-call-output history in `input`
+* `background` (`true` returns immediately with `queued` or `in_progress`; `false` waits for completion)
+* `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, and `vram_limit`
+
+The first version MUST reject unsupported fields with HTTP 400 and the OpenAI invalid-request error shape. Unsupported fields include `stream`, `previous_response_id`, `conversation`, built-in tools, `cancel`, and `delete`.
+
+When `background` is `true`, the handler MUST persist the job and return immediately after the job is stored. The returned `status` MUST be `queued` or `in_progress`. The client MUST poll `GET /responses/<response_id>` until the job reaches a terminal state.
+
+When `background` is `false`, the handler MUST use the same persisted job flow and wait for the job to complete before returning the final Responses object.
+
+### `GET /api/<endpoint_token>/v1/responses/<response_id>`
+
+Returns the persisted Responses object for the project's response ID. A missing or foreign response ID MUST return HTTP 404.
+
+Terminal `completed` responses MUST include formatted `output` and `usage` only after the raw Bridge result, formatted result, usage, and billing settlement are stored. Terminal `failed` responses MUST include an OpenAI-format error object.
+
+## LLM Job Execution
+
+Chat completions, completions, and responses share one persisted `llm_jobs` table and one background worker.
+
+For every LLM request, the service MUST:
+
+1. Parse the public API request into canonical `GPTTaskArgs`.
+2. Create an `llm_jobs` row with status `pending_submit`.
+3. Let the background worker submit the job to Bridge raw task APIs, poll task status, download the raw `GPTTaskResponse`, format the public API result, and perform one-time Credits settlement.
+4. For chat completions and completions, wait synchronously on the HTTP request until the job reaches a terminal state, then return the formatted JSON body or simulated SSE stream.
+5. For responses with `background=false`, wait synchronously on the HTTP request until the job reaches a terminal state.
+6. For responses with `background=true`, return immediately after persistence and expose status through `GET /responses/<response_id>`.
+
+Client disconnect during a synchronous wait MUST NOT cancel the persisted job or settlement.
+
+The stable `llm_jobs.id` MUST be the billing settlement source. Repeated polling, synchronous waits, and worker retries MUST NOT create duplicate Credits charges.
+
+## Forwarding to the Crynux Bridge
+
+The service MUST execute LLM jobs through the Crynux Bridge raw task APIs using the platform-level Bridge API key from the service configuration (`Authorization: Bearer <api_key>`). The Bridge API key MUST have the `chat` role.
+
+AS MUST NOT send `client_id` in Bridge raw task requests. Bridge MUST derive the client identity from the API key.
+
+| AS operation | Bridge endpoint |
+|--------------|-----------------|
+| Create LLM raw task | `POST {bridge.base_url}/v1/inference_tasks/auth` |
+| Poll task status | `GET {bridge.base_url}/v1/inference_tasks/auth/<client_task_id>` |
+| Download LLM JSON result | `GET {bridge.base_url}/v1/inference_tasks/auth/<client_task_id>/llm_results/0` |
+
+The worker MUST send `request_id=as-job-<llm_jobs.id>` on task creation. Bridge MUST treat duplicate create requests with the same client and `request_id` as idempotent and return the original client task.
+
+The resolved effective VRAM MUST be sent as `min_vram` on raw task creation.
+
+AS owns OpenAI-compatible request parsing, raw `GPTTaskResponse` normalization into chat completions, completions, and responses output shapes, and simulated SSE for chat completions and completions. Bridge OpenAI `/v1/llm/*` endpoints are not used by AS.
+
+For streaming chat or completions requests (`stream: true`), the service MUST return simulated server-sent events after the persisted job completes. When the client sets `stream_options.include_usage: true`, the final chunk MUST include `usage`.
 
 ## Authentication
 
@@ -93,28 +160,9 @@ The effective VRAM of a request MUST be resolved as:
 2. When the user did not specify a `vram_limit` and the model is in the loaded-models cache, the effective VRAM is the cached `min_vram`.
 3. When the user did not specify a `vram_limit` and the model is not in the cache, the effective VRAM is `llm.default_vram_limit`.
 
-The model lookup MUST be case-insensitive. The effective VRAM is used for both the charge tier selection and Bridge forwarding.
+The model lookup MUST be case-insensitive. The effective VRAM is used for the charge tier selection and Bridge raw task `min_vram`.
 
-## Forwarding to the Crynux Bridge
-
-The service MUST forward LLM requests to the Crynux Bridge using the platform-level Bridge API key from the service configuration (`Authorization: Bearer <api_key>`). The Bridge API key MUST have the `chat` role.
-
-The resolved effective VRAM MUST be sent to the Bridge in the URL path:
-
-| Client endpoint | Bridge endpoint |
-|-----------------|-----------------|
-| `POST .../v1/chat/completions` and `POST .../v1/<vram_limit>/chat/completions` | `POST {bridge.base_url}/v1/llm/<effective_vram>/chat/completions` |
-| `POST .../v1/completions` and `POST .../v1/<vram_limit>/completions` | `POST {bridge.base_url}/v1/llm/<effective_vram>/completions` |
-
-For streaming requests (`stream: true`), the Bridge returns server-sent events after the task completes, and includes the `usage` payload in the final chunk only when the request contains `stream_options.include_usage: true`.
-
-When forwarding a streaming request, the service MUST:
-
-1. Inject `stream_options.include_usage: true` into the request sent to the Bridge.
-2. Return the streamed response to the client in the shape the client requested.
-3. Omit the injected usage-only final chunk when the client did not request `include_usage`.
-
-## Project Token Ratio
+## Authentication
 
 Each project stores a `token_ratio` that scales billed tokens relative to Bridge-reported consumed tokens.
 

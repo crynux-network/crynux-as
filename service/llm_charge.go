@@ -158,26 +158,27 @@ type RecordLLMCallInput struct {
 // ProcessLLMCall writes an llm_call_records row and, for a successful chargeable call,
 // applies the Credits ledger debit in the same transaction. When the balance is
 // insufficient at settle time, the record is stored as success with Credits=0 and
-// no ledger event is created.
-func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) error {
+// no ledger event is created. The created record ID is returned.
+func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) (uint, error) {
 	if in.UserID == 0 {
-		return errors.New("user id is required")
+		return 0, errors.New("user id is required")
 	}
 	if in.ProjectID == 0 {
-		return errors.New("project id is required")
+		return 0, errors.New("project id is required")
 	}
 	credits := big.NewInt(0)
 	if in.Credits != nil {
 		credits = new(big.Int).Set(in.Credits)
 	}
 	if credits.Sign() < 0 {
-		return errors.New("credits must be non-negative")
+		return 0, errors.New("credits must be non-negative")
 	}
 
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	return db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+	var recordID uint
+	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
 		chargeCredits := new(big.Int).Set(credits)
 		shouldCharge := in.Charge && in.Status == models.LLMCallStatusSuccess && chargeCredits.Sign() > 0
 
@@ -227,6 +228,7 @@ func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) err
 		if err := tx.Create(&record).Error; err != nil {
 			return err
 		}
+		recordID = record.ID
 
 		if !shouldCharge {
 			return nil
@@ -247,6 +249,7 @@ func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) err
 		}
 		return nil
 	})
+	return recordID, err
 }
 
 // EnsureSufficientBalance returns ErrInsufficientBalance when balance is below required.

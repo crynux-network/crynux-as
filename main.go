@@ -56,6 +56,7 @@ func main() {
 	}
 	go tasks.StartLoadedModelsRefresh(context.Background())
 	go tasks.StartQueuedPriorityRefresh(context.Background())
+	tasks.StartLLMJobWorker(context.Background())
 
 	startServer()
 }

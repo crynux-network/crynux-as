@@ -174,7 +174,7 @@ func proxyJSONResponse(c *gin.Context, bridgeResp *bridge.Response, project *mod
 	}
 
 	credits := service.CalcCredits(parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, project.TokenRatio, vramRatio, prices)
-	if err := service.ProcessLLMCall(c.Request.Context(), config.GetDB(), buildSuccessCallInput(
+	if _, err := service.ProcessLLMCall(c.Request.Context(), config.GetDB(), buildSuccessCallInput(
 		project, model, parsed.Usage, credits, duration, billedVram, taskFee,
 	)); err != nil {
 		log.Errorf("Error recording LLM call for project %d: %v", project.ID, err)
@@ -277,7 +277,7 @@ func proxyStreamResponse(
 	}
 
 	credits := service.CalcCredits(usage.PromptTokens, usage.CompletionTokens, project.TokenRatio, vramRatio, prices)
-	if err := service.ProcessLLMCall(c.Request.Context(), config.GetDB(), buildSuccessCallInput(
+	if _, err := service.ProcessLLMCall(c.Request.Context(), config.GetDB(), buildSuccessCallInput(
 		project, model, *usage, credits, duration, billedVram, taskFee,
 	)); err != nil {
 		log.Errorf("Error recording streamed LLM call for project %d: %v", project.ID, err)
@@ -374,7 +374,8 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 		in.EstimatedNodeSeconds = &estimated
 		in.VramWeight = &weight
 	}
-	return service.ProcessLLMCall(ctx, config.GetDB(), in)
+	_, err := service.ProcessLLMCall(ctx, config.GetDB(), in)
+	return err
 }
 
 func writeClientError(c *gin.Context, status int, message string) {
