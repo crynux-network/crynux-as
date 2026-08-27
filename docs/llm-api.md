@@ -72,13 +72,19 @@ AS MUST NOT send `client_id` in Bridge raw task requests. Bridge MUST derive the
 
 | AS operation | Bridge endpoint |
 |--------------|-----------------|
-| Create LLM raw task | `POST {bridge.base_url}/v1/inference_tasks/auth` |
-| Poll task status | `GET {bridge.base_url}/v1/inference_tasks/auth/<client_task_id>` |
-| Download LLM JSON result | `GET {bridge.base_url}/v1/inference_tasks/auth/<client_task_id>/llm_results/0` |
+| Create LLM raw task | `POST {bridge.base_url}/v1/inference_tasks` |
+| Poll task status | `GET {bridge.base_url}/v1/inference_tasks/<client_task_id>` |
+| Download LLM JSON result | `GET {bridge.base_url}/v1/inference_tasks/<client_task_id>/llm` |
 
-The worker MUST send `request_id=as-job-<llm_jobs.id>` on task creation. Bridge MUST treat duplicate create requests with the same client and `request_id` as idempotent and return the original client task.
+Each raw task submission MUST create a new Bridge task. AS MUST NOT send `request_id`. After Bridge returns a client task ID, AS MUST persist it on the LLM job and MUST use that ID for all later polling and result downloads.
 
 The resolved effective VRAM MUST be sent as `min_vram` on raw task creation.
+
+The LLM job's `task_fee_gwei` MUST be multiplied by `1,000,000,000` with integer arithmetic and sent as the required raw task `task_fee` in Wei. AS MUST NOT send the stored GWei value directly. Bridge MUST treat this value as the final task fee and MUST NOT apply task-size multiplication or unit conversion.
+
+Bridge MUST return its whole-client-task aggregated status. AS MUST treat only Bridge statuses `7` (`EndAborted`), `9` (`EndInvalidated`), and `11` (`ResultDownloaded`) as terminal. Status `8` (`EndGroupRefund`) MUST remain non-terminal for an AS job. AS MUST NOT aggregate individual Bridge inference-task statuses.
+
+Bridge status polling and result download MUST remain authorized after the Bridge API key's creation quota is exhausted. Invalid, expired, wrong-role, and cross-client access MUST remain rejected by Bridge.
 
 AS owns OpenAI-compatible request parsing, raw `GPTTaskResponse` normalization into chat completions, completions, and responses output shapes, and simulated SSE for chat completions and completions. Bridge OpenAI `/v1/llm/*` endpoints are not used by AS.
 
@@ -304,7 +310,7 @@ When Task Fee Estimation fails and the request is aborted before Bridge forwardi
 
 ## Task Fee Estimation
 
-After the Credits balance precheck succeeds and before the request is forwarded to the Bridge, the service MUST estimate a task fee in Gwei. The estimate is recorded on successful call rows. The estimate MUST NOT be sent to the Bridge. The Credits charge formula MUST NOT use the task fee.
+After the Credits balance precheck succeeds and before the request is forwarded to the Bridge, the service MUST estimate a task fee in Gwei. The estimate MUST be recorded on the LLM job and successful call row. The worker MUST convert it to Wei and send it as the Bridge raw task's final `task_fee`. The Credits charge formula MUST NOT use the task fee.
 
 ### Formula
 

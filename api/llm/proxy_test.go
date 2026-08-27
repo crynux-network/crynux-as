@@ -73,7 +73,7 @@ func setupProxyTest(t *testing.T) (*gorm.DB, *models.Project) {
 	cfg.LLM.QueuedPriorityRefreshInterval = 300
 	cfg.LLM.ExecutionTimeCacheTTL = 300
 	cfg.LLM.BaseVRAM = 8
-	cfg.LLM.EmptyQueueMedianPriorityGwei = 1
+	cfg.LLM.EmptyQueueMedianPriorityGwei = "1"
 	cfg.LLM.VramRatios = []config.VramRatioConfig{{MaxVram: 96, Ratio: 1.0}}
 	config.SetConfigForTest(cfg)
 	config.SetDBForTest(db)

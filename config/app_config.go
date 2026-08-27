@@ -84,7 +84,7 @@ type AppConfig struct {
 		QueuedPriorityRefreshInterval uint64            `mapstructure:"queued_priority_refresh_interval"`
 		ExecutionTimeCacheTTL         uint64            `mapstructure:"execution_time_cache_ttl"`
 		BaseVRAM                      uint64            `mapstructure:"base_vram"`
-		EmptyQueueMedianPriorityGwei  uint64            `mapstructure:"empty_queue_median_priority_gwei"`
+		EmptyQueueMedianPriorityGwei  string            `mapstructure:"empty_queue_median_priority_gwei"`
 		VramRatios                    []VramRatioConfig `mapstructure:"vram_ratios"`
 	} `mapstructure:"llm"`
 }

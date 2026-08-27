@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"os"
 	"strings"
 
@@ -151,8 +152,8 @@ func checkLLMConfig() error {
 	if appConfig.LLM.BaseVRAM == 0 {
 		return errors.New("llm.base_vram is not set")
 	}
-	if appConfig.LLM.EmptyQueueMedianPriorityGwei == 0 {
-		return errors.New("llm.empty_queue_median_priority_gwei is not set")
+	if _, err := appConfig.ParseEmptyQueueMedianPriorityGwei(); err != nil {
+		return fmt.Errorf("llm.empty_queue_median_priority_gwei is invalid: %w", err)
 	}
 	if len(appConfig.LLM.VramRatios) == 0 {
 		return errors.New("llm.vram_ratios is not set")
@@ -169,6 +170,23 @@ func checkLLMConfig() error {
 		}
 	}
 	return nil
+}
+
+func (cfg *AppConfig) ParseEmptyQueueMedianPriorityGwei() (*big.Int, error) {
+	value := cfg.LLM.EmptyQueueMedianPriorityGwei
+	if value == "" {
+		return nil, errors.New("must be a positive decimal integer")
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return nil, errors.New("must be a positive decimal integer")
+		}
+	}
+	priority, ok := new(big.Int).SetString(value, 10)
+	if !ok || priority.Sign() <= 0 {
+		return nil, errors.New("must be a positive decimal integer")
+	}
+	return priority, nil
 }
 
 // VramRatioStored converts a display VRAM ratio to the stored integer (ratio * 10).
@@ -207,4 +225,3 @@ func GetConfig() *AppConfig {
 func SetConfigForTest(cfg *AppConfig) {
 	appConfig = cfg
 }
-

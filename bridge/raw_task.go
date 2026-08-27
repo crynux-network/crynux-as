@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 )
 
@@ -19,10 +20,10 @@ func NewRawTaskClient(baseURL, apiKey string) *RawTaskClient {
 }
 
 type CreateRawTaskRequest struct {
-	RequestID string `json:"request_id"`
-	TaskArgs  string `json:"task_args"`
-	TaskType  int    `json:"task_type"`
-	MinVram   uint64 `json:"min_vram,omitempty"`
+	TaskArgs string `json:"task_args"`
+	TaskType int    `json:"task_type"`
+	MinVram  uint64 `json:"min_vram,omitempty"`
+	TaskFee  string `json:"task_fee"`
 }
 
 type RawClientTask struct {
@@ -51,18 +52,24 @@ type getRawTaskEnvelope struct {
 	Data    *InferenceTaskStatus `json:"data"`
 }
 
-func (c *RawTaskClient) CreateLLMTask(ctx context.Context, requestID, taskArgs string, minVram uint64) (*RawClientTask, error) {
+func (c *RawTaskClient) CreateLLMTask(ctx context.Context, taskArgs string, minVram uint64, taskFeeWei *big.Int) (*RawClientTask, error) {
+	if taskFeeWei == nil {
+		return nil, fmt.Errorf("task fee is required")
+	}
+	if taskFeeWei.Sign() < 0 {
+		return nil, fmt.Errorf("task fee must be non-negative")
+	}
 	body, err := json.Marshal(CreateRawTaskRequest{
-		RequestID: requestID,
-		TaskArgs:  taskArgs,
-		TaskType:  llmTaskType,
-		MinVram:   minVram,
+		TaskArgs: taskArgs,
+		TaskType: llmTaskType,
+		MinVram:  minVram,
+		TaskFee:  taskFeeWei.String(),
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := c.post(ctx, "/v1/inference_tasks/auth", body)
+	resp, err := c.post(ctx, "/v1/inference_tasks", body)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +94,7 @@ func (c *RawTaskClient) CreateLLMTask(ctx context.Context, requestID, taskArgs s
 }
 
 func (c *RawTaskClient) GetTaskStatus(ctx context.Context, clientTaskID uint) (*InferenceTaskStatus, error) {
-	url := fmt.Sprintf("%s/v1/inference_tasks/auth/%d", c.baseURL, clientTaskID)
+	url := fmt.Sprintf("%s/v1/inference_tasks/%d", c.baseURL, clientTaskID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -119,8 +126,8 @@ func (c *RawTaskClient) GetTaskStatus(ctx context.Context, clientTaskID uint) (*
 	return envelope.Data, nil
 }
 
-func (c *RawTaskClient) DownloadLLMResult(ctx context.Context, clientTaskID uint, index uint64) ([]byte, error) {
-	url := fmt.Sprintf("%s/v1/inference_tasks/auth/%d/llm_results/%d", c.baseURL, clientTaskID, index)
+func (c *RawTaskClient) DownloadLLMResult(ctx context.Context, clientTaskID uint) ([]byte, error) {
+	url := fmt.Sprintf("%s/v1/inference_tasks/%d/llm", c.baseURL, clientTaskID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

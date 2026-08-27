@@ -8,6 +8,10 @@ Before making any changes, consult `./README.md` and `./docs/AGENTS.md` for a hi
 
 Before adding new code, first check whether existing logic can be reused. Prefer extracting reusable code into a dedicated function, class, or file, and place it in the most appropriate location. Remove duplicated code and avoid adding redundant implementations of the same functionality.
 
+### Backward Compatibility
+
+Do not add backward-compatibility designs or legacy-behavior handling unless backward compatibility is explicitly required. Without such a requirement, implement only the current contract.
+
 ### Data Integrity
 
 Because Crynux AS handles user payments and the Credits ledger, the correctness of financial data must be strictly guaranteed under all circumstances.

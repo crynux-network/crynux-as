@@ -90,7 +90,11 @@ func EstimateTaskFee(
 	appCfg := config.GetConfig()
 	median, ok := ResolveMedianPriorityGwei()
 	if !ok {
-		median = new(big.Int).SetUint64(appCfg.LLM.EmptyQueueMedianPriorityGwei)
+		var err error
+		median, err = appCfg.ParseEmptyQueueMedianPriorityGwei()
+		if err != nil {
+			return nil, fmt.Errorf("parse empty queue median priority: %w", err)
+		}
 	}
 
 	coefficients, err := GetLLMExecutionTime(ctx, model, effectiveVram)

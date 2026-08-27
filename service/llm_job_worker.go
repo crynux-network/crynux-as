@@ -18,6 +18,8 @@ import (
 
 const llmJobPollInterval = 2 * time.Second
 
+const weiPerGwei = int64(1_000_000_000)
+
 func RunLLMJobWorker(ctx context.Context) {
 	db := config.GetDB()
 	if err := RecoverIncompleteJobs(ctx, db); err != nil {
@@ -78,8 +80,11 @@ func processLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob) error {
 	client := bridge.NewRawTaskClient(cfg.Bridge.BaseURL, cfg.Bridge.APIKey)
 
 	if job.BridgeClientTaskID == nil {
-		requestID := fmt.Sprintf("as-job-%d", job.ID)
-		rawTask, err := client.CreateLLMTask(ctx, requestID, job.TaskArgsJSON, job.BilledVram)
+		taskFeeWei, err := llmJobTaskFeeWei(job)
+		if err != nil {
+			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge submit failed: %v", err))
+		}
+		rawTask, err := client.CreateLLMTask(ctx, job.TaskArgsJSON, job.BilledVram, taskFeeWei)
 		if err != nil {
 			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge submit failed: %v", err))
 		}
@@ -116,7 +121,7 @@ func processLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob) error {
 			return failLLMJobWithRecord(ctx, db, job, msg)
 		}
 
-		rawBytes, err := client.DownloadLLMResult(ctx, bridgeClientTaskID, 0)
+		rawBytes, err := client.DownloadLLMResult(ctx, bridgeClientTaskID)
 		if err != nil {
 			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge download failed: %v", err))
 		}
@@ -161,6 +166,16 @@ func processLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob) error {
 		}
 		return nil
 	}
+}
+
+func llmJobTaskFeeWei(job *models.LLMJob) (*big.Int, error) {
+	if job.TaskFeeGwei == nil {
+		return nil, errors.New("task fee is required")
+	}
+	if job.TaskFeeGwei.Sign() < 0 {
+		return nil, errors.New("task fee must be non-negative")
+	}
+	return new(big.Int).Mul(&job.TaskFeeGwei.Int, big.NewInt(weiPerGwei)), nil
 }
 
 func formatLLMJobResult(job *models.LLMJob, raw *models.GPTTaskResponse) ([]byte, error) {

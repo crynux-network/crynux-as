@@ -67,7 +67,7 @@ llm:
   queued_priority_refresh_interval: 300
   execution_time_cache_ttl: 300
   base_vram: 8
-  empty_queue_median_priority_gwei: 1
+  empty_queue_median_priority_gwei: "1"
   vram_ratios:
     - max_vram: 24
       ratio: 0.5
