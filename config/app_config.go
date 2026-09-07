@@ -13,14 +13,15 @@ type TokenConfig struct {
 }
 
 type BlockchainNetworkConfig struct {
-	ChainID          uint64                 `mapstructure:"chain_id"`
-	RpcEndpoint      string                 `mapstructure:"rpc_endpoint"`
-	RPS              uint64                 `mapstructure:"rps"`
-	StartBlockNum    uint64                 `mapstructure:"start_block_num"`
-	LogBlockRange    uint64                 `mapstructure:"log_block_range"`
-	ScanInterval     uint64                 `mapstructure:"scan_interval"`
-	ReceivingAddress string                 `mapstructure:"receiving_address"`
-	Tokens           map[string]TokenConfig `mapstructure:"tokens"`
+	ChainID            uint64                 `mapstructure:"chain_id"`
+	RpcEndpoint        string                 `mapstructure:"rpc_endpoint"`
+	RPS                uint64                 `mapstructure:"rps"`
+	StartBlockNum      uint64                 `mapstructure:"start_block_num"`
+	LogBlockRange      uint64                 `mapstructure:"log_block_range"`
+	ScanInterval       uint64                 `mapstructure:"scan_interval"`
+	ConfirmationBlocks uint64                 `mapstructure:"confirmation_blocks"`
+	ReceivingAddress   string                 `mapstructure:"receiving_address"`
+	Tokens             map[string]TokenConfig `mapstructure:"tokens"`
 }
 
 type AppConfig struct {

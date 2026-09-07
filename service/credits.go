@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ConvertTokenAmountToCredits converts a raw ERC20 amount to Credits:
@@ -89,7 +90,9 @@ func ProcessDeposit(ctx context.Context, db *gorm.DB, in ProcessDepositInput) er
 		}
 
 		var account models.CreditAccount
-		if err := tx.Where("user_id = ?", in.UserID).First(&account).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ?", in.UserID).
+			First(&account).Error; err != nil {
 			return err
 		}
 		newBalance := new(big.Int).Add(&account.Balance.Int, in.Credits)

@@ -30,6 +30,7 @@ blockchains:
     start_block_num: 0
     log_block_range: 1000
     scan_interval: 5
+    confirmation_blocks: 12
     receiving_address: "0x0000000000000000000000000000000000000001"
     tokens:
       usdt:
@@ -47,6 +48,7 @@ blockchains:
     start_block_num: 0
     log_block_range: 1000
     scan_interval: 5
+    confirmation_blocks: 12
     receiving_address: "0x0000000000000000000000000000000000000001"
     tokens:
       usdc:

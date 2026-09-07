@@ -69,17 +69,22 @@ func processNetworkBlockRange(ctx context.Context, db *gorm.DB, client *blockcha
 		return fmt.Errorf("get latest block: %w", err)
 	}
 
+	if latestBlockNum < networkConfig.ConfirmationBlocks {
+		return nil
+	}
+	confirmedTip := latestBlockNum - networkConfig.ConfirmationBlocks
+
 	cursor, err := models.GetBlockchainCursor(ctx, db, client.Network, networkConfig.StartBlockNum)
 	if err != nil {
 		return fmt.Errorf("get blockchain cursor: %w", err)
 	}
 
-	if cursor.LastBlockNum >= latestBlockNum {
+	if cursor.LastBlockNum >= confirmedTip {
 		return nil
 	}
 
 	startBlock := cursor.LastBlockNum + 1
-	endBlock := latestBlockNum
+	endBlock := confirmedTip
 	if endBlock-startBlock+1 > networkConfig.LogBlockRange {
 		endBlock = startBlock + networkConfig.LogBlockRange - 1
 	}

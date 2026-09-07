@@ -57,6 +57,7 @@ blockchains:
     start_block_num: 0
     log_block_range: 1000
     scan_interval: 5
+    confirmation_blocks: 12
     receiving_address: "0x..."
     tokens:
       <token-name>:
@@ -82,7 +83,7 @@ llm:
   job_submit_timeout: 600
 ```
 
-Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. `relay.base_url` is the public Relay URL for loaded-models, queued-priority, and execution-time fetches. The shared LLM configuration items are specified in [llm-api.md](./llm-api.md). Credits billing and the shared `billable_gwei` / reference-priority task fee inputs are specified in [credits-billing.md](./credits-billing.md).
+Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. The worker MUST scan only blocks at or below `latest - confirmation_blocks`; `confirmation_blocks` of `0` means scan up to the latest block. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. `relay.base_url` is the public Relay URL for loaded-models, queued-priority, and execution-time fetches. The shared LLM configuration items are specified in [llm-api.md](./llm-api.md). Credits billing and the shared `billable_gwei` / reference-priority task fee inputs are specified in [credits-billing.md](./credits-billing.md).
 
 ## Data Model
 
@@ -101,9 +102,9 @@ Configuration loading MUST fail with an error when a required item is missing. E
 ## Deposit Flow
 
 1. The user transfers a supported ERC20 token from the login wallet to the receiving address of a configured network.
-2. The network's blockchain processor ticks on `scan_interval`, reads the scan cursor, and fetches `Transfer` logs of all configured token contracts filtered by `to == receiving_address` in ranges of at most `log_block_range` blocks, with each RPC request passing the network RPS limiter.
+2. The network's blockchain processor ticks on `scan_interval`, reads the scan cursor, computes `confirmed_tip = latest - confirmation_blocks`, and fetches `Transfer` logs of all configured token contracts filtered by `to == receiving_address` in ranges of at most `log_block_range` blocks up to `confirmed_tip`, with each RPC request passing the network RPS limiter.
 3. When no user account exists for the transfer `from` address, the processor emits a warning log and ignores the transfer. No `deposits` or `credit_events` row is created.
-4. When the user exists, the log becomes a `deposits` row identified by network + tx hash + log index. The unique index makes re-processing idempotent. The token amount is converted to Credits with `credits_per_token`, a `credit_events` row of type deposit referencing the deposit ID is created, and the `credit_accounts` balance is updated in the same database transaction.
+4. When the user exists, the log becomes a `deposits` row identified by network + tx hash + log index. The unique index makes re-processing idempotent. The token amount is converted to Credits with `credits_per_token`, a `credit_events` row of type deposit referencing the deposit ID is created, and the `credit_accounts` balance is updated in the same database transaction after locking the account row with `SELECT ... FOR UPDATE`.
 5. The cursor advances only after all logs in the range are handled (credited or ignored).
 
 ## LLM Call Charging Flow
@@ -122,5 +123,6 @@ The authoritative Credits charging rules are specified in [credits-billing.md](.
 
 * Every Credits balance change MUST be recorded as a `credit_events` row; the `credit_accounts` balance MUST equal the sum of its processed events.
 * Ledger event creation and the corresponding balance update MUST be committed atomically in one database transaction.
+* Every transaction that updates `credit_accounts.balance` MUST lock that account row with `SELECT ... FOR UPDATE` before reading and writing the balance.
 * Every ledger event references its source record by `ref_id`: the `deposits` row ID for deposit events, and the `llm_call_records` row ID for LLM charge events. The event type + `ref_id` pair is unique; retrying an operation MUST NOT produce a duplicate event.
 * Deposit crediting and LLM charging may be delayed, but processed data MUST remain correct and consistent across unexpected exceptions and shutdown.

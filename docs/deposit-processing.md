@@ -29,6 +29,7 @@ Each network configuration MUST define:
 | `start_block_num` | Initial cursor value when no `blockchain_cursors` row exists |
 | `log_block_range` | Maximum number of blocks in one `eth_getLogs` query |
 | `scan_interval` | Seconds between deposit scan ticks |
+| `confirmation_blocks` | Number of blocks behind the latest head that MUST exist before a block is scanned; `0` means scan up to the latest block |
 | `receiving_address` | Platform address that receives ERC20 deposits |
 | `tokens` | Map of supported ERC20 tokens on this network |
 
@@ -50,9 +51,11 @@ On each successful tick:
 
 1. Load the cursor with `GetBlockchainCursor`, creating the row with `last_block_num = start_block_num` when absent.
 2. Read the latest block number through the network blockchain client (RPS-limited).
-3. When `last_block_num >= latest`, skip the tick.
-4. Otherwise scan the inclusive range `[last_block_num + 1, min(latest, last_block_num + log_block_range)]`.
-5. Advance `last_block_num` to the end of that range only after every log in the range has been handled.
+3. When `latest < confirmation_blocks`, skip the tick.
+4. Set `confirmed_tip = latest - confirmation_blocks`.
+5. When `last_block_num >= confirmed_tip`, skip the tick.
+6. Otherwise scan the inclusive range `[last_block_num + 1, min(confirmed_tip, last_block_num + log_block_range)]`.
+7. Advance `last_block_num` to the end of that range only after every log in the range has been handled.
 
 Handled means either credited into the ledger or deliberately ignored according to the rules below. A failure while handling any log MUST leave the cursor unchanged.
 
@@ -103,7 +106,7 @@ When a user exists for the normalized `from` address, the processor MUST apply t
 
 1. Insert a `deposits` row with network, token name, transaction hash, log index, from address, raw amount, computed Credits, `user_id`, and status `Processed`.
 2. Insert a `credit_events` row with type deposit, `ref_id` equal to the deposit ID, `user_id`, amount equal to the deposit Credits, and status `Processed`.
-3. Increase `credit_accounts.balance` for that user by the deposit Credits.
+3. Load the user's `credit_accounts` row with `SELECT ... FOR UPDATE`, then increase `credit_accounts.balance` by the deposit Credits.
 
 The deposit identity `(network, tx_hash, log_index)` MUST be unique. Re-inserting an already recorded deposit MUST be treated as success and MUST NOT create a second ledger event or increase the balance again.
 
@@ -119,4 +122,4 @@ Deposit insert, credit event insert, and balance update MUST commit atomically. 
 
 ## Deposit Configuration API
 
-`GET /v1/deposit/networks` is a management API that requires a valid JWT token. It MUST return the configured deposit networks and tokens for client deposit flows. Each network entry MUST include `name`, `chain_id`, `receiving_address`, and `tokens`. Each token entry MUST include `name`, `address`, `decimals`, and `credits_per_token`. The response MUST NOT include `rpc_endpoint`, RPS, scan interval, log block range, or scan cursor settings. Networks and tokens MUST be sorted by name ascending.
+`GET /v1/deposit/networks` is a management API that requires a valid JWT token. It MUST return the configured deposit networks and tokens for client deposit flows. Each network entry MUST include `name`, `chain_id`, `receiving_address`, and `tokens`. Each token entry MUST include `name`, `address`, `decimals`, and `credits_per_token`. The response MUST NOT include `rpc_endpoint`, RPS, scan interval, log block range, confirmation blocks, or scan cursor settings. Networks and tokens MUST be sorted by name ascending.
