@@ -14,8 +14,9 @@ import (
 const loadedModelTypeLLM = "llm"
 
 type LoadedLLMModel struct {
-	ModelID string
-	MinVRAM uint64
+	ModelID   string
+	MinVRAM   uint64
+	NodeCount int64
 }
 
 type loadedModelsCache struct {
@@ -58,8 +59,9 @@ func RefreshLoadedModels(ctx context.Context) error {
 		}
 		modelID := strings.ToLower(loadedModel.ModelID)
 		snapshot[modelID] = LoadedLLMModel{
-			ModelID: modelID,
-			MinVRAM: loadedModel.MinVRAM,
+			ModelID:   modelID,
+			MinVRAM:   loadedModel.MinVRAM,
+			NodeCount: loadedModel.InMemoryNodeCount,
 		}
 	}
 

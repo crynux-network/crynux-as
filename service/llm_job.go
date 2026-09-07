@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/utils"
 	"errors"
@@ -10,7 +11,6 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 var (
@@ -19,18 +19,21 @@ var (
 )
 
 type CreateLLMJobInput struct {
-	Project              *models.Project
-	APIType              models.LLMAPIType
-	Model                string
-	BilledVram           uint64
-	Background           bool
-	Stream               bool
-	RequestBody          []byte
-	TaskArgsJSON         string
-	TaskFeeGwei          *big.Int
-	MedianPriorityGwei   *big.Int
-	EstimatedNodeSeconds *float64
-	VramWeight           *float64
+	Project               *models.Project
+	APIType               models.LLMAPIType
+	Model                 string
+	BilledVram            uint64
+	Background            bool
+	Stream                bool
+	RequestBody           []byte
+	TaskArgsJSON          string
+	TaskFeeGwei           *big.Int
+	MedianPriorityGwei    *big.Int
+	EstimatedNodeSeconds  *float64
+	VramWeight            *float64
+	ConstantSeconds       *float64
+	SecondsPerInputToken  *float64
+	SecondsPerOutputToken *float64
 }
 
 func CreateLLMJob(ctx context.Context, db *gorm.DB, in CreateLLMJobInput) (*models.LLMJob, error) {
@@ -63,6 +66,9 @@ func CreateLLMJob(ctx context.Context, db *gorm.DB, in CreateLLMJobInput) (*mode
 	}
 	job.EstimatedNodeSeconds = cloneFloat64Ptr(in.EstimatedNodeSeconds)
 	job.VramWeight = cloneFloat64Ptr(in.VramWeight)
+	job.ConstantSeconds = cloneFloat64Ptr(in.ConstantSeconds)
+	job.SecondsPerInputToken = cloneFloat64Ptr(in.SecondsPerInputToken)
+	job.SecondsPerOutputToken = cloneFloat64Ptr(in.SecondsPerOutputToken)
 
 	if in.APIType == models.LLMAPITypeResponses {
 		token, err := utils.GenerateRandomToken(16)
@@ -138,40 +144,64 @@ func WaitForLLMJob(ctx context.Context, db *gorm.DB, jobID uint, timeout time.Du
 	}
 }
 
-func SettleLLMJob(
+func CompleteAndSettleLLMJob(
 	ctx context.Context,
 	db *gorm.DB,
 	job *models.LLMJob,
 	project *models.Project,
-	vramRatio uint,
-	prices LLMPrices,
-) error {
+	rawResultJSON string,
+	formattedResultJSON string,
+	promptTokens, completionTokens, totalTokens uint64,
+) (*models.LLMJob, error) {
 	if job == nil {
-		return errors.New("job is required")
+		return nil, errors.New("job is required")
 	}
 	if project == nil {
-		return errors.New("project is required")
+		return nil, errors.New("project is required")
 	}
-	if job.BillingStatus == models.LLMJobBillingBilled {
-		return nil
+	if job.Status == models.LLMJobStatusCompleted && job.BillingStatus == models.LLMJobBillingBilled {
+		return job, nil
 	}
-	if job.Status != models.LLMJobStatusCompleted {
-		return errors.New("only completed jobs can be settled")
+	if job.ConstantSeconds == nil || job.SecondsPerInputToken == nil || job.SecondsPerOutputToken == nil {
+		return nil, errors.New("job execution-time coefficients are required")
+	}
+	if job.VramWeight == nil {
+		return nil, errors.New("job vram_weight is required")
 	}
 
-	credits := CalcCredits(job.PromptTokens, job.CompletionTokens, project.TokenRatio, vramRatio, prices)
+	now := time.Now()
 	durationMs := uint64(0)
-	if job.StartedAt != nil && job.CompletedAt != nil {
-		durationMs = uint64(job.CompletedAt.Sub(*job.StartedAt).Milliseconds())
+	if job.StartedAt != nil {
+		durationMs = uint64(now.Sub(*job.StartedAt).Milliseconds())
 	}
 
+	appCfg := config.GetConfig()
+	referencePriority, err := appCfg.ParseReferencePriorityGwei()
+	if err != nil {
+		return nil, fmt.Errorf("parse reference priority: %w", err)
+	}
+
+	credits, err := CalcCredits(
+		promptTokens,
+		completionTokens,
+		project.TokenRatio,
+		*job.VramWeight,
+		*job.ConstantSeconds,
+		*job.SecondsPerInputToken,
+		*job.SecondsPerOutputToken,
+		referencePriority,
+		appCfg.LLM.CreditsPerGwei,
+	)
+	if err != nil {
+		return nil, err
+	}
 	in := RecordLLMCallInput{
 		UserID:           project.UserID,
 		ProjectID:        project.ID,
 		Model:            job.Model,
-		PromptTokens:     job.PromptTokens,
-		CompletionTokens: job.CompletionTokens,
-		TotalTokens:      job.TotalTokens,
+		PromptTokens:     promptTokens,
+		CompletionTokens: completionTokens,
+		TotalTokens:      totalTokens,
 		TokenRatio:       project.TokenRatio,
 		Status:           models.LLMCallStatusSuccess,
 		Credits:          credits,
@@ -190,27 +220,9 @@ func SettleLLMJob(
 
 	recordID, err := ProcessLLMCall(ctx, db, in)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	return db.WithContext(dbCtx).Model(job).Updates(map[string]interface{}{
-		"billing_status":     models.LLMJobBillingBilled,
-		"llm_call_record_id": recordID,
-	}).Error
-}
-
-func CompleteLLMJob(
-	ctx context.Context,
-	db *gorm.DB,
-	jobID uint,
-	rawResultJSON string,
-	formattedResultJSON string,
-	promptTokens, completionTokens, totalTokens uint64,
-) (*models.LLMJob, error) {
-	now := time.Now()
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -222,11 +234,13 @@ func CompleteLLMJob(
 		"completion_tokens":     completionTokens,
 		"total_tokens":          totalTokens,
 		"completed_at":          now,
+		"billing_status":        models.LLMJobBillingBilled,
+		"llm_call_record_id":    recordID,
 	}
-	if err := db.WithContext(dbCtx).Model(&models.LLMJob{}).Where("id = ?", jobID).Updates(updates).Error; err != nil {
+	if err := db.WithContext(dbCtx).Model(&models.LLMJob{}).Where("id = ?", job.ID).Updates(updates).Error; err != nil {
 		return nil, err
 	}
-	return GetLLMJobByID(ctx, db, jobID)
+	return GetLLMJobByID(ctx, db, job.ID)
 }
 
 func FailLLMJob(ctx context.Context, db *gorm.DB, jobID uint, errorMessage string) (*models.LLMJob, error) {
@@ -246,40 +260,27 @@ func FailLLMJob(ctx context.Context, db *gorm.DB, jobID uint, errorMessage strin
 	return GetLLMJobByID(ctx, db, jobID)
 }
 
-func ClaimNextLLMJob(ctx context.Context, db *gorm.DB) (*models.LLMJob, error) {
+func ListUnfinishedLLMJobs(ctx context.Context, db *gorm.DB, limit int) ([]models.LLMJob, error) {
+	if limit <= 0 {
+		limit = 100
+	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var job models.LLMJob
-	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
-		query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("status IN ?", []models.LLMJobStatus{
-				models.LLMJobStatusPendingSubmit,
-				models.LLMJobStatusSubmitted,
-				models.LLMJobStatusInProgress,
-			}).
-			Order("created_at ASC")
-
-		if err := query.First(&job).Error; err != nil {
-			return err
-		}
-
-		if job.Status == models.LLMJobStatusPendingSubmit {
-			return tx.Model(&job).Update("status", models.LLMJobStatusSubmitted).Error
-		}
-		return nil
-	})
+	var jobs []models.LLMJob
+	err := db.WithContext(dbCtx).
+		Where("status IN ?", []models.LLMJobStatus{
+			models.LLMJobStatusPendingSubmit,
+			models.LLMJobStatusSubmitted,
+			models.LLMJobStatusInProgress,
+		}).
+		Order("created_at ASC").
+		Limit(limit).
+		Find(&jobs).Error
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
 		return nil, err
 	}
-
-	if job.Status == models.LLMJobStatusPendingSubmit {
-		job.Status = models.LLMJobStatusSubmitted
-	}
-	return &job, nil
+	return jobs, nil
 }
 
 func UpdateLLMJobBridgeTask(ctx context.Context, db *gorm.DB, jobID uint, bridgeClientTaskID uint) error {

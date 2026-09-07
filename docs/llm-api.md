@@ -1,6 +1,8 @@
 # OpenAI-Compatible LLM API and Charging
 
-This document specifies the private OpenAI-compatible LLM endpoints, the model catalog, VRAM limit resolution, Bridge forwarding, project token-ratio billing, and Credits charging rules.
+This document specifies the private OpenAI-compatible LLM endpoints, the model catalog, VRAM limit resolution, Bridge forwarding, project token ratio, call records, and Task Fee Estimation.
+
+Credits charging for LLM calls is specified only in [credits-billing.md](./credits-billing.md).
 
 ## Endpoints
 
@@ -39,7 +41,7 @@ The first version MUST reject unsupported fields with HTTP 400 and the OpenAI in
 
 When `background` is `true`, the handler MUST persist the job and return immediately after the job is stored. The returned `status` MUST be `queued` or `in_progress`. The client MUST poll `GET /responses/<response_id>` until the job reaches a terminal state.
 
-When `background` is `false`, the handler MUST use the same persisted job flow and wait for the job to complete before returning the final Responses object.
+When `background` is `false`, the handler MUST use the same persisted job flow and wait for the job to complete before returning the final Responses object. A terminal `failed` job MUST return HTTP 200 with a Responses object whose `status` is `failed` and whose `error` field contains the failure detail. A terminal `completed` job MUST return the formatted Responses object.
 
 ### `GET /api/<endpoint_token>/v1/responses/<response_id>`
 
@@ -49,16 +51,20 @@ Terminal `completed` responses MUST include formatted `output` and `usage` only 
 
 ## LLM Job Execution
 
-Chat completions, completions, and responses share one persisted `llm_jobs` table and one background worker.
+Chat completions, completions, and responses share one persisted `llm_jobs` table and one background worker loop.
 
 For every LLM request, the service MUST:
 
 1. Parse the public API request into canonical `GPTTaskArgs`.
 2. Create an `llm_jobs` row with status `pending_submit`.
-3. Let the background worker submit the job to Bridge raw task APIs, poll task status, download the raw `GPTTaskResponse`, format the public API result, and perform one-time Credits settlement.
+3. Let the background worker advance unfinished jobs in batches: submit `pending_submit` jobs to Bridge, query ClientTask status for in-flight jobs, download the raw `GPTTaskResponse` for each successful job, format the public API result, and perform one-time Credits settlement before marking the job `completed`.
 4. For chat completions and completions, wait synchronously on the HTTP request until the job reaches a terminal state, then return the formatted JSON body or simulated SSE stream.
 5. For responses with `background=false`, wait synchronously on the HTTP request until the job reaches a terminal state.
 6. For responses with `background=true`, return immediately after persistence and expose status through `GET /responses/<response_id>`.
+
+The worker MUST keep one loop. Each tick MUST load a bounded batch of unfinished jobs (`pending_submit`, `submitted`, `in_progress`), advance every job in that batch by at most one step, sleep a fixed interval, and start the next tick. The worker MUST NOT wait inside one job until that job reaches a terminal Bridge status while other unfinished jobs remain unprocessed.
+
+A `pending_submit` job whose age since `created_at` is greater than or equal to `llm.job_submit_timeout` seconds MUST be marked `failed` with a failed call record. The worker MUST NOT submit that job to Bridge after the timeout.
 
 Client disconnect during a synchronous wait MUST NOT cancel the persisted job or settlement.
 
@@ -72,19 +78,21 @@ AS MUST NOT send `client_id` in Bridge raw task requests. Bridge MUST derive the
 
 | AS operation | Bridge endpoint |
 |--------------|-----------------|
-| Create LLM raw task | `POST {bridge.base_url}/v1/inference_tasks` |
-| Poll task status | `GET {bridge.base_url}/v1/inference_tasks/<client_task_id>` |
+| Create LLM raw tasks | `POST {bridge.base_url}/v1/inference_tasks/batch` |
+| Query ClientTask statuses | `POST {bridge.base_url}/v1/inference_tasks/batch/status` |
 | Download LLM JSON result | `GET {bridge.base_url}/v1/inference_tasks/<client_task_id>/llm` |
 
-Each raw task submission MUST create a new Bridge task. AS MUST NOT send `request_id`. After Bridge returns a client task ID, AS MUST persist it on the LLM job and MUST use that ID for all later polling and result downloads.
+Single-task create and status endpoints MUST remain available on Bridge. The AS worker MUST use the batch create and batch status endpoints.
+
+Each raw task submission MUST create a new Bridge ClientTask. AS MUST NOT send `request_id`. After Bridge returns a client task ID, AS MUST persist it on the LLM job and MUST use that ID for all later status queries and result downloads.
 
 The resolved effective VRAM MUST be sent as `min_vram` on raw task creation.
 
 The LLM job's `task_fee_gwei` MUST be multiplied by `1,000,000,000` with integer arithmetic and sent as the required raw task `task_fee` in Wei. AS MUST NOT send the stored GWei value directly. Bridge MUST treat this value as the final task fee and MUST NOT apply task-size multiplication or unit conversion.
 
-Bridge MUST return its whole-client-task aggregated status. AS MUST treat only Bridge statuses `7` (`EndAborted`), `9` (`EndInvalidated`), and `11` (`ResultDownloaded`) as terminal. Status `8` (`EndGroupRefund`) MUST remain non-terminal for an AS job. AS MUST NOT aggregate individual Bridge inference-task statuses.
+Bridge MUST return its whole-client-task aggregated status as one of `running`, `success`, or `failed`. AS MUST treat only `success` and `failed` as terminal. AS MUST NOT aggregate individual Bridge inference-task statuses.
 
-Bridge status polling and result download MUST remain authorized after the Bridge API key's creation quota is exhausted. Invalid, expired, wrong-role, and cross-client access MUST remain rejected by Bridge.
+Bridge status queries and result download MUST remain authorized after the Bridge API key's creation quota is exhausted. Invalid, expired, wrong-role, and cross-client access MUST remain rejected by Bridge.
 
 AS owns OpenAI-compatible request parsing, raw `GPTTaskResponse` normalization into chat completions, completions, and responses output shapes, and simulated SSE for chat completions and completions. Bridge OpenAI `/v1/llm/*` endpoints are not used by AS.
 
@@ -166,18 +174,18 @@ The effective VRAM of a request MUST be resolved as:
 2. When the user did not specify a `vram_limit` and the model is in the loaded-models cache, the effective VRAM is the cached `min_vram`.
 3. When the user did not specify a `vram_limit` and the model is not in the cache, the effective VRAM is `llm.default_vram_limit`.
 
-The model lookup MUST be case-insensitive. The effective VRAM is used for the charge tier selection and Bridge raw task `min_vram`.
+The model lookup MUST be case-insensitive. The effective VRAM is used for `vram_weight`, Relay execution-time selection (`min_vram`), and Bridge raw task `min_vram`.
 
 ## Authentication
 
-Each project stores a `token_ratio` that scales billed tokens relative to Bridge-reported consumed tokens.
+Each project stores a `token_ratio` that is the user cost level. It scales Credits and the submitted task fee as specified in [credits-billing.md](./credits-billing.md) and Task Fee Estimation.
 
 ### Allowed values
 
-The API exposes `token_ratio` as a floating-point number. The allowed set is exactly 19 values:
+The API exposes `token_ratio` as a floating-point number. The allowed set is:
 
 * `0.1` through `1.0` in steps of `0.1`
-* `2` through `10` in steps of `1`
+* `2` through `llm.max_token_ratio` in steps of `1`
 
 The default value is `1.0`.
 
@@ -193,98 +201,43 @@ The database column `projects.token_ratio` MUST store the ratio as an unsigned i
 | `1.0` | `10` |
 | `2` | `20` |
 | `10` | `100` |
+| `30` | `300` |
 
 Project create and update APIs MUST accept the display float, validate it against the allowed set, and persist the stored integer. Project read APIs MUST return the display float.
 
 ## LLM Charging Rules
 
-This chapter is the complete billing specification. Each LLM call is charged from the Credits balance of the owning account.
+Credits charging, balance precheck, settle, Credits configuration, failed-call non-charging rules, and the pricing-examples management API are specified only in [credits-billing.md](./credits-billing.md).
 
-### Charge Inputs
-
-| Input | Symbol | Source |
-|-------|--------|--------|
-| Prompt tokens | `P` | Bridge `usage.prompt_tokens` |
-| Completion tokens | `C` | Bridge `usage.completion_tokens` |
-| Token ratio | `R` | `projects.token_ratio`, stored as display × 10 |
-| VRAM tier ratio | `V` | `llm.vram_ratios` tier selected by the effective VRAM, stored as display × 10 |
-| Prompt unit price | `Pp` | `llm.prompt_credits_per_token` |
-| Completion unit price | `Cp` | `llm.completion_credits_per_token` |
-
-The global unit prices and VRAM billing configuration come from the service configuration:
+The LLM-related service configuration items that remain shared with Task Fee Estimation and request handling are:
 
 ```yaml
 llm:
-  prompt_credits_per_token: 1
-  completion_credits_per_token: 1
   default_max_tokens: 2048
   default_vram_limit: 24
   loaded_models_refresh_interval: 1800
   queued_priority_refresh_interval: 300
   execution_time_cache_ttl: 300
   base_vram: 8
-  empty_queue_median_priority_gwei: 1
-  vram_ratios:
-    - max_vram: 24
-      ratio: 0.5
-    - max_vram: 96
-      ratio: 1.5
+  empty_queue_median_priority_gwei: "34"
+  reference_priority_gwei: "34"
+  credits_per_gwei: 1
+  max_token_ratio: 30
+  job_submit_timeout: 600
 ```
 
-* `prompt_credits_per_token` is the Credits charged per billed prompt token before integer division by the ratio scale.
-* `completion_credits_per_token` is the Credits charged per billed completion token before integer division by the ratio scale.
-* `default_max_tokens` is used in the pre-forward balance estimate when the request omits both `max_tokens` and `max_completion_tokens`.
+* `default_max_tokens` is used in the pre-forward balance estimate and Task Fee Estimation when the request omits both `max_tokens` and `max_completion_tokens`.
 * `default_vram_limit` is the effective VRAM in GB for an unknown model when the user did not specify a `vram_limit`.
 * `loaded_models_refresh_interval` is the loaded-models cache refresh interval in seconds. Every YAML configuration template MUST set it to `1800`.
 * `queued_priority_refresh_interval` is the queued-task priority snapshot refresh interval in seconds. Every YAML configuration template MUST set it to `300`.
 * `execution_time_cache_ttl` is the per-key TTL in seconds for LLM execution-time coefficients cached from Relay. Every YAML configuration template MUST set it to `300`.
-* `base_vram` is the VRAM weight base in GB used by Task Fee Estimation. Operators MUST keep it aligned with Relay `task_pricing.base_vram`. Every YAML configuration template MUST set it to `8`.
-* `empty_queue_median_priority_gwei` is the median priority in Gwei used when the queued-priority cache has never observed a non-empty queue. Every YAML configuration template MUST set it to a positive integer.
-* `vram_ratios` is the ordered list of VRAM billing tiers.
+* `base_vram` is the VRAM weight base in GB used by Task Fee Estimation and Credits. Operators MUST keep it aligned with Relay `task_pricing.base_vram`. Every YAML configuration template MUST set it to `8`.
+* `empty_queue_median_priority_gwei` is the median priority hint used when the queued-priority cache has never observed a non-empty queue. It MUST NOT enter task fee or Credits. Every YAML configuration template MUST set it to a positive decimal integer string. Every Gwei-denominated LLM configuration and response field whose name ends in `_gwei` MUST use a decimal integer string.
+* `reference_priority_gwei` and `credits_per_gwei` are specified in [credits-billing.md](./credits-billing.md). `reference_priority_gwei` MUST be a decimal integer string. `credits_per_gwei` MUST be an unsigned integer.
+* `max_token_ratio` is the maximum allowed project cost level display value. The allowed `token_ratio` set is `0.1` through `1.0` in steps of `0.1`, then `2` through `max_token_ratio` in steps of `1`. Configuration loading MUST fail when `max_token_ratio` is less than `2`.
+* `job_submit_timeout` is the maximum age in seconds of a `pending_submit` LLM job before the worker stops Bridge submit retries and marks the job failed. Every YAML configuration template MUST set it to a positive integer.
 
-Configuration loading MUST fail when any of these values is zero or missing, when `vram_ratios` is empty or not sorted by strictly ascending `max_vram`, or when any tier `ratio` is not a positive number with at most one decimal place.
-
-### VRAM Tier Selection
-
-The effective VRAM is resolved by the rules in the Effective VRAM Resolution section. A tier `ratio` is exposed as a display float and stored as the unsigned integer `ratio × 10`, the same scheme as `token_ratio`.
-
-The effective VRAM `v` maps to the first tier, in ascending `max_vram` order, where `v <= max_vram`. When `v` is greater than the last tier's `max_vram`, the last tier applies.
-
-### Charge Formula
-
-The charged Credits MUST be computed with integer arithmetic; the division truncates toward zero. The divisor `100` removes the two × 10 scale factors of `R` and `V`:
-
-```text
-credits = (P * R * V * Pp + C * R * V * Cp) / 100
-```
-
-### Balance Precheck
-
-Before forwarding a request to the Bridge, the service MUST estimate an upper-bound charge and reject the request with HTTP 402 when the account balance is strictly less than the estimate.
-
-Estimate inputs:
-
-1. Prompt token estimate: UTF-8 rune count of the request prompt or chat message text content, divided by 4 and rounded up. A non-empty text whose estimate would be zero MUST use `1`.
-2. Completion token estimate: `max_completion_tokens` if present and positive; otherwise `max_tokens` if present and positive; otherwise `llm.default_max_tokens`.
-
-The estimate MUST use the same charge formula as the actual settle, with the same `V` selected from the resolved effective VRAM, substituting the estimated prompt and completion token counts.
-
-### Settle After Bridge Response
-
-After a successful Bridge response:
-
-1. The service MUST read `usage.prompt_tokens`, `usage.completion_tokens`, and `usage.total_tokens`.
-2. The service MUST compute Credits with the charge formula, using the same `V` resolved before forwarding.
-3. The service MUST create one `llm_call_records` row with success status, token counts, the project `token_ratio` used for the charge, charged Credits, the billed effective VRAM, call duration, and the Task Fee Estimation fields computed before forwarding.
-4. When the computed Credits are greater than zero and the account balance is sufficient, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by the same amount in the same database transaction.
-
-When the Bridge call succeeds but the account balance is insufficient for the computed Credits at settle time, the service MUST still create a success `llm_call_records` row with charged Credits set to `0`, MUST NOT create a Credits ledger event, and MUST emit an error log for operators.
-
-### Failed Calls
-
-Every failed LLM call MUST be recorded as one `llm_call_records` row with failure status. A failed call MUST NOT create a Credits ledger event.
-
-Failure includes Bridge transport errors, Bridge HTTP status greater than or equal to 400, response parse failures, and streaming responses that end without a usable `usage` payload.
+Configuration loading MUST fail when any required LLM configuration value is zero or missing, including the Credits and reference-priority fields required by [credits-billing.md](./credits-billing.md).
 
 ### Call Record Fields
 
@@ -297,20 +250,22 @@ Each `llm_call_records` row MUST contain:
 * `status` (success or failed)
 * `credits` (charged Credits; `0` when not charged)
 * `duration_ms`
-* `billed_vram` (the resolved effective VRAM in GB used for tier selection and Bridge forwarding)
+* `billed_vram` (the resolved effective VRAM in GB used for VRAM weight and Bridge forwarding)
 
 When Task Fee Estimation succeeds before Bridge forwarding, a success `llm_call_records` row MUST also contain:
 
 * `task_fee_gwei`
-* `median_priority_gwei`
-* `estimated_node_seconds`
+* `median_priority_gwei` (Queue Median Hint value resolved at estimation time; MUST NOT have been used to compute `task_fee_gwei`)
+* `estimated_node_seconds` (pre-forward estimate from precheck token counts; MUST NOT be the settle-time Credits recomputation)
 * `vram_weight`
 
 When Task Fee Estimation fails and the request is aborted before Bridge forwarding, the failure `llm_call_records` row MUST leave those four fields empty. Management query APIs MUST NOT expose these four fields.
 
 ## Task Fee Estimation
 
-After the Credits balance precheck succeeds and before the request is forwarded to the Bridge, the service MUST estimate a task fee in Gwei. The estimate MUST be recorded on the LLM job and successful call row. The worker MUST convert it to Wei and send it as the Bridge raw task's final `task_fee`. The Credits charge formula MUST NOT use the task fee.
+Task fee estimation is part of the shared pre-forward path in [credits-billing.md](./credits-billing.md). The service MUST compute `billable_gwei` once for Credits precheck and task fee, then set `task_fee_gwei = floor(billable_gwei)`. The worker MUST convert the persisted Gwei fee to Wei and send it as the Bridge raw task's final `task_fee`.
+
+The task fee formula MUST use the shared `billable_gwei` defined in [credits-billing.md](./credits-billing.md). Task fee MUST NOT use the live queued-task `median_priority_gwei` as a multiplier.
 
 ### Formula
 
@@ -325,11 +280,11 @@ estimated_node_seconds =
 vram_weight =
     max(effective_vram, base_vram) / base_vram
 
-target_priority_gwei =
-    median_priority_gwei * token_ratio_display
+billable_gwei =
+    reference_priority_gwei * token_ratio_display * estimated_node_seconds * vram_weight
 
 task_fee_gwei =
-    floor(target_priority_gwei * estimated_node_seconds * vram_weight)
+    floor(billable_gwei)
 ```
 
 * `estimated_prompt_tokens` and `max_completion_tokens` MUST be the same values used by the Credits balance precheck.
@@ -338,18 +293,32 @@ task_fee_gwei =
 * `base_vram` MUST come from `llm.base_vram`.
 * `vram_weight` MUST be computed locally by Crynux AS. The service MUST NOT query Relay for `vram_weight`.
 * `constant_seconds`, `seconds_per_input_token`, and `seconds_per_output_token` MUST come from Relay `GET /v2/models/llm/execution-time` with query `model=<request model>` and `min_vram=<effective_vram>`.
-* `median_priority_gwei` MUST come from the queued-task priority snapshot cache fed by Relay `GET /v2/tasks/queued/priority`.
+* `reference_priority_gwei` MUST come from `llm.reference_priority_gwei` as a decimal integer string.
 
-`task_fee_gwei` MUST be computed with floating-point intermediates and MUST truncate toward zero to a non-negative integer Gwei value.
+`task_fee_gwei` MUST be computed with floating-point intermediates and MUST truncate toward zero to a non-negative integer Gwei value, persisted as a decimal integer string where stored as text.
 
-### Empty Queue Median
+The service MUST resolve `median_priority_gwei` with the Queue Median Hint rules below and MUST persist that value on the job and call record for comparison. That snapshot MUST NOT enter `billable_gwei`. Resolution MUST always produce a value.
 
-When the latest priority snapshot has `queued_task_count = 0` or a null `median_priority_gwei`:
+### Queue Median Hint
 
-1. If the cache still holds the most recent non-empty `median_priority_gwei`, the service MUST use that value.
-2. Otherwise the service MUST use `llm.empty_queue_median_priority_gwei`.
+When the service needs a current queue median hint for `billing_config`, WebUI display, or the job/call-record snapshot:
+
+1. If the latest priority snapshot has a non-null `median_priority_gwei` and `queued_task_count > 0`, the service MUST use that value.
+2. Else if the cache still holds the most recent non-empty `median_priority_gwei`, the service MUST use that value.
+3. Otherwise the service MUST use `llm.empty_queue_median_priority_gwei`.
+
+The resolved hint MUST be a decimal integer string.
 
 ### Estimation Failure
+
+Task Fee Estimation MUST fail when:
+
+1. Relay `GET /v2/models/llm/execution-time` cannot be completed successfully for the request model and effective VRAM; or
+2. The returned coefficients fail validation: any of `constant_seconds`, `seconds_per_input_token`, or `seconds_per_output_token` is missing or is not a finite number greater than or equal to zero.
+
+Reading or resolving the queue median hint MUST NOT cause Task Fee Estimation to fail.
+
+After configuration `reference_priority_gwei`, project `token_ratio`, validated coefficients, and `vram_weight` are available, computing `billable_gwei` and `task_fee_gwei` MUST succeed. Ordinary arithmetic on those validated inputs is not a business failure mode.
 
 When Task Fee Estimation fails, the service MUST:
 
@@ -360,18 +329,4 @@ When Task Fee Estimation fails, the service MUST:
 
 ## Billing Config Query API
 
-`GET /v1/llm/billing_config` is a management API that requires a valid JWT token. It MUST NOT be exposed on the private LLM surface. It returns the configured prompt and completion unit prices together with the VRAM billing tiers (display float ratios):
-
-```json
-{
-  "message": "success",
-  "data": {
-    "prompt_credits_per_token": 1,
-    "completion_credits_per_token": 1,
-    "vram_ratios": [
-      { "max_vram": 24, "ratio": 0.5 },
-      { "max_vram": 96, "ratio": 1.5 }
-    ]
-  }
-}
-```
+`GET /v1/llm/billing_config` and `GET /v1/llm/pricing_examples` are specified in [credits-billing.md](./credits-billing.md).

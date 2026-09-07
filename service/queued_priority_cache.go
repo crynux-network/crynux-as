@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crynux_as/config"
 	"crynux_as/relay"
 	"errors"
 	"math/big"
@@ -66,7 +67,7 @@ func RefreshQueuedPriority(ctx context.Context) error {
 
 	priorityCache.mu.Lock()
 	priorityCache.snapshot = snapshot
-	if snapshot.MedianPriorityGwei != nil {
+	if snapshot.MedianPriorityGwei != nil && snapshot.QueuedTaskCount > 0 {
 		priorityCache.lastNonEmptyMedian = new(big.Int).Set(snapshot.MedianPriorityGwei)
 	}
 	priorityCache.mu.Unlock()
@@ -85,20 +86,43 @@ func GetQueuedPrioritySnapshot() QueuedPrioritySnapshot {
 	return copyQueuedPrioritySnapshot(priorityCache.snapshot)
 }
 
-// ResolveMedianPriorityGwei returns the median used for Task Fee Estimation.
-// When the current snapshot has a median, that value is returned. Otherwise the
-// most recent non-empty median is returned when available. ok is false only when
-// neither value exists.
+// ResolveMedianPriorityGwei returns the Queue Median Hint when a live or
+// remembered non-empty median exists. ok is false only when neither exists.
 func ResolveMedianPriorityGwei() (median *big.Int, ok bool) {
 	priorityCache.mu.RLock()
 	defer priorityCache.mu.RUnlock()
-	if priorityCache.snapshot.MedianPriorityGwei != nil {
+	if priorityCache.snapshot.MedianPriorityGwei != nil && priorityCache.snapshot.QueuedTaskCount > 0 {
 		return new(big.Int).Set(priorityCache.snapshot.MedianPriorityGwei), true
 	}
 	if priorityCache.lastNonEmptyMedian != nil {
 		return new(big.Int).Set(priorityCache.lastNonEmptyMedian), true
 	}
 	return nil, false
+}
+
+// ResolveQueueMedianHint returns the Queue Median Hint, falling back to
+// empty_queue_median_priority_gwei when no live or remembered median exists.
+func ResolveQueueMedianHint() (*big.Int, error) {
+	if median, ok := ResolveMedianPriorityGwei(); ok {
+		return median, nil
+	}
+	return config.GetConfig().ParseEmptyQueueMedianPriorityGwei()
+}
+
+// ResolveQueuePriorityBounds returns the current non-empty queue highest and
+// lowest priorities. ok is false when the live snapshot has no usable bounds.
+func ResolveQueuePriorityBounds() (highest, lowest *big.Int, ok bool) {
+	priorityCache.mu.RLock()
+	defer priorityCache.mu.RUnlock()
+	if priorityCache.snapshot.QueuedTaskCount <= 0 {
+		return nil, nil, false
+	}
+	if priorityCache.snapshot.HighestPriorityGwei == nil || priorityCache.snapshot.LowestPriorityGwei == nil {
+		return nil, nil, false
+	}
+	return new(big.Int).Set(priorityCache.snapshot.HighestPriorityGwei),
+		new(big.Int).Set(priorityCache.snapshot.LowestPriorityGwei),
+		true
 }
 
 func copyQueuedPrioritySnapshot(src QueuedPrioritySnapshot) QueuedPrioritySnapshot {

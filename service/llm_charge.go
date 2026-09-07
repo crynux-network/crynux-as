@@ -18,32 +18,6 @@ import (
 
 var ErrInsufficientBalance = errors.New("insufficient credits balance")
 
-type LLMPrices struct {
-	PromptCreditsPerToken     uint64
-	CompletionCreditsPerToken uint64
-}
-
-// CalcCredits computes Credits from token usage, project token ratio, and unit prices:
-// credits = (prompt_tokens * ratioInt * promptPrice + completion_tokens * ratioInt * completionPrice) / 10
-// CalcCredits computes credits = (P * R * V * Pp + C * R * V * Cp) / 100, where
-// R is the stored token ratio (display * 10) and V is the stored VRAM tier ratio
-// (display * 10). The result truncates toward zero.
-func CalcCredits(promptTokens, completionTokens uint64, tokenRatio uint, vramRatio uint, prices LLMPrices) *big.Int {
-	ratio := new(big.Int).SetUint64(uint64(tokenRatio))
-	ratio.Mul(ratio, new(big.Int).SetUint64(uint64(vramRatio)))
-
-	promptPart := new(big.Int).SetUint64(promptTokens)
-	promptPart.Mul(promptPart, ratio)
-	promptPart.Mul(promptPart, new(big.Int).SetUint64(prices.PromptCreditsPerToken))
-
-	completionPart := new(big.Int).SetUint64(completionTokens)
-	completionPart.Mul(completionPart, ratio)
-	completionPart.Mul(completionPart, new(big.Int).SetUint64(prices.CompletionCreditsPerToken))
-
-	total := new(big.Int).Add(promptPart, completionPart)
-	return total.Div(total, big.NewInt(100))
-}
-
 // ResolveMaxCompletionTokens returns max_completion_tokens, else max_tokens, else defaultMax.
 func ResolveMaxCompletionTokens(maxTokens, maxCompletionTokens *int, defaultMax uint64) uint64 {
 	if maxCompletionTokens != nil && *maxCompletionTokens > 0 {

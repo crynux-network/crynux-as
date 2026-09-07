@@ -12,11 +12,6 @@ type TokenConfig struct {
 	CreditsPerToken uint64 `mapstructure:"credits_per_token"`
 }
 
-type VramRatioConfig struct {
-	MaxVram uint64  `mapstructure:"max_vram"`
-	Ratio   float64 `mapstructure:"ratio"`
-}
-
 type BlockchainNetworkConfig struct {
 	ChainID          uint64                 `mapstructure:"chain_id"`
 	RpcEndpoint      string                 `mapstructure:"rpc_endpoint"`
@@ -76,15 +71,16 @@ type AppConfig struct {
 	} `mapstructure:"relay"`
 
 	LLM struct {
-		PromptCreditsPerToken         uint64            `mapstructure:"prompt_credits_per_token"`
-		CompletionCreditsPerToken     uint64            `mapstructure:"completion_credits_per_token"`
-		DefaultMaxTokens              uint64            `mapstructure:"default_max_tokens"`
-		DefaultVramLimit              uint64            `mapstructure:"default_vram_limit"`
-		LoadedModelsRefreshInterval   uint64            `mapstructure:"loaded_models_refresh_interval"`
-		QueuedPriorityRefreshInterval uint64            `mapstructure:"queued_priority_refresh_interval"`
-		ExecutionTimeCacheTTL         uint64            `mapstructure:"execution_time_cache_ttl"`
-		BaseVRAM                      uint64            `mapstructure:"base_vram"`
-		EmptyQueueMedianPriorityGwei  string            `mapstructure:"empty_queue_median_priority_gwei"`
-		VramRatios                    []VramRatioConfig `mapstructure:"vram_ratios"`
+		DefaultMaxTokens              uint64 `mapstructure:"default_max_tokens"`
+		DefaultVramLimit              uint64 `mapstructure:"default_vram_limit"`
+		LoadedModelsRefreshInterval   uint64 `mapstructure:"loaded_models_refresh_interval"`
+		QueuedPriorityRefreshInterval uint64 `mapstructure:"queued_priority_refresh_interval"`
+		ExecutionTimeCacheTTL         uint64 `mapstructure:"execution_time_cache_ttl"`
+		BaseVRAM                      uint64 `mapstructure:"base_vram"`
+		EmptyQueueMedianPriorityGwei  string `mapstructure:"empty_queue_median_priority_gwei"`
+		ReferencePriorityGwei         string `mapstructure:"reference_priority_gwei"`
+		CreditsPerGwei                uint64 `mapstructure:"credits_per_gwei"`
+		MaxTokenRatio                 uint64 `mapstructure:"max_token_ratio"`
+		JobSubmitTimeout              uint64 `mapstructure:"job_submit_timeout"`
 	} `mapstructure:"llm"`
 }

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,12 @@ import (
 )
 
 const llmTaskType = 1
+
+const (
+	ClientTaskStatusRunning = "running"
+	ClientTaskStatusSuccess = "success"
+	ClientTaskStatusFailed  = "failed"
+)
 
 type RawTaskClient struct {
 	*Client
@@ -39,17 +46,39 @@ type createRawTaskEnvelope struct {
 	Data    *RawClientTask `json:"data"`
 }
 
-type InferenceTaskStatus struct {
-	Status      int    `json:"status"`
-	TaskType    int    `json:"task_type"`
-	AbortReason int    `json:"abort_reason"`
-	TaskError   int    `json:"task_error"`
-	TaskID      string `json:"task_id"`
+type getRawTaskEnvelope struct {
+	Message string         `json:"message"`
+	Data    *RawClientTask `json:"data"`
 }
 
-type getRawTaskEnvelope struct {
-	Message string               `json:"message"`
-	Data    *InferenceTaskStatus `json:"data"`
+type BatchCreateRawTaskRequest struct {
+	Tasks []CreateRawTaskRequest `json:"tasks"`
+}
+
+type BatchCreateRawTaskItemResult struct {
+	Index      int            `json:"index"`
+	ClientTask *RawClientTask `json:"client_task,omitempty"`
+	Error      string         `json:"error,omitempty"`
+}
+
+type batchCreateRawTaskEnvelope struct {
+	Message string                          `json:"message"`
+	Data    []BatchCreateRawTaskItemResult  `json:"data"`
+}
+
+type BatchGetRawTaskStatusRequest struct {
+	ClientTaskIDs []uint `json:"client_task_ids"`
+}
+
+type BatchGetRawTaskStatusItemResult struct {
+	ClientTaskID uint           `json:"client_task_id"`
+	ClientTask   *RawClientTask `json:"client_task,omitempty"`
+	Error        string         `json:"error,omitempty"`
+}
+
+type batchGetRawTaskStatusEnvelope struct {
+	Message string                             `json:"message"`
+	Data    []BatchGetRawTaskStatusItemResult  `json:"data"`
 }
 
 func (c *RawTaskClient) CreateLLMTask(ctx context.Context, taskArgs string, minVram uint64, taskFeeWei *big.Int) (*RawClientTask, error) {
@@ -93,7 +122,37 @@ func (c *RawTaskClient) CreateLLMTask(ctx context.Context, taskArgs string, minV
 	return envelope.Data, nil
 }
 
-func (c *RawTaskClient) GetTaskStatus(ctx context.Context, clientTaskID uint) (*InferenceTaskStatus, error) {
+func (c *RawTaskClient) CreateLLMTasks(ctx context.Context, tasks []CreateRawTaskRequest) ([]BatchCreateRawTaskItemResult, error) {
+	body, err := json.Marshal(BatchCreateRawTaskRequest{Tasks: tasks})
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.post(ctx, "/v1/inference_tasks/batch", body)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Close()
+
+	respBody, err := resp.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("bridge batch create task failed: %s", string(respBody))
+	}
+
+	var envelope batchCreateRawTaskEnvelope
+	if err := json.Unmarshal(respBody, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Data == nil {
+		return nil, fmt.Errorf("bridge batch create task returned empty data")
+	}
+	return envelope.Data, nil
+}
+
+func (c *RawTaskClient) GetTaskStatus(ctx context.Context, clientTaskID uint) (*RawClientTask, error) {
 	url := fmt.Sprintf("%s/v1/inference_tasks/%d", c.baseURL, clientTaskID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -126,6 +185,45 @@ func (c *RawTaskClient) GetTaskStatus(ctx context.Context, clientTaskID uint) (*
 	return envelope.Data, nil
 }
 
+func (c *RawTaskClient) GetTaskStatuses(ctx context.Context, clientTaskIDs []uint) ([]BatchGetRawTaskStatusItemResult, error) {
+	body, err := json.Marshal(BatchGetRawTaskStatusRequest{ClientTaskIDs: clientTaskIDs})
+	if err != nil {
+		return nil, err
+	}
+
+	url := c.baseURL + "/v1/inference_tasks/batch/status"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("bridge batch get task status failed: %s", string(respBody))
+	}
+
+	var envelope batchGetRawTaskStatusEnvelope
+	if err := json.Unmarshal(respBody, &envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Data == nil {
+		return nil, fmt.Errorf("bridge batch get task status returned empty data")
+	}
+	return envelope.Data, nil
+}
+
 func (c *RawTaskClient) DownloadLLMResult(ctx context.Context, clientTaskID uint) ([]byte, error) {
 	url := fmt.Sprintf("%s/v1/inference_tasks/%d/llm", c.baseURL, clientTaskID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -151,18 +249,10 @@ func (c *RawTaskClient) DownloadLLMResult(ctx context.Context, clientTaskID uint
 	return respBody, nil
 }
 
-const (
-	BridgeTaskResultDownloaded = 11
-	BridgeTaskEndAborted       = 7
-	BridgeTaskEndInvalidated   = 9
-)
-
-func IsBridgeTaskTerminal(status int) bool {
-	return status == BridgeTaskResultDownloaded ||
-		status == BridgeTaskEndAborted ||
-		status == BridgeTaskEndInvalidated
+func IsBridgeTaskTerminal(status string) bool {
+	return status == ClientTaskStatusSuccess || status == ClientTaskStatusFailed
 }
 
-func IsBridgeTaskSuccess(status int) bool {
-	return status == BridgeTaskResultDownloaded
+func IsBridgeTaskSuccess(status string) bool {
+	return status == ClientTaskStatusSuccess
 }

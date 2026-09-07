@@ -3,6 +3,7 @@ package service
 import (
 	"math/big"
 	"testing"
+	"time"
 
 	"crynux_as/models"
 )
@@ -47,5 +48,20 @@ func TestLLMJobTaskFeeWeiRejectsMissingAndNegative(t *testing.T) {
 	}
 	if _, err := llmJobTaskFeeWei(job); err == nil {
 		t.Fatal("negative task fee was accepted")
+	}
+}
+
+func TestIsLLMJobSubmitTimedOut(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	timeout := 10 * time.Minute
+
+	if isLLMJobSubmitTimedOut(&models.LLMJob{CreatedAt: now.Add(-9 * time.Minute)}, timeout, now) {
+		t.Fatal("job younger than timeout was treated as timed out")
+	}
+	if !isLLMJobSubmitTimedOut(&models.LLMJob{CreatedAt: now.Add(-10 * time.Minute)}, timeout, now) {
+		t.Fatal("job at timeout was not treated as timed out")
+	}
+	if !isLLMJobSubmitTimedOut(&models.LLMJob{CreatedAt: now.Add(-11 * time.Minute)}, timeout, now) {
+		t.Fatal("job older than timeout was not treated as timed out")
 	}
 }

@@ -2,7 +2,7 @@
 
 ## Scope
 
-Crynux AS exposes the AI capabilities of the Crynux Network as managed services. It manages user accounts, on-chain ERC20 payments that purchase Credits, projects with private OpenAI-compatible LLM API endpoints, usage-based Credits charging, and per-project usage statistics. Inference itself is executed by the Crynux Network; Crynux AS forwards LLM requests to the Crynux Bridge.
+Crynux AS exposes the AI capabilities of the Crynux Network as managed services. It manages user accounts, on-chain ERC20 payments that purchase Credits, projects with private OpenAI-compatible LLM API endpoints, usage-based Credits charging, and per-project usage statistics. Inference itself is executed by the Crynux Network; Crynux AS submits LLM jobs to the Crynux Bridge raw task APIs.
 
 ## Wallet Login and Accounts
 
@@ -90,7 +90,7 @@ The request and response formats are OpenAI-compatible.
 
 The models endpoints return the shared LLM model catalog built from the in-memory loaded-models cache refreshed from the Relay. Each model object includes the extra field `min_vram`. See [llm-api.md](./llm-api.md).
 
-A request MAY specify a VRAM limit in GB through the `<vram_limit>` URL path segment or the `vram_limit` body field; the path value overrides the body value. The resolved effective VRAM selects the billing tier and is forwarded to the Bridge in the URL path. See [llm-api.md](./llm-api.md).
+A request MAY specify a VRAM limit in GB through the `<vram_limit>` URL path segment or the `vram_limit` body field; the path value overrides the body value. The resolved effective VRAM selects `vram_weight` for Credits and task fee and is sent to Bridge as raw task `min_vram`. See [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md).
 
 ### Authentication
 
@@ -103,13 +103,13 @@ A request failing either check MUST be rejected with HTTP 401.
 
 ### Forwarding to the Crynux Bridge
 
-The service forwards LLM requests to the Crynux Bridge LLM API. Streaming requests MUST inject `stream_options.include_usage: true` toward the Bridge for metering and MUST NOT expose the injected usage chunk to clients that did not request it. See [llm-api.md](./llm-api.md).
+The service executes LLM jobs through the Crynux Bridge raw task APIs. AS parses OpenAI-compatible requests into canonical `GPTTaskArgs`, submits Bridge ClientTasks, queries ClientTask status, downloads raw `GPTTaskResponse` JSON, and formats public API responses locally. See [llm-api.md](./llm-api.md).
 
 ### Charging
 
-Each LLM call is charged from the Credits balance of the owning account using Bridge `usage` token counts, the project `token_ratio`, the VRAM tier ratio selected from the resolved effective VRAM, and the configured global unit prices. Insufficient balance for the pre-forward estimate MUST be rejected with HTTP 402. The complete billing specification is the LLM Charging Rules chapter in [llm-api.md](./llm-api.md).
+Each LLM call is charged from the Credits balance of the owning account using the Credits billing model in [credits-billing.md](./credits-billing.md). Insufficient balance for the pre-forward estimate MUST be rejected with HTTP 402.
 
-`GET /v1/llm/billing_config` is a JWT-authenticated management API that returns the configured prompt and completion unit prices together with the VRAM billing tiers.
+`GET /v1/llm/billing_config` and `GET /v1/llm/pricing_examples` are JWT-authenticated management APIs specified in [credits-billing.md](./credits-billing.md).
 
 ### Call Records
 

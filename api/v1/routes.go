@@ -93,8 +93,13 @@ func InitRoutes(r *fizz.Fizz) {
 
 	llmGroup := v1g.Group("llm", "LLM", "LLM configuration APIs", middleware.JWTAuthMiddleware())
 	llmGroup.GET("/billing_config", []fizz.OperationOption{
-		fizz.Summary("Get the configured LLM billing unit prices and VRAM ratio tiers"),
+		fizz.Summary("Get the configured LLM billing reference priority and Credits conversion"),
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(llm.GetBillingConfig, 200))
+	llmGroup.GET("/pricing_examples", []fizz.OperationOption{
+		fizz.Summary("Get model coefficient rows for Credits and execution-time examples"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(llm.GetPricingExamples, 200))
 }

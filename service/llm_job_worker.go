@@ -17,6 +17,7 @@ import (
 )
 
 const llmJobPollInterval = 2 * time.Second
+const llmJobBatchLimit = 100
 
 const weiPerGwei = int64(1_000_000_000)
 
@@ -34,19 +35,15 @@ func RunLLMJobWorker(ctx context.Context) {
 		default:
 		}
 
-		job, err := ClaimNextLLMJob(ctx, db)
-		if err != nil {
-			log.Errorf("claim llm job failed: %v", err)
-			time.Sleep(llmJobPollInterval)
-			continue
-		}
-		if job == nil {
-			time.Sleep(llmJobPollInterval)
-			continue
+		if err := advanceLLMJobs(ctx, db); err != nil {
+			log.Errorf("advance llm jobs failed: %v", err)
 		}
 
-		if err := processLLMJob(ctx, db, job); err != nil {
-			log.Errorf("process llm job %d failed: %v", job.ID, err)
+		select {
+		case <-ctx.Done():
+			log.Infoln("llm job worker stopped")
+			return
+		case <-time.After(llmJobPollInterval):
 		}
 	}
 }
@@ -75,97 +72,217 @@ func RecoverIncompleteJobs(ctx context.Context, db *gorm.DB) error {
 	return nil
 }
 
-func processLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob) error {
+func advanceLLMJobs(ctx context.Context, db *gorm.DB) error {
+	jobs, err := ListUnfinishedLLMJobs(ctx, db, llmJobBatchLimit)
+	if err != nil {
+		return err
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+
 	cfg := config.GetConfig()
 	client := bridge.NewRawTaskClient(cfg.Bridge.BaseURL, cfg.Bridge.APIKey)
 
-	if job.BridgeClientTaskID == nil {
-		taskFeeWei, err := llmJobTaskFeeWei(job)
-		if err != nil {
-			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge submit failed: %v", err))
+	pending := make([]*models.LLMJob, 0)
+	inFlight := make([]*models.LLMJob, 0)
+	for i := range jobs {
+		job := &jobs[i]
+		if job.BridgeClientTaskID == nil {
+			pending = append(pending, job)
+			continue
 		}
-		rawTask, err := client.CreateLLMTask(ctx, job.TaskArgsJSON, job.BilledVram, taskFeeWei)
-		if err != nil {
-			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge submit failed: %v", err))
-		}
-		if err := UpdateLLMJobBridgeTask(ctx, db, job.ID, rawTask.ID); err != nil {
-			return err
-		}
-		job.BridgeClientTaskID = &rawTask.ID
+		inFlight = append(inFlight, job)
 	}
 
-	bridgeClientTaskID := *job.BridgeClientTaskID
-	for {
-		status, err := client.GetTaskStatus(ctx, bridgeClientTaskID)
-		if err != nil {
-			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge status failed: %v", err))
-		}
+	if err := submitPendingLLMJobs(ctx, db, client, pending, time.Duration(cfg.LLM.JobSubmitTimeout)*time.Second); err != nil {
+		return err
+	}
+	return syncInFlightLLMJobs(ctx, db, client, cfg, inFlight)
+}
 
-		if !bridge.IsBridgeTaskTerminal(status.Status) {
-			if job.Status != models.LLMJobStatusInProgress {
-				if err := UpdateLLMJobStatus(ctx, db, job.ID, models.LLMJobStatusInProgress); err != nil {
-					return err
-				}
-				job.Status = models.LLMJobStatusInProgress
+func submitPendingLLMJobs(
+	ctx context.Context,
+	db *gorm.DB,
+	client *bridge.RawTaskClient,
+	jobs []*models.LLMJob,
+	submitTimeout time.Duration,
+) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	validJobs := make([]*models.LLMJob, 0, len(jobs))
+	requests := make([]bridge.CreateRawTaskRequest, 0, len(jobs))
+	for _, job := range jobs {
+		if isLLMJobSubmitTimedOut(job, submitTimeout, now) {
+			msg := fmt.Sprintf("bridge submit timed out after %s", submitTimeout)
+			if failErr := failLLMJobWithRecord(ctx, db, job, msg); failErr != nil {
+				return failErr
 			}
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(llmJobPollInterval):
+			continue
+		}
+		taskFeeWei, err := llmJobTaskFeeWei(job)
+		if err != nil {
+			if failErr := failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge submit failed: %v", err)); failErr != nil {
+				return failErr
+			}
+			continue
+		}
+		validJobs = append(validJobs, job)
+		requests = append(requests, bridge.CreateRawTaskRequest{
+			TaskArgs: job.TaskArgsJSON,
+			TaskType: 1,
+			MinVram:  job.BilledVram,
+			TaskFee:  taskFeeWei.String(),
+		})
+	}
+	if len(requests) == 0 {
+		return nil
+	}
+
+	results, err := client.CreateLLMTasks(ctx, requests)
+	if err != nil {
+		log.Errorf("bridge batch create failed, will retry next tick: %v", err)
+		return nil
+	}
+
+	for _, result := range results {
+		if result.Index < 0 || result.Index >= len(validJobs) {
+			log.Errorf("bridge batch create returned out-of-range index %d", result.Index)
+			continue
+		}
+		job := validJobs[result.Index]
+		if result.Error != "" || result.ClientTask == nil {
+			msg := result.Error
+			if msg == "" {
+				msg = "bridge batch create returned empty client task"
+			}
+			if failErr := failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge submit failed: %s", msg)); failErr != nil {
+				return failErr
+			}
+			continue
+		}
+		if err := UpdateLLMJobBridgeTask(ctx, db, job.ID, result.ClientTask.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isLLMJobSubmitTimedOut(job *models.LLMJob, submitTimeout time.Duration, now time.Time) bool {
+	if job == nil || submitTimeout <= 0 || job.CreatedAt.IsZero() {
+		return false
+	}
+	return !now.Before(job.CreatedAt.Add(submitTimeout))
+}
+
+func syncInFlightLLMJobs(
+	ctx context.Context,
+	db *gorm.DB,
+	client *bridge.RawTaskClient,
+	cfg *config.AppConfig,
+	jobs []*models.LLMJob,
+) error {
+	if len(jobs) == 0 {
+		return nil
+	}
+
+	ids := make([]uint, 0, len(jobs))
+	jobByBridgeID := make(map[uint]*models.LLMJob, len(jobs))
+	for _, job := range jobs {
+		bridgeID := *job.BridgeClientTaskID
+		ids = append(ids, bridgeID)
+		jobByBridgeID[bridgeID] = job
+	}
+
+	results, err := client.GetTaskStatuses(ctx, ids)
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		job, ok := jobByBridgeID[result.ClientTaskID]
+		if !ok {
+			continue
+		}
+		if result.Error != "" || result.ClientTask == nil {
+			msg := result.Error
+			if msg == "" {
+				msg = "bridge batch status returned empty client task"
+			}
+			if failErr := failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge status failed: %s", msg)); failErr != nil {
+				return failErr
 			}
 			continue
 		}
 
-		if !bridge.IsBridgeTaskSuccess(status.Status) {
-			msg := fmt.Sprintf("bridge task failed with status %d", status.Status)
-			return failLLMJobWithRecord(ctx, db, job, msg)
+		status := result.ClientTask.Status
+		if !bridge.IsBridgeTaskTerminal(status) {
+			if job.Status != models.LLMJobStatusInProgress {
+				if err := UpdateLLMJobStatus(ctx, db, job.ID, models.LLMJobStatusInProgress); err != nil {
+					return err
+				}
+			}
+			continue
 		}
 
-		rawBytes, err := client.DownloadLLMResult(ctx, bridgeClientTaskID)
-		if err != nil {
-			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("bridge download failed: %v", err))
+		if !bridge.IsBridgeTaskSuccess(status) {
+			msg := fmt.Sprintf("bridge task failed with status %s", status)
+			if failErr := failLLMJobWithRecord(ctx, db, job, msg); failErr != nil {
+				return failErr
+			}
+			continue
 		}
 
-		var rawResponse models.GPTTaskResponse
-		if err := json.Unmarshal(rawBytes, &rawResponse); err != nil {
-			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("invalid task result: %v", err))
+		if err := completeSuccessfulLLMJob(ctx, db, client, job); err != nil {
+			log.Errorf("complete llm job %d failed, will retry next tick: %v", job.ID, err)
+			continue
 		}
-
-		formatted, err := formatLLMJobResult(job, &rawResponse)
-		if err != nil {
-			return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("format result failed: %v", err))
-		}
-
-		rawJSON := string(rawBytes)
-		completed, err := CompleteLLMJob(
-			ctx,
-			db,
-			job.ID,
-			rawJSON,
-			string(formatted),
-			uint64(rawResponse.Usage.PromptTokens),
-			uint64(rawResponse.Usage.CompletionTokens),
-			uint64(rawResponse.Usage.TotalTokens),
-		)
-		if err != nil {
-			return err
-		}
-
-		project, err := loadProjectByID(ctx, db, completed.ProjectID)
-		if err != nil {
-			return err
-		}
-
-		vramRatio := SelectVramRatio(cfg.LLM.VramRatios, completed.BilledVram)
-		prices := LLMPrices{
-			PromptCreditsPerToken:     cfg.LLM.PromptCreditsPerToken,
-			CompletionCreditsPerToken: cfg.LLM.CompletionCreditsPerToken,
-		}
-		if err := SettleLLMJob(ctx, db, completed, project, vramRatio, prices); err != nil {
-			return err
-		}
-		return nil
 	}
+	return nil
+}
+
+func completeSuccessfulLLMJob(
+	ctx context.Context,
+	db *gorm.DB,
+	client *bridge.RawTaskClient,
+	job *models.LLMJob,
+) error {
+	bridgeClientTaskID := *job.BridgeClientTaskID
+	rawBytes, err := client.DownloadLLMResult(ctx, bridgeClientTaskID)
+	if err != nil {
+		return fmt.Errorf("bridge download failed: %w", err)
+	}
+
+	var rawResponse models.GPTTaskResponse
+	if err := json.Unmarshal(rawBytes, &rawResponse); err != nil {
+		return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("invalid task result: %v", err))
+	}
+
+	formatted, err := formatLLMJobResult(job, &rawResponse)
+	if err != nil {
+		return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("format result failed: %v", err))
+	}
+
+	project, err := loadProjectByID(ctx, db, job.ProjectID)
+	if err != nil {
+		return err
+	}
+
+	_, err = CompleteAndSettleLLMJob(
+		ctx,
+		db,
+		job,
+		project,
+		string(rawBytes),
+		string(formatted),
+		uint64(rawResponse.Usage.PromptTokens),
+		uint64(rawResponse.Usage.CompletionTokens),
+		uint64(rawResponse.Usage.TotalTokens),
+	)
+	return err
 }
 
 func llmJobTaskFeeWei(job *models.LLMJob) (*big.Int, error) {

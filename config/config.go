@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"math"
 	"math/big"
 	"os"
 	"strings"
@@ -128,12 +127,6 @@ func checkRelayConfig() error {
 }
 
 func checkLLMConfig() error {
-	if appConfig.LLM.PromptCreditsPerToken == 0 {
-		return errors.New("llm.prompt_credits_per_token is not set")
-	}
-	if appConfig.LLM.CompletionCreditsPerToken == 0 {
-		return errors.New("llm.completion_credits_per_token is not set")
-	}
 	if appConfig.LLM.DefaultMaxTokens == 0 {
 		return errors.New("llm.default_max_tokens is not set")
 	}
@@ -155,25 +148,30 @@ func checkLLMConfig() error {
 	if _, err := appConfig.ParseEmptyQueueMedianPriorityGwei(); err != nil {
 		return fmt.Errorf("llm.empty_queue_median_priority_gwei is invalid: %w", err)
 	}
-	if len(appConfig.LLM.VramRatios) == 0 {
-		return errors.New("llm.vram_ratios is not set")
+	if _, err := appConfig.ParseReferencePriorityGwei(); err != nil {
+		return fmt.Errorf("llm.reference_priority_gwei is invalid: %w", err)
 	}
-	for i, tier := range appConfig.LLM.VramRatios {
-		if tier.MaxVram == 0 {
-			return fmt.Errorf("llm.vram_ratios[%d].max_vram is not set", i)
-		}
-		if i > 0 && tier.MaxVram <= appConfig.LLM.VramRatios[i-1].MaxVram {
-			return fmt.Errorf("llm.vram_ratios must be sorted by strictly ascending max_vram at index %d", i)
-		}
-		if _, err := VramRatioStored(tier.Ratio); err != nil {
-			return fmt.Errorf("llm.vram_ratios[%d].ratio is invalid: %w", i, err)
-		}
+	if appConfig.LLM.CreditsPerGwei == 0 {
+		return errors.New("llm.credits_per_gwei is not set")
+	}
+	if appConfig.LLM.MaxTokenRatio < 2 {
+		return errors.New("llm.max_token_ratio must be an integer >= 2")
+	}
+	if appConfig.LLM.JobSubmitTimeout == 0 {
+		return errors.New("llm.job_submit_timeout is not set")
 	}
 	return nil
 }
 
 func (cfg *AppConfig) ParseEmptyQueueMedianPriorityGwei() (*big.Int, error) {
-	value := cfg.LLM.EmptyQueueMedianPriorityGwei
+	return parsePositiveDecimalGwei(cfg.LLM.EmptyQueueMedianPriorityGwei)
+}
+
+func (cfg *AppConfig) ParseReferencePriorityGwei() (*big.Int, error) {
+	return parsePositiveDecimalGwei(cfg.LLM.ReferencePriorityGwei)
+}
+
+func parsePositiveDecimalGwei(value string) (*big.Int, error) {
 	if value == "" {
 		return nil, errors.New("must be a positive decimal integer")
 	}
@@ -187,18 +185,6 @@ func (cfg *AppConfig) ParseEmptyQueueMedianPriorityGwei() (*big.Int, error) {
 		return nil, errors.New("must be a positive decimal integer")
 	}
 	return priority, nil
-}
-
-// VramRatioStored converts a display VRAM ratio to the stored integer (ratio * 10).
-func VramRatioStored(ratio float64) (uint, error) {
-	if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio <= 0 {
-		return 0, errors.New("must be a positive number")
-	}
-	stored := uint(math.Round(ratio * 10))
-	if stored == 0 || math.Abs(float64(stored)/10.0-ratio) > 1e-9 {
-		return 0, errors.New("must have at most one decimal place")
-	}
-	return stored, nil
 }
 
 func ReadFromFile(file string) string {

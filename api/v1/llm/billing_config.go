@@ -3,19 +3,19 @@ package llm
 import (
 	"crynux_as/api/v1/response"
 	"crynux_as/config"
+	"crynux_as/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-type VramRatioData struct {
-	MaxVram uint64  `json:"max_vram" description:"Inclusive upper bound of the tier in GB"`
-	Ratio   float64 `json:"ratio" description:"Billing ratio applied to the tier"`
-}
-
 type BillingConfigData struct {
-	PromptCreditsPerToken     uint64          `json:"prompt_credits_per_token" description:"Credits charged per billed prompt token before ratio scaling"`
-	CompletionCreditsPerToken uint64          `json:"completion_credits_per_token" description:"Credits charged per billed completion token before ratio scaling"`
-	VramRatios                []VramRatioData `json:"vram_ratios" description:"Configured VRAM billing ratio tiers"`
+	BaseVRAM              uint64  `json:"base_vram" description:"Base VRAM in GB used for vram_weight"`
+	ReferencePriorityGwei string  `json:"reference_priority_gwei" description:"Fixed reference priority in Gwei"`
+	CreditsPerGwei        uint64  `json:"credits_per_gwei" description:"Credits charged per billable Gwei"`
+	MaxTokenRatio         uint64  `json:"max_token_ratio" description:"Maximum allowed cost level token_ratio display value"`
+	MedianPriorityGwei    string  `json:"median_priority_gwei" description:"Current queue median priority hint in Gwei"`
+	HighestPriorityGwei   *string `json:"highest_priority_gwei" description:"Current queue highest priority in Gwei when the queue is non-empty"`
+	LowestPriorityGwei    *string `json:"lowest_priority_gwei" description:"Current queue lowest priority in Gwei when the queue is non-empty"`
 }
 
 type GetBillingConfigResponse struct {
@@ -25,18 +25,22 @@ type GetBillingConfigResponse struct {
 
 func GetBillingConfig(c *gin.Context) (*GetBillingConfigResponse, error) {
 	llmCfg := config.GetConfig().LLM
-	tiers := make([]VramRatioData, 0, len(llmCfg.VramRatios))
-	for _, tier := range llmCfg.VramRatios {
-		tiers = append(tiers, VramRatioData{
-			MaxVram: tier.MaxVram,
-			Ratio:   tier.Ratio,
-		})
+	median, err := service.ResolveQueueMedianHint()
+	if err != nil {
+		return nil, err
 	}
-	return &GetBillingConfigResponse{
-		Data: &BillingConfigData{
-			PromptCreditsPerToken:     llmCfg.PromptCreditsPerToken,
-			CompletionCreditsPerToken: llmCfg.CompletionCreditsPerToken,
-			VramRatios:                tiers,
-		},
-	}, nil
+	data := &BillingConfigData{
+		BaseVRAM:              llmCfg.BaseVRAM,
+		ReferencePriorityGwei: llmCfg.ReferencePriorityGwei,
+		CreditsPerGwei:        llmCfg.CreditsPerGwei,
+		MaxTokenRatio:         llmCfg.MaxTokenRatio,
+		MedianPriorityGwei:    median.String(),
+	}
+	if highest, lowest, ok := service.ResolveQueuePriorityBounds(); ok {
+		highestStr := highest.String()
+		lowestStr := lowest.String()
+		data.HighestPriorityGwei = &highestStr
+		data.LowestPriorityGwei = &lowestStr
+	}
+	return &GetBillingConfigResponse{Data: data}, nil
 }

@@ -53,12 +53,15 @@ type LLMJob struct {
 	ErrorMessage         *string             `gorm:"type:text"`
 	BillingStatus        LLMJobBillingStatus `gorm:"not null;default:0;index"`
 	LLMCallRecordID      *uint               `gorm:"index"`
-	TaskFeeGwei          *BigInt             `gorm:"type:string;size:255"`
-	MedianPriorityGwei   *BigInt             `gorm:"type:string;size:255"`
-	EstimatedNodeSeconds *float64
-	VramWeight           *float64
-	StartedAt            *time.Time
-	CompletedAt          *time.Time
+	TaskFeeGwei           *BigInt `gorm:"type:string;size:255"`
+	MedianPriorityGwei    *BigInt `gorm:"type:string;size:255"`
+	EstimatedNodeSeconds  *float64
+	VramWeight            *float64
+	ConstantSeconds       *float64
+	SecondsPerInputToken  *float64
+	SecondsPerOutputToken *float64
+	StartedAt             *time.Time
+	CompletedAt           *time.Time
 }
 
 func (LLMJob) TableName() string {

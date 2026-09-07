@@ -54,11 +54,6 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		return
 	}
 	effectiveVram := resolveEffectiveVram(parsed.model, userVram)
-	vramRatio := service.SelectVramRatio(appCfg.LLM.VramRatios, effectiveVram)
-	prices := service.LLMPrices{
-		PromptCreditsPerToken:     appCfg.LLM.PromptCreditsPerToken,
-		CompletionCreditsPerToken: appCfg.LLM.CompletionCreditsPerToken,
-	}
 
 	db := config.GetDB()
 	account, err := loadCreditAccount(c.Request.Context(), db, project.UserID)
@@ -70,12 +65,6 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 
 	estPrompt := estimatePromptTokens(body, apiType)
 	maxCompletion := service.ResolveMaxCompletionTokens(parsed.maxTokens, parsed.maxCompletionTokens, appCfg.LLM.DefaultMaxTokens)
-	estimated := service.CalcCredits(estPrompt, maxCompletion, project.TokenRatio, vramRatio, prices)
-	if err := service.EnsureSufficientBalance(&account.Balance.Int, estimated); err != nil {
-		writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
-		return
-	}
-
 	taskFee, err := estimateTaskFeeFn(
 		c.Request.Context(),
 		parsed.model,
@@ -90,22 +79,27 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		writeServerError(c)
 		return
 	}
+	if err := service.EnsureSufficientBalance(&account.Balance.Int, taskFee.Credits); err != nil {
+		writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
+		return
+	}
 
 	jobInput := service.CreateLLMJobInput{
-		Project:              project,
-		APIType:              apiType,
-		Model:                parsed.model,
-		BilledVram:           effectiveVram,
-		Background:           parsed.background,
-		Stream:               parsed.stream,
-		RequestBody:          body,
-		TaskArgsJSON:         parsed.taskArgsJSON,
-		EstimatedNodeSeconds: cloneTaskFeeFloat(taskFee, true),
-		VramWeight:           cloneTaskFeeFloat(taskFee, false),
-	}
-	if taskFee != nil {
-		jobInput.TaskFeeGwei = taskFee.TaskFeeGwei
-		jobInput.MedianPriorityGwei = taskFee.MedianPriorityGwei
+		Project:               project,
+		APIType:               apiType,
+		Model:                 parsed.model,
+		BilledVram:            effectiveVram,
+		Background:            parsed.background,
+		Stream:                parsed.stream,
+		RequestBody:           body,
+		TaskArgsJSON:          parsed.taskArgsJSON,
+		TaskFeeGwei:           taskFee.TaskFeeGwei,
+		MedianPriorityGwei:    taskFee.MedianPriorityGwei,
+		EstimatedNodeSeconds:  float64Ptr(taskFee.EstimatedNodeSeconds),
+		VramWeight:            float64Ptr(taskFee.VramWeight),
+		ConstantSeconds:       float64Ptr(taskFee.ConstantSeconds),
+		SecondsPerInputToken:  float64Ptr(taskFee.SecondsPerInputToken),
+		SecondsPerOutputToken: float64Ptr(taskFee.SecondsPerOutputToken),
 	}
 
 	job, err := service.CreateLLMJob(c.Request.Context(), db, jobInput)
@@ -235,14 +229,7 @@ func writeLLMAdapterError(c *gin.Context, err error) {
 	writeClientError(c, http.StatusBadRequest, err.Error())
 }
 
-func cloneTaskFeeFloat(taskFee *service.CalcTaskFeeResult, estimated bool) *float64 {
-	if taskFee == nil {
-		return nil
-	}
-	if estimated {
-		v := taskFee.EstimatedNodeSeconds
-		return &v
-	}
-	v := taskFee.VramWeight
-	return &v
+func float64Ptr(v float64) *float64 {
+	copied := v
+	return &copied
 }
