@@ -117,9 +117,9 @@ Deposit insert, credit event insert, and balance update MUST commit atomically. 
 ## Account APIs
 
 * `GET /v1/account` MUST return the Credits balance of the authenticated wallet.
-* `GET /v1/account/deposits` MUST return the deposit rows of the authenticated wallet, newest first, with offset/limit pagination.
+* `GET /v1/account/purchases` MUST return the purchase rows of the authenticated wallet, newest first, with offset/limit pagination. The response field MUST be `purchases`.
 * `GET /v1/account/charges` MUST return the charged LLM call records of the authenticated wallet, newest first, with offset/limit pagination. A charged record is an `llm_call_records` row owned by the wallet through its projects where `credits` is not `"0"`. Each item MUST include `id`, `created_at`, `project_id`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `token_ratio`, `credits`, `billed_vram`, `duration_ms`, and `status`. The `token_ratio` MUST be the display float of the project cost level stored on the call record at charge time.
 
-## Deposit Configuration API
+## Purchase Configuration API
 
-`GET /v1/deposit/networks` is a management API that requires a valid JWT token. It MUST return the configured deposit networks and tokens for client deposit flows. Each network entry MUST include `name`, `chain_id`, `receiving_address`, and `tokens`. Each token entry MUST include `name`, `address`, `decimals`, and `credits_per_token`. The response MUST NOT include `rpc_endpoint`, RPS, scan interval, log block range, confirmation blocks, or scan cursor settings. Networks and tokens MUST be sorted by name ascending.
+`GET /v1/purchase/networks` is a management API that requires a valid JWT token. It MUST return the configured purchase networks and tokens for client Credits purchase flows. Each network entry MUST include `name`, `chain_id`, `receiving_address`, and `tokens`. Each token entry MUST include `name`, `address`, `decimals`, and `credits_per_token`. The response MUST NOT include `rpc_endpoint`, RPS, scan interval, log block range, confirmation blocks, or scan cursor settings. Networks and tokens MUST be sorted by name ascending.

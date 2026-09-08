@@ -14,22 +14,22 @@ import (
 	"gorm.io/gorm"
 )
 
-type GetDepositsInput struct {
-	Offset int `query:"offset" description:"The offset of the deposit records"`
-	Limit  int `query:"limit" description:"The maximum number of the deposit records to return"`
+type GetPurchasesInput struct {
+	Offset int `query:"offset" description:"The offset of the purchase records"`
+	Limit  int `query:"limit" description:"The maximum number of the purchase records to return"`
 }
 
-type GetDepositsData struct {
-	Deposits []models.Deposit `json:"deposits" description:"The deposit records of the account"`
-	Total    int64            `json:"total" description:"The total number of the deposit records"`
+type GetPurchasesData struct {
+	Purchases []models.Deposit `json:"purchases" description:"The purchase records of the account"`
+	Total     int64            `json:"total" description:"The total number of the purchase records"`
 }
 
-type GetDepositsResponse struct {
+type GetPurchasesResponse struct {
 	response.Response
-	Data *GetDepositsData `json:"data"`
+	Data *GetPurchasesData `json:"data"`
 }
 
-func GetDeposits(c *gin.Context, in *GetDepositsInput) (*GetDepositsResponse, error) {
+func GetPurchases(c *gin.Context, in *GetPurchasesInput) (*GetPurchasesResponse, error) {
 	address := middleware.GetUserAddress(c)
 	if address == "" {
 		return nil, response.NewValidationErrorResponse("Authorization", "Invalid token")
@@ -55,7 +55,7 @@ func GetDeposits(c *gin.Context, in *GetDepositsInput) (*GetDepositsResponse, er
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, response.NewValidationErrorResponse("address", "User not found")
 		}
-		log.Errorf("Error loading user for deposits: %v", err)
+		log.Errorf("Error loading user for purchases: %v", err)
 		return nil, response.NewExceptionResponse(err)
 	}
 
@@ -64,25 +64,25 @@ func GetDeposits(c *gin.Context, in *GetDepositsInput) (*GetDepositsResponse, er
 
 	var total int64
 	if err := db.WithContext(dbCtx).Model(&models.Deposit{}).Where("user_id = ?", user.ID).Count(&total).Error; err != nil {
-		log.Errorf("Error counting deposits for user %d: %v", user.ID, err)
+		log.Errorf("Error counting purchases for user %d: %v", user.ID, err)
 		return nil, response.NewExceptionResponse(err)
 	}
 
-	deposits := make([]models.Deposit, 0)
+	purchases := make([]models.Deposit, 0)
 	if err := db.WithContext(dbCtx).
 		Where("user_id = ?", user.ID).
 		Order("id DESC").
 		Offset(offset).
 		Limit(limit).
-		Find(&deposits).Error; err != nil {
-		log.Errorf("Error listing deposits for user %d: %v", user.ID, err)
+		Find(&purchases).Error; err != nil {
+		log.Errorf("Error listing purchases for user %d: %v", user.ID, err)
 		return nil, response.NewExceptionResponse(err)
 	}
 
-	return &GetDepositsResponse{
-		Data: &GetDepositsData{
-			Deposits: deposits,
-			Total:    total,
+	return &GetPurchasesResponse{
+		Data: &GetPurchasesData{
+			Purchases: purchases,
+			Total:     total,
 		},
 	}, nil
 }

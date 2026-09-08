@@ -3,10 +3,10 @@ package v1
 import (
 	"crynux_as/api/v1/account"
 	"crynux_as/api/v1/auth"
-	"crynux_as/api/v1/deposit"
 	"crynux_as/api/v1/llm"
 	"crynux_as/api/v1/middleware"
 	"crynux_as/api/v1/projects"
+	"crynux_as/api/v1/purchase"
 	"crynux_as/api/v1/response"
 
 	"github.com/loopfz/gadgeto/tonic"
@@ -29,23 +29,23 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(account.GetBalance, 200))
-	accountGroup.GET("/deposits", []fizz.OperationOption{
-		fizz.Summary("Get the deposit records of the account"),
+	accountGroup.GET("/purchases", []fizz.OperationOption{
+		fizz.Summary("Get the purchase records of the account"),
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
-	}, tonic.Handler(account.GetDeposits, 200))
+	}, tonic.Handler(account.GetPurchases, 200))
 	accountGroup.GET("/charges", []fizz.OperationOption{
 		fizz.Summary("Get the Credits charge records of the account"),
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(account.GetCharges, 200))
 
-	depositGroup := v1g.Group("deposit", "Deposit", "Deposit configuration APIs", middleware.JWTAuthMiddleware())
-	depositGroup.GET("/networks", []fizz.OperationOption{
-		fizz.Summary("Get the configured deposit networks and tokens"),
+	purchaseGroup := v1g.Group("purchase", "Purchase", "Purchase configuration APIs", middleware.JWTAuthMiddleware())
+	purchaseGroup.GET("/networks", []fizz.OperationOption{
+		fizz.Summary("Get the configured purchase networks and tokens"),
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
-	}, tonic.Handler(deposit.GetNetworks, 200))
+	}, tonic.Handler(purchase.GetNetworks, 200))
 
 	projectsGroup := v1g.Group("projects", "Projects", "Project APIs", middleware.JWTAuthMiddleware())
 	projectsGroup.POST("", []fizz.OperationOption{

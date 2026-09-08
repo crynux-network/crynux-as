@@ -1,4 +1,4 @@
-package deposit
+package purchase
 
 import (
 	"crynux_as/api/v1/response"
@@ -18,12 +18,12 @@ type TokenData struct {
 type NetworkData struct {
 	Name             string      `json:"name" description:"Blockchain network name key from configuration"`
 	ChainID          uint64      `json:"chain_id" description:"EVM chain ID"`
-	ReceivingAddress string      `json:"receiving_address" description:"Platform address that receives ERC20 deposits"`
+	ReceivingAddress string      `json:"receiving_address" description:"Platform address that receives ERC20 payments for Credits purchases"`
 	Tokens           []TokenData `json:"tokens" description:"Supported ERC20 tokens on this network"`
 }
 
 type GetNetworksData struct {
-	Networks []NetworkData `json:"networks" description:"Configured deposit networks and tokens"`
+	Networks []NetworkData `json:"networks" description:"Configured purchase networks and tokens"`
 }
 
 type GetNetworksResponse struct {
