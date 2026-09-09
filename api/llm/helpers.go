@@ -26,17 +26,28 @@ func loadCreditAccount(ctx context.Context, db *gorm.DB, userID uint) (*models.C
 	return &account, nil
 }
 
-func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, duration time.Duration, taskFee *service.CalcTaskFeeResult) error {
+func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, acceptedAt, completedAt time.Time, taskFee *service.CalcTaskFeeResult) error {
+	if acceptedAt.IsZero() {
+		acceptedAt = completedAt
+	}
+	if completedAt.IsZero() {
+		completedAt = time.Now()
+		if acceptedAt.IsZero() {
+			acceptedAt = completedAt
+		}
+	}
 	in := service.RecordLLMCallInput{
-		UserID:     project.UserID,
-		ProjectID:  project.ID,
-		Model:      model,
-		TokenRatio: project.TokenRatio,
-		Status:     models.LLMCallStatusFailed,
-		Credits:    big.NewInt(0),
-		DurationMs: uint64(duration.Milliseconds()),
-		BilledVram: billedVram,
-		Charge:     false,
+		UserID:               project.UserID,
+		ProjectID:            project.ID,
+		Model:                model,
+		TokenRatio:           project.TokenRatio,
+		TokenUsageApplicable: true,
+		Status:               models.LLMCallStatusFailed,
+		Credits:              big.NewInt(0),
+		AcceptedAt:           acceptedAt,
+		CompletedAt:          completedAt,
+		BilledVram:           billedVram,
+		Charge:               false,
 	}
 	if taskFee != nil {
 		in.TaskFeeGwei = taskFee.TaskFeeGwei

@@ -160,6 +160,9 @@ func checkLLMConfig() error {
 	if appConfig.LLM.JobSubmitTimeout == 0 {
 		return errors.New("llm.job_submit_timeout is not set")
 	}
+	if appConfig.LLM.ProjectRecentRequestsLimit == 0 {
+		return errors.New("llm.project_recent_requests_limit is not set")
+	}
 	return nil
 }
 

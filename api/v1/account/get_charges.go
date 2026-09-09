@@ -82,7 +82,7 @@ func GetCharges(c *gin.Context, in *GetChargesInput) (*GetChargesResponse, error
 		return tx.
 			Table("llm_call_records").
 			Joins("JOIN projects ON projects.id = llm_call_records.project_id").
-			Where("projects.user_id = ?", user.ID).
+			Where("(llm_call_records.user_id = ? OR (llm_call_records.user_id = 0 AND projects.user_id = ?))", user.ID, user.ID).
 			Where("llm_call_records.credits <> ?", "0")
 	}
 

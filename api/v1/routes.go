@@ -39,6 +39,11 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(account.GetCharges, 200))
+	accountGroup.GET("/stats", []fizz.OperationOption{
+		fizz.Summary("Get the usage stats of the account"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(account.GetAccountStats, 200))
 
 	purchaseGroup := v1g.Group("purchase", "Purchase", "Purchase configuration APIs", middleware.JWTAuthMiddleware())
 	purchaseGroup.GET("/networks", []fizz.OperationOption{
@@ -90,6 +95,24 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("404", "project not found", response.NotFoundErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(projects.GetProjectStats, 200))
+	projectsGroup.GET("/:project_id/stats/completion-duration", []fizz.OperationOption{
+		fizz.Summary("Get the completion duration histogram of a project"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("404", "project not found", response.NotFoundErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(projects.GetProjectCompletionDurationStats, 200))
+	projectsGroup.GET("/:project_id/stats/models", []fizz.OperationOption{
+		fizz.Summary("Get the top model usage stats of a project"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("404", "project not found", response.NotFoundErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(projects.GetProjectModelStats, 200))
+	projectsGroup.GET("/:project_id/requests", []fizz.OperationOption{
+		fizz.Summary("Get the recent LLM call records of a project"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("404", "project not found", response.NotFoundErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(projects.GetProjectRequests, 200))
 
 	llmGroup := v1g.Group("llm", "LLM", "LLM configuration APIs", middleware.JWTAuthMiddleware())
 	llmGroup.GET("/billing_config", []fizz.OperationOption{

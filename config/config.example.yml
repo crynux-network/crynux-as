@@ -72,3 +72,4 @@ llm:
   credits_per_gwei: 1
   max_token_ratio: 30
   job_submit_timeout: 600
+  project_recent_requests_limit: 50

@@ -6,6 +6,7 @@ import (
 	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"crynux_as/service"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -34,9 +35,11 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		writeAuthError(c, "unauthorized")
 		return
 	}
+	acceptedAt := time.Now()
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, "", 0, acceptedAt, time.Now(), nil)
 		writeClientError(c, http.StatusBadRequest, "failed to read request body")
 		return
 	}
@@ -44,12 +47,15 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 	appCfg := config.GetConfig()
 	parsed, err := parseLLMJobRequest(body, apiType, int(appCfg.LLM.DefaultMaxTokens))
 	if err != nil {
+		model := extractModelFromBody(body)
+		_ = recordFailedCall(c.Request.Context(), project, model, 0, acceptedAt, time.Now(), nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
 
 	userVram, err := resolveUserVramLimit(parsed.vramLimit, c.Param("vram_limit"))
 	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, parsed.model, 0, acceptedAt, time.Now(), nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -75,11 +81,12 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 	)
 	if err != nil {
 		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, parsed.model, err)
-		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, 0, nil)
+		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), nil)
 		writeServerError(c)
 		return
 	}
 	if err := service.EnsureSufficientBalance(&account.Balance.Int, taskFee.Credits); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), taskFee)
 		writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
 		return
 	}
@@ -232,4 +239,14 @@ func writeLLMAdapterError(c *gin.Context, err error) {
 func float64Ptr(v float64) *float64 {
 	copied := v
 	return &copied
+}
+
+func extractModelFromBody(body []byte) string {
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	return payload.Model
 }

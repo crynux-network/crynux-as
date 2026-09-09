@@ -113,14 +113,17 @@ func promptRuneCount(raw json.RawMessage) int {
 type RecordLLMCallInput struct {
 	UserID               uint
 	ProjectID            uint
+	LLMJobID             *uint
 	Model                string
 	PromptTokens         uint64
 	CompletionTokens     uint64
 	TotalTokens          uint64
 	TokenRatio           uint
+	TokenUsageApplicable bool
 	Status               models.LLMCallStatus
 	Credits              *big.Int
-	DurationMs           uint64
+	AcceptedAt           time.Time
+	CompletedAt          time.Time
 	BilledVram           uint64
 	TaskFeeGwei          *big.Int
 	MedianPriorityGwei   *big.Int
@@ -134,12 +137,38 @@ type RecordLLMCallInput struct {
 // insufficient at settle time, the record is stored as success with Credits=0 and
 // no ledger event is created. The created record ID is returned.
 func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) (uint, error) {
+	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	var recordID uint
+	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		id, err := processLLMCallTx(tx, in)
+		if err != nil {
+			return err
+		}
+		recordID = id
+		return nil
+	})
+	return recordID, err
+}
+
+func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 	if in.UserID == 0 {
 		return 0, errors.New("user id is required")
 	}
 	if in.ProjectID == 0 {
 		return 0, errors.New("project id is required")
 	}
+	if in.AcceptedAt.IsZero() {
+		return 0, errors.New("accepted_at is required")
+	}
+	if in.CompletedAt.IsZero() {
+		return 0, errors.New("completed_at is required")
+	}
+	if in.CompletedAt.Before(in.AcceptedAt) {
+		return 0, errors.New("completed_at must not be before accepted_at")
+	}
+
 	credits := big.NewInt(0)
 	if in.Credits != nil {
 		credits = new(big.Int).Set(in.Credits)
@@ -148,82 +177,109 @@ func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) (ui
 		return 0, errors.New("credits must be non-negative")
 	}
 
-	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	chargeCredits := new(big.Int).Set(credits)
+	shouldCharge := in.Charge && in.Status == models.LLMCallStatusSuccess && chargeCredits.Sign() > 0
 
-	var recordID uint
-	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
-		chargeCredits := new(big.Int).Set(credits)
-		shouldCharge := in.Charge && in.Status == models.LLMCallStatusSuccess && chargeCredits.Sign() > 0
-
-		if shouldCharge {
-			var account models.CreditAccount
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				Where("user_id = ?", in.UserID).
-				First(&account).Error; err != nil {
-				return err
-			}
-			if account.Balance.Cmp(chargeCredits) < 0 {
-				log.Errorf(
-					"insufficient balance at LLM settle: user_id=%d project_id=%d required=%s balance=%s",
-					in.UserID, in.ProjectID, chargeCredits.String(), account.Balance.String(),
-				)
-				chargeCredits = big.NewInt(0)
-				shouldCharge = false
-			} else {
-				newBalance := new(big.Int).Sub(&account.Balance.Int, chargeCredits)
-				account.Balance = models.BigInt{Int: *newBalance}
-				if err := tx.Save(&account).Error; err != nil {
-					return err
-				}
+	if shouldCharge {
+		var account models.CreditAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ?", in.UserID).
+			First(&account).Error; err != nil {
+			return 0, err
+		}
+		if account.Balance.Cmp(chargeCredits) < 0 {
+			log.Errorf(
+				"insufficient balance at LLM settle: user_id=%d project_id=%d required=%s balance=%s",
+				in.UserID, in.ProjectID, chargeCredits.String(), account.Balance.String(),
+			)
+			chargeCredits = big.NewInt(0)
+			shouldCharge = false
+		} else {
+			newBalance := new(big.Int).Sub(&account.Balance.Int, chargeCredits)
+			account.Balance = models.BigInt{Int: *newBalance}
+			if err := tx.Save(&account).Error; err != nil {
+				return 0, err
 			}
 		}
+	}
 
-		record := models.LLMCallRecord{
-			ProjectID:            in.ProjectID,
-			Model:                in.Model,
-			PromptTokens:         in.PromptTokens,
-			CompletionTokens:     in.CompletionTokens,
-			TotalTokens:          in.TotalTokens,
-			TokenRatio:           in.TokenRatio,
-			Status:               in.Status,
-			Credits:              models.BigInt{Int: *chargeCredits},
-			DurationMs:           in.DurationMs,
-			BilledVram:           in.BilledVram,
-			EstimatedNodeSeconds: cloneFloat64Ptr(in.EstimatedNodeSeconds),
-			VramWeight:           cloneFloat64Ptr(in.VramWeight),
-		}
-		if in.TaskFeeGwei != nil {
-			record.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
-		}
-		if in.MedianPriorityGwei != nil {
-			record.MedianPriorityGwei = &models.BigInt{Int: *new(big.Int).Set(in.MedianPriorityGwei)}
-		}
-		if err := tx.Create(&record).Error; err != nil {
-			return err
-		}
-		recordID = record.ID
+	durationMs := uint64(in.CompletedAt.Sub(in.AcceptedAt).Milliseconds())
+	if in.CompletedAt.Equal(in.AcceptedAt) {
+		durationMs = 0
+	}
 
-		if !shouldCharge {
-			return nil
-		}
+	tokenUsageApplicable := int8(0)
+	if in.TokenUsageApplicable {
+		tokenUsageApplicable = 1
+	}
 
-		event := models.CreditEvent{
-			UserID: in.UserID,
-			Amount: models.BigInt{Int: *new(big.Int).Set(chargeCredits)},
-			Type:   models.CreditEventTypeLLMCharge,
-			RefID:  record.ID,
-			Status: models.CreditEventStatusProcessed,
+	record := models.LLMCallRecord{
+		UserID:               in.UserID,
+		ProjectID:            in.ProjectID,
+		LLMJobID:             in.LLMJobID,
+		Model:                in.Model,
+		PromptTokens:         in.PromptTokens,
+		CompletionTokens:     in.CompletionTokens,
+		TotalTokens:          in.TotalTokens,
+		TokenRatio:           in.TokenRatio,
+		TokenUsageApplicable: tokenUsageApplicable,
+		Status:               in.Status,
+		Credits:              models.BigInt{Int: *chargeCredits},
+		AcceptedAt:           in.AcceptedAt,
+		CompletedAt:          in.CompletedAt,
+		DurationMs:           durationMs,
+		BilledVram:           in.BilledVram,
+		EstimatedNodeSeconds: cloneFloat64Ptr(in.EstimatedNodeSeconds),
+		VramWeight:           cloneFloat64Ptr(in.VramWeight),
+	}
+	if in.TaskFeeGwei != nil {
+		record.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
+	}
+	if in.MedianPriorityGwei != nil {
+		record.MedianPriorityGwei = &models.BigInt{Int: *new(big.Int).Set(in.MedianPriorityGwei)}
+	}
+	if err := tx.Select(
+		"UserID",
+		"ProjectID",
+		"LLMJobID",
+		"Model",
+		"PromptTokens",
+		"CompletionTokens",
+		"TotalTokens",
+		"TokenRatio",
+		"TokenUsageApplicable",
+		"Status",
+		"Credits",
+		"AcceptedAt",
+		"CompletedAt",
+		"DurationMs",
+		"BilledVram",
+		"TaskFeeGwei",
+		"MedianPriorityGwei",
+		"EstimatedNodeSeconds",
+		"VramWeight",
+	).Create(&record).Error; err != nil {
+		return 0, err
+	}
+
+	if !shouldCharge {
+		return record.ID, nil
+	}
+
+	event := models.CreditEvent{
+		UserID: in.UserID,
+		Amount: models.BigInt{Int: *new(big.Int).Set(chargeCredits)},
+		Type:   models.CreditEventTypeLLMCharge,
+		RefID:  record.ID,
+		Status: models.CreditEventStatusProcessed,
+	}
+	if err := tx.Create(&event).Error; err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return 0, fmt.Errorf("credit event already exists for llm call %d", record.ID)
 		}
-		if err := tx.Create(&event).Error; err != nil {
-			if errors.Is(err, gorm.ErrDuplicatedKey) {
-				return fmt.Errorf("credit event already exists for llm call %d", record.ID)
-			}
-			return err
-		}
-		return nil
-	})
-	return recordID, err
+		return 0, err
+	}
+	return record.ID, nil
 }
 
 // EnsureSufficientBalance returns ErrInsufficientBalance when balance is below required.

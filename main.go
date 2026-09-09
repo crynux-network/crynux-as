@@ -42,7 +42,7 @@ func main() {
 	}
 
 	service.StartBlockchainProcessors(context.Background())
-	go tasks.StartStatsProjectUsage(context.Background())
+	tasks.StartUsageStatsWorkers(context.Background())
 
 	relayClient := relay.NewClient(conf.Relay.BaseURL)
 	service.InitLoadedModelsCache(relayClient)

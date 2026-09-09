@@ -121,7 +121,7 @@ func ListProjects(c *gin.Context) (*ListProjectsResponse, error) {
 
 	var projects []models.Project
 	if err := db.WithContext(dbCtx).
-		Where("user_id = ?", user.ID).
+		Where("user_id = ? AND status <> ?", user.ID, models.ProjectStatusDeleted).
 		Order("id ASC").
 		Find(&projects).Error; err != nil {
 		log.Errorf("Error listing projects for user %d: %v", user.ID, err)
@@ -227,7 +227,8 @@ func DeleteProject(c *gin.Context, in *DeleteProjectInput) (*response.Response, 
 	dbCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	if err := db.WithContext(dbCtx).Delete(project).Error; err != nil {
+	project.Status = models.ProjectStatusDeleted
+	if err := db.WithContext(dbCtx).Save(project).Error; err != nil {
 		log.Errorf("Error deleting project %d for user %d: %v", in.ProjectID, user.ID, err)
 		return nil, response.NewExceptionResponse(err)
 	}
@@ -312,7 +313,7 @@ func findOwnedProject(ctx context.Context, db *gorm.DB, userID, projectID uint) 
 
 	var project models.Project
 	if err := db.WithContext(dbCtx).
-		Where("id = ? AND user_id = ?", projectID, userID).
+		Where("id = ? AND user_id = ? AND status <> ?", projectID, userID, models.ProjectStatusDeleted).
 		First(&project).Error; err != nil {
 		return nil, err
 	}

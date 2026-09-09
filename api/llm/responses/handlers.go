@@ -32,9 +32,11 @@ func CreateResponse(c *gin.Context) {
 		writeAuthError(c, "unauthorized")
 		return
 	}
+	acceptedAt := time.Now()
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, "", 0, acceptedAt, time.Now(), nil)
 		writeClientError(c, http.StatusBadRequest, "failed to read request body")
 		return
 	}
@@ -42,17 +44,21 @@ func CreateResponse(c *gin.Context) {
 	appCfg := config.GetConfig()
 	req, err := llmadapter.ParseResponsesRequest(body)
 	if err != nil {
+		model := extractModelFromBody(body)
+		_ = recordFailedCall(c.Request.Context(), project, model, 0, acceptedAt, time.Now(), nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
 	taskArgsJSON, err := llmadapter.BuildResponsesTaskArgs(req, int(appCfg.LLM.DefaultMaxTokens))
 	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
 
 	userVram, err := resolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
 	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -78,11 +84,12 @@ func CreateResponse(c *gin.Context) {
 	)
 	if err != nil {
 		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, req.Model, err)
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, 0, nil)
+		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), nil)
 		writeServerError(c)
 		return
 	}
 	if err := service.EnsureSufficientBalance(&account.Balance.Int, taskFee.Credits); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), taskFee)
 		writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
 		return
 	}
@@ -339,17 +346,28 @@ func loadCreditAccount(ctx context.Context, db *gorm.DB, userID uint) (*models.C
 	return &account, nil
 }
 
-func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, duration time.Duration, taskFee *service.CalcTaskFeeResult) error {
+func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, acceptedAt, completedAt time.Time, taskFee *service.CalcTaskFeeResult) error {
+	if acceptedAt.IsZero() {
+		acceptedAt = completedAt
+	}
+	if completedAt.IsZero() {
+		completedAt = time.Now()
+		if acceptedAt.IsZero() {
+			acceptedAt = completedAt
+		}
+	}
 	in := service.RecordLLMCallInput{
-		UserID:     project.UserID,
-		ProjectID:  project.ID,
-		Model:      model,
-		TokenRatio: project.TokenRatio,
-		Status:     models.LLMCallStatusFailed,
-		Credits:    big.NewInt(0),
-		DurationMs: uint64(duration.Milliseconds()),
-		BilledVram: billedVram,
-		Charge:     false,
+		UserID:               project.UserID,
+		ProjectID:            project.ID,
+		Model:                model,
+		TokenRatio:           project.TokenRatio,
+		TokenUsageApplicable: true,
+		Status:               models.LLMCallStatusFailed,
+		Credits:              big.NewInt(0),
+		AcceptedAt:           acceptedAt,
+		CompletedAt:          completedAt,
+		BilledVram:           billedVram,
+		Charge:               false,
 	}
 	if taskFee != nil {
 		in.TaskFeeGwei = taskFee.TaskFeeGwei
@@ -361,4 +379,14 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 	}
 	_, err := service.ProcessLLMCall(ctx, config.GetDB(), in)
 	return err
+}
+
+func extractModelFromBody(body []byte) string {
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	return payload.Model
 }

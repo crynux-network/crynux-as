@@ -113,10 +113,30 @@ Each LLM call is charged from the Credits balance of the owning account using th
 
 ### Call Records
 
-Every LLM call, successful or failed, MUST be recorded as one `llm_call_records` row containing the project, model, prompt/completion/total token counts, success or failure status, charged Credits, call duration, and the billed effective VRAM.
+Every LLM call, successful or failed, MUST be recorded as one `llm_call_records` row containing the account `user_id` snapshot, project, optional unique `llm_job_id`, model, prompt/completion/total token counts, `token_usage_applicable`, success or failure status, charged Credits, `accepted_at`, `completed_at`, `duration_ms = completed_at - accepted_at`, and the billed effective VRAM.
+
+`GET /v1/projects/:project_id/requests` is a JWT-authenticated management API. It MUST verify that the project belongs to the authenticated account and is not Deleted. It MUST return the project's finished `llm_call_records` rows newest first by `id`, including success and failure rows and rows with charged Credits equal to `"0"`. The returned row count MUST equal `llm.project_recent_requests_limit` from configuration when enough rows exist, and MUST be smaller only when fewer rows exist. The API MUST NOT accept `limit`, `offset`, or any other client-controlled page size. Each item MUST include `id`, `created_at`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `token_ratio`, `credits`, `billed_vram`, `duration_ms`, and `status`. The `token_ratio` MUST be the display float of the project cost level stored on the call record. The response MUST NOT include `task_fee_gwei`, `median_priority_gwei`, `estimated_node_seconds`, or `vram_weight`. The response field MUST be `requests`.
 
 ## Usage Statistics
 
-A background stats task MUST periodically aggregate `llm_call_records` into `project_usage_stats` rows keyed by project and time period, containing call count, success count, failure count, token counts, and charged Credits.
+Finished task-creating calls MUST be aggregated for account and project usage views.
 
-`GET /v1/projects/:project_id/stats` returns the aggregated stats of a project within the requested time range.
+Requests MUST count only finished success and failure calls. Authenticated request validation failures, insufficient balance, estimation failures, and task execution failures MUST count as failures. HTTP 401 responses MUST NOT enter usage stats. `GET /responses/:id` and other non-creating GET requests MUST NOT enter usage stats.
+
+Credits in usage stats MUST equal processed `credit_events` rows of type LLM charge referenced by call record ID. Token metrics MUST include only calls with `token_usage_applicable = 1`.
+
+Deleting a project MUST set project status to Deleted. Deleted projects MUST NOT appear in list or detail APIs and MUST NOT accept new LLM requests. Existing jobs MUST continue using create-time snapshots. Historical account usage MUST retain Deleted project consumption.
+
+Two background workers MUST run every minute:
+
+1. The base worker advances a cursor over `llm_call_records` and updates account hourly, project hourly, project-model 10-minute, and project-duration 10-minute stats by `accepted_at`.
+2. The snapshot worker claims dirty projects and rebuilds `1h`, `1d`, and `7d` model Top-10 and completion-duration display histograms from the 10-minute tables.
+
+Management APIs:
+
+* `GET /v1/account/stats?range=1d|7d|1m`
+* `GET /v1/projects/:project_id/stats?range=1d|1m`
+* `GET /v1/projects/:project_id/stats/completion-duration?range=1h|1d|7d`
+* `GET /v1/projects/:project_id/stats/models?range=1h|1d|7d`
+
+These APIs MUST read the stats tables and snapshots only. They MUST NOT scan `llm_call_records`, MUST use Unix timestamps, and MUST NOT accept a timezone parameter.

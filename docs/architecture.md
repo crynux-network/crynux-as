@@ -24,8 +24,8 @@ flowchart LR
   Cache --> API
   PriorityCache --> API
   ExecTimeCache --> API
-  Stats[Stats Tasks] --> Records
-  Stats --> Usage[(project_usage_stats)]
+  Stats[Usage Stats Workers] --> Records
+  Stats --> Usage[(usage stats tables)]
 ```
 
 * **API server** (`api/`): gin + fizz + tonic HTTP server. Serves the management APIs under `/v1` (auth, account, projects, project API key reset, stats) and the private OpenAI-compatible LLM endpoints under `/api/<endpoint_token>/v1`. The tonic error and render hooks in `api/v1/response` produce the uniform `{"message": ...}` response envelope, and the OpenAPI specification is generated from the route declarations.
@@ -37,7 +37,7 @@ flowchart LR
 * **Loaded-models cache** (`service/`): one in-memory snapshot of the Relay loaded models with `model_type == "llm"`, keyed by lowercase `model_id`. The cache MUST be refreshed once at startup before the HTTP server starts and then every `llm.loaded_models_refresh_interval` seconds by a background task in `tasks/`. A failed startup refresh MUST be logged, MUST leave the cache empty, and MUST NOT prevent startup. A failed periodic refresh MUST retain the last successful snapshot and retry at the next interval. A successful refresh MUST replace the whole snapshot. The cache is not persisted to the database.
 * **Queued-priority cache** (`service/`): one in-memory snapshot of the Relay queued-task priority range from `GET /v2/tasks/queued/priority`. The cache MUST be refreshed once at startup before the HTTP server starts and then every `llm.queued_priority_refresh_interval` seconds by a background task in `tasks/`. A failed startup refresh MUST be logged and MUST NOT prevent startup. A failed periodic refresh MUST retain the last successful snapshot and retry at the next interval. A successful refresh MUST replace the snapshot. When a successful refresh returns an empty queue, the cache MUST retain the most recent non-empty `median_priority_gwei` for management UI cost-level hints. The live median MUST NOT enter Credits or task fee. The cache is not persisted to the database.
 * **Execution-time cache** (`service/`): an in-memory TTL cache of LLM execution-time coefficients keyed by `(model, effective_vram)`. Entries MUST be fetched on demand from Relay `GET /v2/models/llm/execution-time` with `model` and `min_vram=effective_vram`. The TTL MUST be `llm.execution_time_cache_ttl` seconds. The cache MUST NOT run a full-catalog refresh timer. The cache is not persisted to the database.
-* **Stats tasks** (`tasks/`): background aggregation of `llm_call_records` into `project_usage_stats`.
+* **Usage stats workers** (`service/`, `tasks/`): one base aggregation worker that advances a call-record cursor into account/project hourly and project 10-minute stats tables, and one snapshot worker that rebuilds model Top-10 and completion-duration histogram snapshots from the 10-minute tables.
 * **MySQL database**: all persistent state. Schema changes are applied by versioned gormigrate migrations in `migrate/` at startup.
 
 ## Startup Order
@@ -96,8 +96,14 @@ Configuration loading MUST fail with an error when a required item is missing. E
 | `blockchain_cursors` | Per-network scan cursor; unique by network |
 | `projects` | User projects; unique `endpoint_token` forms the private base URL; stores the project API key hash, public prefix, and `token_ratio` |
 | `llm_jobs` | Persisted LLM jobs for chat completions, completions, and responses; stores canonical task args, Bridge client task ID, execution status, raw and formatted results, usage, billing status, execution-time coefficients, task-fee fields, and optional public response ID |
-| `llm_call_records` | One row per LLM call with token usage, status, charged Credits, duration, billed effective VRAM, and optional task-fee estimation fields |
-| `project_usage_stats` | Aggregated usage per project and time period; unique by project + period start |
+| `llm_call_records` | One row per finished LLM call with account snapshot `user_id`, optional unique `llm_job_id`, token usage, `token_usage_applicable`, status, charged Credits, `accepted_at`, `completed_at`, `duration_ms = completed_at - accepted_at`, billed effective VRAM, and optional task-fee estimation fields |
+| `account_usage_hourly_stats` | Per-account Unix-hour aggregates of requests, success, failure, tokens, and charged Credits |
+| `project_usage_hourly_stats` | Per-project Unix-hour aggregates with the same metrics plus `user_id` |
+| `project_model_usage_10m_stats` | Per-project per-model Unix 10-minute aggregates |
+| `project_duration_usage_10m_stats` | Per-project Unix 10-minute completion-duration small-bucket counts |
+| `project_model_usage_snapshots` | Per-project Top-10 model snapshots for `1h`, `1d`, and `7d` |
+| `project_duration_histogram_snapshots` | Per-project displayable completion-duration histogram snapshots for `1h`, `1d`, and `7d` |
+| `usage_stats_progress` | Base aggregation cursor (`project_id = 0`) and per-project snapshot dirty/claim generations |
 
 ## Deposit Flow
 
@@ -116,8 +122,8 @@ The authoritative Credits charging rules are specified in [credits-billing.md](.
 3. The API server fetches and validates LLM execution-time coefficients, computes one shared `billable_gwei`, rejects with HTTP 402 when Credits precheck fails, sets `task_fee_gwei = floor(billable_gwei)`, resolves a Queue Median Hint snapshot, and persists fee fields and coefficients on the LLM job. Coefficient fetch or validation failure MUST return HTTP 500, MUST record a failed call without fee fields, and MUST NOT create an LLM job for forwarding. The live median MUST NOT enter `billable_gwei`.
 4. The API server creates an `llm_jobs` row with canonical `GPTTaskArgs` and returns immediately for responses with `background=true`, or waits synchronously for chat completions, completions, and responses with `background=false`.
 5. The LLM job worker converts the persisted GWei fee to Wei and submits unfinished jobs through Bridge raw task batch create. Each successful create persists the returned Bridge client task ID. On later ticks the worker batch-queries ClientTask status, downloads the raw `GPTTaskResponse` for each successful job, formats the public API result, settles Credits, and only then marks the job `completed`.
-6. The charge is calculated from the raw result `usage` token counts, the project `token_ratio`, the persisted execution-time coefficients, `vram_weight`, `reference_priority_gwei`, and `credits_per_gwei`. One `llm_call_records` row records the call together with the billed effective VRAM and the pre-submit task-fee fields (`estimated_node_seconds` remains the pre-forward estimate), and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance when settle succeeds.
-7. The stats task periodically aggregates call records into `project_usage_stats`.
+6. The charge is calculated from the raw result `usage` token counts, the job `token_ratio` snapshot, the persisted execution-time coefficients, `vram_weight`, `reference_priority_gwei`, and `credits_per_gwei`. One `llm_call_records` row records the call together with the billed effective VRAM and the pre-submit task-fee fields (`estimated_node_seconds` remains the pre-forward estimate), and a `credit_events` row of type LLM charge referencing the call record ID decreases the account balance when settle succeeds. Successful settle and failed terminal recording MUST each commit the job row lock, call record, ledger changes when charged, and job terminal update in one database transaction.
+7. The usage stats base worker aggregates finished call records into hourly and 10-minute stats tables using processed LLM charge ledger amounts. The snapshot worker refreshes model Top-10 and completion-duration histogram snapshots from the 10-minute tables.
 
 ## Credits Ledger Consistency Rules
 

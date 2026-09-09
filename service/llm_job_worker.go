@@ -266,16 +266,10 @@ func completeSuccessfulLLMJob(
 		return failLLMJobWithRecord(ctx, db, job, fmt.Sprintf("format result failed: %v", err))
 	}
 
-	project, err := loadProjectByID(ctx, db, job.ProjectID)
-	if err != nil {
-		return err
-	}
-
 	_, err = CompleteAndSettleLLMJob(
 		ctx,
 		db,
 		job,
-		project,
 		string(rawBytes),
 		string(formatted),
 		uint64(rawResponse.Usage.PromptTokens),
@@ -330,41 +324,7 @@ func responsesObjectParamsFromJob(job *models.LLMJob, status string) llmadapter.
 }
 
 func failLLMJobWithRecord(ctx context.Context, db *gorm.DB, job *models.LLMJob, message string) error {
-	if _, err := FailLLMJob(ctx, db, job.ID, message); err != nil {
-		return err
-	}
-
-	project, err := loadProjectByID(ctx, db, job.ProjectID)
-	if err != nil {
-		return err
-	}
-
-	durationMs := uint64(0)
-	if job.StartedAt != nil {
-		durationMs = uint64(time.Since(*job.StartedAt).Milliseconds())
-	}
-
-	in := RecordLLMCallInput{
-		UserID:     project.UserID,
-		ProjectID:  project.ID,
-		Model:      job.Model,
-		TokenRatio: project.TokenRatio,
-		Status:     models.LLMCallStatusFailed,
-		Credits:    big.NewInt(0),
-		DurationMs: durationMs,
-		BilledVram: job.BilledVram,
-		Charge:     false,
-	}
-	if job.TaskFeeGwei != nil {
-		in.TaskFeeGwei = &job.TaskFeeGwei.Int
-	}
-	if job.MedianPriorityGwei != nil {
-		in.MedianPriorityGwei = &job.MedianPriorityGwei.Int
-	}
-	in.EstimatedNodeSeconds = cloneFloat64Ptr(job.EstimatedNodeSeconds)
-	in.VramWeight = cloneFloat64Ptr(job.VramWeight)
-
-	_, err = ProcessLLMCall(ctx, db, in)
+	_, err := FailAndRecordLLMJob(ctx, db, job, message)
 	return err
 }
 

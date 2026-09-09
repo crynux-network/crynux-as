@@ -7,6 +7,7 @@ type ProjectStatus int8
 const (
 	ProjectStatusActive ProjectStatus = iota
 	ProjectStatusDisabled
+	ProjectStatusDeleted
 )
 
 type Project struct {
