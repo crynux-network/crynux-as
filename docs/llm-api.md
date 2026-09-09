@@ -33,7 +33,11 @@ The same create operation is also available at `POST /api/<endpoint_token>/v1/<v
 Supported request fields in the first version:
 
 * `model`
-* `input` as a string or array of input items
+* `input` as a string or array of input items. Supported array item shapes are:
+  * message items with `type` set to `message`
+  * EasyInputMessage items that omit `type` and provide `role` and `content`; these MUST be treated as message items
+  * `function_call` items
+  * `function_call_output` items
 * `instructions`
 * function `tools`
 * function-call and function-call-output history in `input`

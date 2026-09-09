@@ -212,7 +212,11 @@ func validateResponsesTools(tools []map[string]interface{}) error {
 
 func validateResponsesInputItems(items []ResponsesInputItem) error {
 	for i, item := range items {
-		switch item.Type {
+		itemType, err := resolveResponsesInputItemType(i, item)
+		if err != nil {
+			return err
+		}
+		switch itemType {
 		case "message", "function_call", "function_call_output":
 			continue
 		default:
@@ -220,6 +224,18 @@ func validateResponsesInputItems(items []ResponsesInputItem) error {
 		}
 	}
 	return nil
+}
+
+// resolveResponsesInputItemType returns the effective Responses input item type.
+// An omitted type with a non-empty role is treated as OpenAI EasyInputMessage ("message").
+func resolveResponsesInputItemType(index int, item ResponsesInputItem) (string, error) {
+	if item.Type != "" {
+		return item.Type, nil
+	}
+	if item.Role == "" {
+		return "", newValidationError("input", fmt.Sprintf("unsupported input item type %q at index %d", item.Type, index))
+	}
+	return "message", nil
 }
 
 // BuildResponsesTaskArgs converts a parsed Responses request into canonical task args JSON.
@@ -391,7 +407,11 @@ func responsesInputToMessages(instructions string, input ResponsesInput) ([]mode
 	}
 
 	for i, item := range input.Items {
-		switch item.Type {
+		itemType, err := resolveResponsesInputItemType(i, item)
+		if err != nil {
+			return nil, err
+		}
+		switch itemType {
 		case "message":
 			msg, err := responsesMessageItemToMessage(i, item)
 			if err != nil {
