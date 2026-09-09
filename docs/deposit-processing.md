@@ -90,6 +90,8 @@ credits = amount * credits_per_token / 10^decimals
 
 where `amount` is the raw ERC20 transfer amount.
 
+When the computed Credits is less than `1` (integer division truncates any positive result below one whole Credit to `0`), the processor MUST emit a warning log that includes network, transaction hash, log index, from address, token name, and raw amount, and MUST create neither a `deposits` row nor a `credit_events` row. The scan cursor MUST still advance past the ignored log after the range completes successfully.
+
 ## Unknown Sender
 
 When no `users` row exists for the normalized `from` address, the processor MUST:
@@ -102,7 +104,7 @@ The scan cursor MUST still advance past ignored logs after the range completes s
 
 ## Deposit Crediting
 
-When a user exists for the normalized `from` address, the processor MUST apply the deposit in one database transaction:
+When a user exists for the normalized `from` address and the computed Credits is at least `1`, the processor MUST apply the deposit in one database transaction:
 
 1. Insert a `deposits` row with network, token name, transaction hash, log index, from address, raw amount, computed Credits, `user_id`, and status `Processed`.
 2. Insert a `credit_events` row with type deposit, `ref_id` equal to the deposit ID, `user_id`, amount equal to the deposit Credits, and status `Processed`.

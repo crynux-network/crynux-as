@@ -46,9 +46,10 @@ For each configured blockchain network, the service MUST run a scanning worker t
 
 For each detected transfer log, the service MUST:
 
-1. Attribute the transfer to the user account whose wallet address equals the `from` address of the transfer. If no account exists for the `from` address, the service MUST emit a warning log and MUST NOT create a deposit row or Credits ledger event.
-2. When the user account exists, record a deposit row identified by network, transaction hash, and log index. This identity MUST be unique; re-scanning the same log MUST NOT create a second deposit or credit the account twice.
-3. Convert the token amount to Credits using `credits_per_token`, create a Credits ledger event of type deposit referencing the deposit row ID, and update the account balance.
+1. Convert the token amount to Credits using `credits_per_token`. When the computed Credits is less than `1`, the service MUST emit a warning log and MUST NOT create a deposit row or Credits ledger event.
+2. Attribute the transfer to the user account whose wallet address equals the `from` address of the transfer. If no account exists for the `from` address, the service MUST emit a warning log and MUST NOT create a deposit row or Credits ledger event.
+3. When the user account exists and the computed Credits is at least `1`, record a deposit row identified by network, transaction hash, and log index. This identity MUST be unique; re-scanning the same log MUST NOT create a second deposit or credit the account twice.
+4. Create a Credits ledger event of type deposit referencing the deposit row ID, and update the account balance.
 
 Deposits and Credits balance changes MUST go through the Credits ledger: every balance change MUST be recorded as a `credit_events` row referencing its source record ID (`ref_id`), and the `credit_accounts` balance MUST equal the sum of its processed events. The event type + `ref_id` pair MUST be unique so one source record produces at most one ledger event.
 

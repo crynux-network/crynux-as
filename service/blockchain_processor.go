@@ -149,6 +149,11 @@ func processERC20DepositLog(ctx context.Context, db *gorm.DB, client *blockchain
 	if err != nil {
 		return fmt.Errorf("convert token amount to credits: %w", err)
 	}
+	if credits.Sign() <= 0 {
+		log.Warnf("ignoring deposit with less than 1 Credit on %s, tx: %s, log_index: %d, from: %s, token: %s, amount: %s",
+			client.Network, receiptLog.TxHash.Hex(), receiptLog.Index, common.HexToAddress(fromAddress).Hex(), tokenName, amount.String())
+		return nil
+	}
 
 	normalizedFrom := common.HexToAddress(fromAddress).Hex()
 	user, err := getUserByAddress(ctx, db, normalizedFrom)

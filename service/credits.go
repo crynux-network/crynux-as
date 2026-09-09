@@ -49,8 +49,8 @@ func ProcessDeposit(ctx context.Context, db *gorm.DB, in ProcessDepositInput) er
 	if in.Amount == nil || in.Amount.Sign() <= 0 {
 		return errors.New("deposit amount must be positive")
 	}
-	if in.Credits == nil || in.Credits.Sign() < 0 {
-		return errors.New("deposit credits must be non-negative")
+	if in.Credits == nil || in.Credits.Sign() <= 0 {
+		return errors.New("deposit credits must be positive")
 	}
 
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

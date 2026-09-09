@@ -109,9 +109,10 @@ Configuration loading MUST fail with an error when a required item is missing. E
 
 1. The user transfers a supported ERC20 token from the login wallet to the receiving address of a configured network.
 2. The network's blockchain processor ticks on `scan_interval`, reads the scan cursor, computes `confirmed_tip = latest - confirmation_blocks`, and fetches `Transfer` logs of all configured token contracts filtered by `to == receiving_address` in ranges of at most `log_block_range` blocks up to `confirmed_tip`, with each RPC request passing the network RPS limiter.
-3. When no user account exists for the transfer `from` address, the processor emits a warning log and ignores the transfer. No `deposits` or `credit_events` row is created.
-4. When the user exists, the log becomes a `deposits` row identified by network + tx hash + log index. The unique index makes re-processing idempotent. The token amount is converted to Credits with `credits_per_token`, a `credit_events` row of type deposit referencing the deposit ID is created, and the `credit_accounts` balance is updated in the same database transaction after locking the account row with `SELECT ... FOR UPDATE`.
-5. The cursor advances only after all logs in the range are handled (credited or ignored).
+3. The token amount is converted to Credits with `credits_per_token`. When the computed Credits is less than `1`, the processor emits a warning log and ignores the transfer. No `deposits` or `credit_events` row is created.
+4. When no user account exists for the transfer `from` address, the processor emits a warning log and ignores the transfer. No `deposits` or `credit_events` row is created.
+5. When the user exists and the computed Credits is at least `1`, the log becomes a `deposits` row identified by network + tx hash + log index. The unique index makes re-processing idempotent. A `credit_events` row of type deposit referencing the deposit ID is created, and the `credit_accounts` balance is updated in the same database transaction after locking the account row with `SELECT ... FOR UPDATE`.
+6. The cursor advances only after all logs in the range are handled (credited or ignored).
 
 ## LLM Call Charging Flow
 
