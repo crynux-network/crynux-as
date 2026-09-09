@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"crynux_as/api/llm/vramlimit"
 	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
@@ -53,13 +54,13 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		return
 	}
 
-	userVram, err := resolveUserVramLimit(parsed.vramLimit, c.Param("vram_limit"))
+	userVram, err := vramlimit.ResolveUserVramLimit(parsed.vramLimit, c.Param("vram_limit"))
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, parsed.model, 0, acceptedAt, time.Now(), nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	effectiveVram := resolveEffectiveVram(parsed.model, userVram)
+	effectiveVram := vramlimit.ResolveEffectiveVram(parsed.model, userVram)
 
 	db := config.GetDB()
 	account, err := loadCreditAccount(c.Request.Context(), db, project.UserID)

@@ -1,4 +1,4 @@
-package llm
+package vramlimit
 
 import (
 	"crynux_as/config"
@@ -8,10 +8,10 @@ import (
 	"strings"
 )
 
-// resolveUserVramLimit resolves the user-specified VRAM limit in GB. The URL
+// ResolveUserVramLimit resolves the user-specified VRAM limit in GB. The URL
 // path value overrides the body value. A nil result means the user did not
 // specify a VRAM limit.
-func resolveUserVramLimit(bodyVramLimit *uint64, pathVramLimit string) (*uint64, error) {
+func ResolveUserVramLimit(bodyVramLimit *uint64, pathVramLimit string) (*uint64, error) {
 	trimmedPathVramLimit := strings.TrimSpace(pathVramLimit)
 	if trimmedPathVramLimit != "" {
 		pathVram, err := strconv.ParseUint(trimmedPathVramLimit, 10, 64)
@@ -23,10 +23,10 @@ func resolveUserVramLimit(bodyVramLimit *uint64, pathVramLimit string) (*uint64,
 	return bodyVramLimit, nil
 }
 
-// resolveEffectiveVram resolves the effective VRAM in GB used for billing and
+// ResolveEffectiveVram resolves the effective VRAM in GB used for billing and
 // Bridge forwarding: the user value when specified, else the loaded model's
 // min_vram from the cache, else the configured default.
-func resolveEffectiveVram(model string, userVram *uint64) uint64 {
+func ResolveEffectiveVram(model string, userVram *uint64) uint64 {
 	if userVram != nil {
 		return *userVram
 	}

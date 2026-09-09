@@ -2,6 +2,7 @@ package responses
 
 import (
 	"context"
+	"crynux_as/api/llm/vramlimit"
 	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
@@ -56,13 +57,13 @@ func CreateResponse(c *gin.Context) {
 		return
 	}
 
-	userVram, err := resolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
+	userVram, err := vramlimit.ResolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	effectiveVram := resolveEffectiveVram(req.Model, userVram)
+	effectiveVram := vramlimit.ResolveEffectiveVram(req.Model, userVram)
 
 	db := config.GetDB()
 	account, err := loadCreditAccount(c.Request.Context(), db, project.UserID)
@@ -315,24 +316,6 @@ func estimatePromptTokensFromResponsesBody(body []byte) uint64 {
 func float64Ptr(v float64) *float64 {
 	copied := v
 	return &copied
-}
-
-func resolveUserVramLimit(bodyVramLimit *uint64, pathVramLimit string) (*uint64, error) {
-	trimmedPathVramLimit := strings.TrimSpace(pathVramLimit)
-	if trimmedPathVramLimit != "" {
-		return nil, errors.New("vram_limit path segment is not supported for responses")
-	}
-	return bodyVramLimit, nil
-}
-
-func resolveEffectiveVram(model string, userVram *uint64) uint64 {
-	if userVram != nil {
-		return *userVram
-	}
-	if loaded, ok := service.GetLoadedLLMModel(model); ok {
-		return loaded.MinVRAM
-	}
-	return config.GetConfig().LLM.DefaultVramLimit
 }
 
 func loadCreditAccount(ctx context.Context, db *gorm.DB, userID uint) (*models.CreditAccount, error) {

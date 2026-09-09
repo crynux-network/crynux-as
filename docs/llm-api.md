@@ -16,6 +16,7 @@ Implemented endpoints:
 * `GET /api/<endpoint_token>/v1/responses/<response_id>`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
+* `POST /api/<endpoint_token>/v1/<vram_limit>/responses`
 * `GET /api/<endpoint_token>/v1/models`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
@@ -26,6 +27,8 @@ The chat, completions, and responses request and response formats MUST be OpenAI
 ### `POST /api/<endpoint_token>/v1/responses`
 
 Creates a persisted LLM job and returns an OpenAI Responses object.
+
+The same create operation is also available at `POST /api/<endpoint_token>/v1/<vram_limit>/responses`. The path segment and body field `vram_limit` follow the VRAM Limit and Effective VRAM rules.
 
 Supported request fields in the first version:
 
@@ -159,9 +162,9 @@ Returns the single model object described above for a known model ID. The lookup
 
 ### User-specified `vram_limit`
 
-A chat or completions request specifies the VRAM limit in GB through either:
+A chat, completions, or responses request specifies the VRAM limit in GB through either:
 
-1. The URL path segment `<vram_limit>` (`POST .../v1/<vram_limit>/chat/completions`).
+1. The URL path segment `<vram_limit>` (`POST .../v1/<vram_limit>/chat/completions`, `POST .../v1/<vram_limit>/completions`, or `POST .../v1/<vram_limit>/responses`).
 2. The body field `vram_limit` (unsigned integer).
 
 The path value MUST override the body value. A non-integer path value MUST be rejected with HTTP 400. When neither is set, the user has not specified a VRAM limit.
