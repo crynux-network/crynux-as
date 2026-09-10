@@ -6,6 +6,7 @@
 | [architecture.md](./architecture.md) | Technical architecture: components, deposit and LLM charging data flows, Relay loaded-models / queued-priority / execution-time caches, multi-chain multi-token configuration model, and Credits ledger consistency rules |
 | [deposit-processing.md](./deposit-processing.md) | Deposit processing specification: per-network scan workers, cursor and log filter rules, `credits_per_token` conversion, unknown-sender ignore rules, and atomic Credits ledger updates |
 | [llm-api.md](./llm-api.md) | OpenAI-compatible LLM API specification: private endpoints, model catalog from the loaded-models cache, VRAM limit and effective VRAM resolution, Bridge forwarding, project token ratio, call records, and Task Fee Estimation |
+| [llm-job-processing.md](./llm-job-processing.md) | LLM execution and ledger ownership: `llm_jobs`, `llm_call_records`, `credit_events`, and `credit_accounts` responsibilities, request processing order, settle and failure transactions, Responses retention, Recent Requests merge, and retention cleanup |
 | [credits-billing.md](./credits-billing.md) | Credits billing and shared `billable_gwei` task-fee inputs: fixed `reference_priority_gwei`, Relay execution-time coefficients, VRAM weight, cost level, settle rules, and pricing-examples API |
 
 ## Doc Update Requirements

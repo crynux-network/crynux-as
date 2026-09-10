@@ -208,6 +208,7 @@ func CompleteAndSettleLLMJob(
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
+	creditsPerGwei := appCfg.LLM.CreditsPerGwei
 	err = db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
 		var locked models.LLMJob
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -232,21 +233,26 @@ func CompleteAndSettleLLMJob(
 			tokenRatio = job.TokenRatio
 		}
 		in := RecordLLMCallInput{
-			UserID:               userID,
-			ProjectID:            locked.ProjectID,
-			LLMJobID:             &jobID,
-			Model:                locked.Model,
-			PromptTokens:         promptTokens,
-			CompletionTokens:     completionTokens,
-			TotalTokens:          totalTokens,
-			TokenRatio:           tokenRatio,
-			TokenUsageApplicable: true,
-			Status:               models.LLMCallStatusSuccess,
-			Credits:              credits,
-			AcceptedAt:           locked.CreatedAt,
-			CompletedAt:          now,
-			BilledVram:           locked.BilledVram,
-			Charge:               true,
+			UserID:                userID,
+			ProjectID:             locked.ProjectID,
+			LLMJobID:              &jobID,
+			Model:                 locked.Model,
+			PromptTokens:          promptTokens,
+			CompletionTokens:      completionTokens,
+			TotalTokens:           totalTokens,
+			TokenRatio:            tokenRatio,
+			TokenUsageApplicable:  true,
+			Status:                models.LLMCallStatusSuccess,
+			Credits:               credits,
+			AcceptedAt:            locked.CreatedAt,
+			CompletedAt:           now,
+			BilledVram:            locked.BilledVram,
+			ConstantSeconds:       cloneFloat64Ptr(locked.ConstantSeconds),
+			SecondsPerInputToken:  cloneFloat64Ptr(locked.SecondsPerInputToken),
+			SecondsPerOutputToken: cloneFloat64Ptr(locked.SecondsPerOutputToken),
+			ReferencePriorityGwei: referencePriority,
+			CreditsPerGwei:        &creditsPerGwei,
+			Charge:                true,
 		}
 		if locked.TaskFeeGwei != nil {
 			in.TaskFeeGwei = &locked.TaskFeeGwei.Int
@@ -266,9 +272,6 @@ func CompleteAndSettleLLMJob(
 			"status":                models.LLMJobStatusCompleted,
 			"raw_result_json":       rawResultJSON,
 			"formatted_result_json": formattedResultJSON,
-			"prompt_tokens":         promptTokens,
-			"completion_tokens":     completionTokens,
-			"total_tokens":          totalTokens,
 			"completed_at":          now,
 			"billing_status":        models.LLMJobBillingBilled,
 			"llm_call_record_id":    recordID,
@@ -329,18 +332,21 @@ func FailAndRecordLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob, e
 			tokenRatio = job.TokenRatio
 		}
 		in := RecordLLMCallInput{
-			UserID:               userID,
-			ProjectID:            locked.ProjectID,
-			LLMJobID:             &jobID,
-			Model:                locked.Model,
-			TokenRatio:           tokenRatio,
-			TokenUsageApplicable: true,
-			Status:               models.LLMCallStatusFailed,
-			Credits:              big.NewInt(0),
-			AcceptedAt:           locked.CreatedAt,
-			CompletedAt:          now,
-			BilledVram:           locked.BilledVram,
-			Charge:               false,
+			UserID:                userID,
+			ProjectID:             locked.ProjectID,
+			LLMJobID:              &jobID,
+			Model:                 locked.Model,
+			TokenRatio:            tokenRatio,
+			TokenUsageApplicable:  true,
+			Status:                models.LLMCallStatusFailed,
+			Credits:               big.NewInt(0),
+			AcceptedAt:            locked.CreatedAt,
+			CompletedAt:           now,
+			BilledVram:            locked.BilledVram,
+			ConstantSeconds:       cloneFloat64Ptr(locked.ConstantSeconds),
+			SecondsPerInputToken:  cloneFloat64Ptr(locked.SecondsPerInputToken),
+			SecondsPerOutputToken: cloneFloat64Ptr(locked.SecondsPerOutputToken),
+			Charge:                false,
 		}
 		if locked.TaskFeeGwei != nil {
 			in.TaskFeeGwei = &locked.TaskFeeGwei.Int
@@ -445,3 +451,86 @@ func ResetLLMJobToPending(ctx context.Context, db *gorm.DB, jobID uint) error {
 		"started_at":            nil,
 	}).Error
 }
+
+const llmJobCleanupBatchSize = 200
+
+// DeleteExpiredTerminalLLMJobs deletes one bounded batch of terminal jobs whose
+// completed_at is older than retentionDays and that already have a call record.
+// Only completed+billed and failed+not_billed jobs are selected.
+func DeleteExpiredTerminalLLMJobs(ctx context.Context, db *gorm.DB, retentionDays uint64) (int, error) {
+	if retentionDays == 0 {
+		return 0, errors.New("retention days must be positive")
+	}
+	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+
+	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var deleted int
+	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		var ids []uint
+		selectBatch := func(status models.LLMJobStatus, billing models.LLMJobBillingStatus) error {
+			var batch []uint
+			if err := tx.Model(&models.LLMJob{}).
+				Select("id").
+				Where("status = ? AND billing_status = ?", status, billing).
+				Where("llm_call_record_id IS NOT NULL").
+				Where("completed_at IS NOT NULL").
+				Where("completed_at < ?", cutoff).
+				Order("completed_at ASC, id ASC").
+				Limit(llmJobCleanupBatchSize).
+				Pluck("id", &batch).Error; err != nil {
+				return err
+			}
+			ids = append(ids, batch...)
+			return nil
+		}
+		if err := selectBatch(models.LLMJobStatusCompleted, models.LLMJobBillingBilled); err != nil {
+			return err
+		}
+		if err := selectBatch(models.LLMJobStatusFailed, models.LLMJobBillingNotBilled); err != nil {
+			return err
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if len(ids) > llmJobCleanupBatchSize {
+			ids = ids[:llmJobCleanupBatchSize]
+		}
+		result := tx.Where("id IN ?", ids).Delete(&models.LLMJob{})
+		if result.Error != nil {
+			return result.Error
+		}
+		deleted = int(result.RowsAffected)
+		return nil
+	})
+	return deleted, err
+}
+
+// RunLLMJobRetentionCleanup repeatedly deletes expired terminal jobs until a
+// batch deletes fewer than the batch size or an error occurs.
+func RunLLMJobRetentionCleanup(ctx context.Context, db *gorm.DB, retentionDays uint64) (int, error) {
+	total := 0
+	for {
+		deleted, err := DeleteExpiredTerminalLLMJobs(ctx, db, retentionDays)
+		if err != nil {
+			return total, err
+		}
+		total += deleted
+		if deleted < llmJobCleanupBatchSize {
+			return total, nil
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+}
+
+// LLMJobRetentionCutoff returns the earliest completed_at that remains readable
+// under the configured retention window.
+func LLMJobRetentionCutoff(retentionDays uint64) time.Time {
+	return time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+}
+

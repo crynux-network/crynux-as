@@ -18,3 +18,8 @@ func (e *ValidationError) Error() string {
 func newValidationError(field, message string) error {
 	return &ValidationError{Field: field, Message: message}
 }
+
+// NewValidationError builds an OpenAI-compatible invalid request error.
+func NewValidationError(field, message string) error {
+	return newValidationError(field, message)
+}

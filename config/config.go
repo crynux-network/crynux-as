@@ -48,6 +48,9 @@ func InitConfig(configPath string) error {
 	if err := checkHttpConfig(); err != nil {
 		return err
 	}
+	if err := checkDBConfig(); err != nil {
+		return err
+	}
 	if err := checkBlockchainNetworks(); err != nil {
 		return err
 	}
@@ -70,6 +73,25 @@ func checkHttpConfig() error {
 	}
 	if appConfig.Http.JWT.ExpiresIn == 0 {
 		return errors.New("http.jwt.expires_in is not set")
+	}
+	return nil
+}
+
+func checkDBConfig() error {
+	if appConfig.Db.Driver == "" {
+		return errors.New("db.driver is not set")
+	}
+	if appConfig.Db.ConnectionString == "" {
+		return errors.New("db.connection is not set")
+	}
+	if appConfig.Db.Driver == "mysql" {
+		conn := appConfig.Db.ConnectionString
+		if !strings.Contains(conn, "collation=utf8mb4_unicode_ci") {
+			return errors.New("db.connection must include collation=utf8mb4_unicode_ci")
+		}
+		if strings.Contains(conn, "charset=") {
+			return errors.New("db.connection must not include charset=; use collation=utf8mb4_unicode_ci only")
+		}
 	}
 	return nil
 }
@@ -159,6 +181,9 @@ func checkLLMConfig() error {
 	}
 	if appConfig.LLM.JobSubmitTimeout == 0 {
 		return errors.New("llm.job_submit_timeout is not set")
+	}
+	if appConfig.LLM.JobRetentionDays == 0 {
+		return errors.New("llm.job_retention_days is not set")
 	}
 	if appConfig.LLM.ProjectRecentRequestsLimit == 0 {
 		return errors.New("llm.project_recent_requests_limit is not set")

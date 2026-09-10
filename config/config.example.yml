@@ -2,7 +2,7 @@
 environment: "debug"
 db:
   driver: "mysql"
-  connection: "user:mypass@(127.0.0.1:3306)/crynux_as?parseTime=true"
+  connection: "user:mypass@(127.0.0.1:3306)/crynux_as?parseTime=true&collation=utf8mb4_unicode_ci"
   log:
     level: "info"
     output: "data/logs/db.log"
@@ -72,4 +72,5 @@ llm:
   credits_per_gwei: 1
   max_token_ratio: 30
   job_submit_timeout: 600
+  job_retention_days: 30
   project_recent_requests_limit: 50

@@ -50,7 +50,36 @@ func CreateResponse(c *gin.Context) {
 		writeLLMAdapterError(c, err)
 		return
 	}
-	taskArgsJSON, err := llmadapter.BuildResponsesTaskArgs(req, int(appCfg.LLM.DefaultMaxTokens))
+
+	db := config.GetDB()
+	var history []models.Message
+	if strings.TrimSpace(req.PreviousResponseID) != "" {
+		prevJob, err := loadPreviousResponsesJob(
+			c.Request.Context(),
+			db,
+			project.ID,
+			req.PreviousResponseID,
+			appCfg.LLM.JobRetentionDays,
+		)
+		if err != nil {
+			_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil)
+			writeLLMAdapterError(c, err)
+			return
+		}
+		if prevJob.RawResultJSON == nil {
+			_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil)
+			writeClientError(c, http.StatusBadRequest, "previous_response_id: previous response is invalid")
+			return
+		}
+		history, err = llmadapter.BuildResponsesHistoryFromPreviousJob(prevJob.TaskArgsJSON, *prevJob.RawResultJSON)
+		if err != nil {
+			_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil)
+			writeLLMAdapterError(c, err)
+			return
+		}
+	}
+
+	taskArgsJSON, err := llmadapter.BuildResponsesTaskArgsWithHistory(req, history, int(appCfg.LLM.DefaultMaxTokens))
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil)
 		writeLLMAdapterError(c, err)
@@ -65,7 +94,6 @@ func CreateResponse(c *gin.Context) {
 	}
 	effectiveVram := vramlimit.ResolveEffectiveVram(req.Model, userVram)
 
-	db := config.GetDB()
 	account, err := loadCreditAccount(c.Request.Context(), db, project.UserID)
 	if err != nil {
 		log.Errorf("Error loading credit account for user %d: %v", project.UserID, err)
@@ -181,6 +209,10 @@ func GetResponse(c *gin.Context) {
 		return
 	}
 	if job.APIType != models.LLMAPITypeResponses {
+		writeClientError(c, http.StatusNotFound, "response not found")
+		return
+	}
+	if isResponsesJobExpired(job, config.GetConfig().LLM.JobRetentionDays) {
 		writeClientError(c, http.StatusNotFound, "response not found")
 		return
 	}
@@ -372,4 +404,40 @@ func extractModelFromBody(body []byte) string {
 		return ""
 	}
 	return payload.Model
+}
+
+func loadPreviousResponsesJob(
+	ctx context.Context,
+	db *gorm.DB,
+	projectID uint,
+	publicID string,
+	retentionDays uint64,
+) (*models.LLMJob, error) {
+	job, err := service.GetLLMJobByPublicID(ctx, db, projectID, strings.TrimSpace(publicID))
+	if err != nil {
+		if errors.Is(err, service.ErrLLMJobNotFound) {
+			return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
+		}
+		return nil, err
+	}
+	if job.APIType != models.LLMAPITypeResponses {
+		return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
+	}
+	if job.Status != models.LLMJobStatusCompleted {
+		return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
+	}
+	if isResponsesJobExpired(job, retentionDays) {
+		return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
+	}
+	return job, nil
+}
+
+func isResponsesJobExpired(job *models.LLMJob, retentionDays uint64) bool {
+	if job == nil || retentionDays == 0 {
+		return true
+	}
+	if job.CompletedAt == nil {
+		return false
+	}
+	return job.CompletedAt.Before(service.LLMJobRetentionCutoff(retentionDays))
 }

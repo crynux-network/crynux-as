@@ -39,12 +39,15 @@ Supported request fields in the first version:
   * `function_call` items
   * `function_call_output` items
 * `instructions`
+* `previous_response_id`
 * function `tools`
 * function-call and function-call-output history in `input`
 * `background` (`true` returns immediately with `queued` or `in_progress`; `false` waits for completion)
 * `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, and `vram_limit`
 
-The first version MUST reject unsupported fields with HTTP 400 and the OpenAI invalid-request error shape. Unsupported fields include `stream`, `previous_response_id`, `conversation`, built-in tools, `cancel`, and `delete`.
+The service MUST reject unsupported fields with HTTP 400 and the OpenAI invalid-request error shape. Unsupported fields include `stream`, `conversation`, built-in tools, `cancel`, and `delete`.
+
+`previous_response_id` MUST follow [llm-job-processing.md](./llm-job-processing.md): only a same-project, still-retained, successfully completed Responses job is accepted; the new job MUST store the fully expanded `TaskArgsJSON`; previous instructions MUST NOT be inherited as this call's instructions.
 
 When `background` is `true`, the handler MUST persist the job and return immediately after the job is stored. The returned `status` MUST be `queued` or `in_progress`. The client MUST poll `GET /responses/<response_id>` until the job reaches a terminal state.
 
@@ -52,18 +55,18 @@ When `background` is `false`, the handler MUST use the same persisted job flow a
 
 ### `GET /api/<endpoint_token>/v1/responses/<response_id>`
 
-Returns the persisted Responses object for the project's response ID. A missing or foreign response ID MUST return HTTP 404.
+Returns the persisted Responses object for the project's response ID. A missing, foreign, or retention-expired response ID MUST return HTTP 404.
 
-Terminal `completed` responses MUST include formatted `output` and `usage` only after the raw Bridge result, formatted result, usage, and billing settlement are stored. Terminal `failed` responses MUST include an OpenAI-format error object.
+Terminal `completed` responses MUST include formatted `output` and `usage` only after the raw Bridge result, formatted result, and billing settlement are stored. Terminal `failed` responses MUST include an OpenAI-format error object.
 
 ## LLM Job Execution
 
-Chat completions, completions, and responses share one persisted `llm_jobs` table and one background worker loop.
+Chat completions, completions, and responses share one `llm_jobs` table and one background worker loop. Table ownership, settle transactions, Responses retention, and Recent Requests merge rules are specified in [llm-job-processing.md](./llm-job-processing.md).
 
 For every LLM request, the service MUST:
 
-1. Parse the public API request into canonical `GPTTaskArgs`.
-2. Create an `llm_jobs` row with status `pending_submit`.
+1. Parse the public API request into canonical `GPTTaskArgs`, expanding `previous_response_id` history when present.
+2. Create an `llm_jobs` row with status `pending_submit` and the fully expanded `TaskArgsJSON`.
 3. Let the background worker advance unfinished jobs in batches: submit `pending_submit` jobs to Bridge, query ClientTask status for in-flight jobs, download the raw `GPTTaskResponse` for each successful job, format the public API result, and perform one-time Credits settlement before marking the job `completed`.
 4. For chat completions and completions, wait synchronously on the HTTP request until the job reaches a terminal state, then return the formatted JSON body or simulated SSE stream.
 5. For responses with `background=false`, wait synchronously on the HTTP request until the job reaches a terminal state.
@@ -75,7 +78,7 @@ A `pending_submit` job whose age since `created_at` is greater than or equal to 
 
 Client disconnect during a synchronous wait MUST NOT cancel the persisted job or settlement.
 
-The stable `llm_jobs.id` MUST be the billing settlement source. Repeated polling, synchronous waits, and worker retries MUST NOT create duplicate Credits charges.
+The stable `llm_jobs.id` MUST be the billing settlement source while the job exists. Repeated polling, synchronous waits, and worker retries MUST NOT create duplicate Credits charges. After retention deletes the job, the permanent call record and any Credits event remain.
 
 ## Forwarding to the Crynux Bridge
 
@@ -231,6 +234,8 @@ llm:
   credits_per_gwei: 1
   max_token_ratio: 30
   job_submit_timeout: 600
+  job_retention_days: 30
+  project_recent_requests_limit: 50
 ```
 
 * `default_max_tokens` is used in the pre-forward balance estimate and Task Fee Estimation when the request omits both `max_tokens` and `max_completion_tokens`.
@@ -243,10 +248,14 @@ llm:
 * `reference_priority_gwei` and `credits_per_gwei` are specified in [credits-billing.md](./credits-billing.md). `reference_priority_gwei` MUST be a decimal integer string. `credits_per_gwei` MUST be an unsigned integer.
 * `max_token_ratio` is the maximum allowed project cost level display value. The allowed `token_ratio` set is `0.1` through `1.0` in steps of `0.1`, then `2` through `max_token_ratio` in steps of `1`. Configuration loading MUST fail when `max_token_ratio` is less than `2`.
 * `job_submit_timeout` is the maximum age in seconds of a `pending_submit` LLM job before the worker stops Bridge submit retries and marks the job failed. Every YAML configuration template MUST set it to a positive integer.
+* `job_retention_days` is the number of days a terminal settled job remains readable for Responses lookup and `previous_response_id`. Every YAML configuration template MUST set it to a positive integer. Example configurations MUST use `30`.
+* `project_recent_requests_limit` is the maximum number of Recent Requests rows returned for a project. Every YAML configuration template MUST set it to a positive integer.
 
 Configuration loading MUST fail when any required LLM configuration value is zero or missing, including the Credits and reference-priority fields required by [credits-billing.md](./credits-billing.md).
 
 ### Call Record Fields
+
+Call-record ownership and the Credits amount ledger are specified in [llm-job-processing.md](./llm-job-processing.md).
 
 Each `llm_call_records` row MUST contain:
 
@@ -255,7 +264,6 @@ Each `llm_call_records` row MUST contain:
 * `prompt_tokens`, `completion_tokens`, `total_tokens`
 * `token_ratio` (the project cost level used for the charge, stored as display × 10)
 * `status` (success or failed)
-* `credits` (charged Credits; `0` when not charged)
 * `duration_ms`
 * `billed_vram` (the resolved effective VRAM in GB used for VRAM weight and Bridge forwarding)
 
@@ -266,7 +274,17 @@ When Task Fee Estimation succeeds before Bridge forwarding, a success `llm_call_
 * `estimated_node_seconds` (pre-forward estimate from precheck token counts; MUST NOT be the settle-time Credits recomputation)
 * `vram_weight`
 
-When Task Fee Estimation fails and the request is aborted before Bridge forwarding, the failure `llm_call_records` row MUST leave those four fields empty. Management query APIs MUST NOT expose these four fields.
+A settled success call record MUST also contain the Credits recalculation snapshot:
+
+* `constant_seconds`
+* `seconds_per_input_token`
+* `seconds_per_output_token`
+* `reference_priority_gwei`
+* `credits_per_gwei`
+
+The call record MUST NOT store the charged Credits amount. Actual Credits changes MUST exist only on processed `credit_events` rows.
+
+When Task Fee Estimation fails and the request is aborted before Bridge forwarding, the failure `llm_call_records` row MUST leave the four fee fields empty. Management query APIs MUST NOT expose the fee fields or recalculation snapshot fields.
 
 ## Task Fee Estimation
 

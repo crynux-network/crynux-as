@@ -83,6 +83,7 @@ type AppConfig struct {
 		CreditsPerGwei                uint64 `mapstructure:"credits_per_gwei"`
 		MaxTokenRatio                 uint64 `mapstructure:"max_token_ratio"`
 		JobSubmitTimeout              uint64 `mapstructure:"job_submit_timeout"`
+		JobRetentionDays              uint64 `mapstructure:"job_retention_days"`
 		ProjectRecentRequestsLimit    uint64 `mapstructure:"project_recent_requests_limit"`
 	} `mapstructure:"llm"`
 }

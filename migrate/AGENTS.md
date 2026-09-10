@@ -14,7 +14,51 @@ Write migration steps as direct, deterministic schema transitions for the target
 
 ### No Unrequested Data Backfill
 
-Migrations MUST NOT include data backfill logic unless the task explicitly requires it. When a migration creates a new table or column, leave it empty and let the application populate it, unless an explicit requirement states that historical data must be backfilled.
+Migrations MUST NOT include data backfill logic unless the user explicitly approves that specific backfill in the current task.
+
+Before requesting approval, state:
+
+- The source and target tables and columns.
+- Which existing rows will be read and updated.
+- Why the schema change cannot work correctly without the backfill.
+- The expected row count and database load.
+- The batching, locking, restart, and rollback behavior.
+
+An inferred need for compatibility, auditability, consistency, or preserving historical behavior is not approval. A broad request to add a feature, redesign a table, or create a migration is not approval. If implementation appears to require historical data changes, stop and ask the user before adding the backfill to a plan or writing any code.
+
+When a migration creates a table or column, leave historical rows empty and let new application writes populate it unless the user has explicitly approved a backfill. Do not silently copy values from another table, derive values from current configuration, create historical records, or initialize new columns from old rows.
+
+An approved data backfill MUST be listed as a separate plan item from the schema migration. Keep schema changes and data backfills in separate migration steps unless the user explicitly approves running the backfill as part of the automatic schema migration.
+
+### Approved Backfill Design for High-Volume Tables
+
+User approval authorizes the historical data change only. It does not relax query-cost, locking, batching, consistency, or restart requirements.
+
+The following tables MUST always be treated as high-volume tables:
+
+- `llm_jobs`
+- `llm_call_records`
+- `credit_events`
+- `deposits`
+- `account_usage_hourly_stats`
+- `project_usage_hourly_stats`
+- `project_model_usage_10m_stats`
+- `project_duration_usage_10m_stats`
+- `project_model_usage_snapshots`
+- `project_duration_histogram_snapshots`
+- `usage_stats_progress`
+
+Any backfill that reads from or writes to one of these tables MUST follow the requirements below. Other backfill source and target tables MUST also be treated as high-volume unless the user provides evidence that they are small.
+
+An approved backfill MUST:
+
+- Select candidate IDs through indexed predicates, all membership filters, deterministic keyset order, and a fixed `LIMIT`.
+- Process a bounded batch and commit before selecting the next batch.
+- Join only the bounded candidate set to other tables. It MUST NOT join unbounded source and target tables and apply `LIMIT` afterward.
+- Be restartable without duplicating or corrupting data.
+- Avoid large `OFFSET`, unbounded updates, one transaction covering the full table, and unbounded joins.
+- Define how concurrent application writes interact with each batch and use row locking only on the bounded candidate rows when locking is required.
+- Be checked with MySQL 8.1 `EXPLAIN` before execution.
 
 ### Local Structs Only
 
@@ -35,6 +79,8 @@ Before editing a migration, check the official documentation for these exact ver
 ### Target DB
 
 The online system is using MySQL v8.1.0 as the DB server. Make sure the migrations are compatible with it.
+
+MySQL migrations MUST create tables with `CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`. `InitMigration` sets this through `gorm:table_options`. Application MySQL DSNs MUST include `collation=utf8mb4_unicode_ci` and MUST NOT include `charset=`. The Go MySQL driver applies `charset=` as MySQL 8 default `utf8mb4_0900_ai_ci`, which conflicts with table `utf8mb4_unicode_ci` on string UNION queries.
 
 ### Mandatory Local MySQL Testing
 

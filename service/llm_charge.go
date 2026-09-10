@@ -111,31 +111,36 @@ func promptRuneCount(raw json.RawMessage) int {
 }
 
 type RecordLLMCallInput struct {
-	UserID               uint
-	ProjectID            uint
-	LLMJobID             *uint
-	Model                string
-	PromptTokens         uint64
-	CompletionTokens     uint64
-	TotalTokens          uint64
-	TokenRatio           uint
-	TokenUsageApplicable bool
-	Status               models.LLMCallStatus
-	Credits              *big.Int
-	AcceptedAt           time.Time
-	CompletedAt          time.Time
-	BilledVram           uint64
-	TaskFeeGwei          *big.Int
-	MedianPriorityGwei   *big.Int
-	EstimatedNodeSeconds *float64
-	VramWeight           *float64
-	Charge               bool
+	UserID                uint
+	ProjectID             uint
+	LLMJobID              *uint
+	Model                 string
+	PromptTokens          uint64
+	CompletionTokens      uint64
+	TotalTokens           uint64
+	TokenRatio            uint
+	TokenUsageApplicable  bool
+	Status                models.LLMCallStatus
+	Credits               *big.Int
+	AcceptedAt            time.Time
+	CompletedAt           time.Time
+	BilledVram            uint64
+	TaskFeeGwei           *big.Int
+	MedianPriorityGwei    *big.Int
+	EstimatedNodeSeconds  *float64
+	VramWeight            *float64
+	ConstantSeconds       *float64
+	SecondsPerInputToken  *float64
+	SecondsPerOutputToken *float64
+	ReferencePriorityGwei *big.Int
+	CreditsPerGwei        *uint64
+	Charge                bool
 }
 
 // ProcessLLMCall writes an llm_call_records row and, for a successful chargeable call,
 // applies the Credits ledger debit in the same transaction. When the balance is
-// insufficient at settle time, the record is stored as success with Credits=0 and
-// no ledger event is created. The created record ID is returned.
+// insufficient at settle time, the record is stored as success and no ledger event
+// is created. The created record ID is returned.
 func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) (uint, error) {
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -214,29 +219,38 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 	}
 
 	record := models.LLMCallRecord{
-		UserID:               in.UserID,
-		ProjectID:            in.ProjectID,
-		LLMJobID:             in.LLMJobID,
-		Model:                in.Model,
-		PromptTokens:         in.PromptTokens,
-		CompletionTokens:     in.CompletionTokens,
-		TotalTokens:          in.TotalTokens,
-		TokenRatio:           in.TokenRatio,
-		TokenUsageApplicable: tokenUsageApplicable,
-		Status:               in.Status,
-		Credits:              models.BigInt{Int: *chargeCredits},
-		AcceptedAt:           in.AcceptedAt,
-		CompletedAt:          in.CompletedAt,
-		DurationMs:           durationMs,
-		BilledVram:           in.BilledVram,
-		EstimatedNodeSeconds: cloneFloat64Ptr(in.EstimatedNodeSeconds),
-		VramWeight:           cloneFloat64Ptr(in.VramWeight),
+		UserID:                in.UserID,
+		ProjectID:             in.ProjectID,
+		LLMJobID:              in.LLMJobID,
+		Model:                 in.Model,
+		PromptTokens:          in.PromptTokens,
+		CompletionTokens:      in.CompletionTokens,
+		TotalTokens:           in.TotalTokens,
+		TokenRatio:            in.TokenRatio,
+		TokenUsageApplicable:  tokenUsageApplicable,
+		Status:                in.Status,
+		AcceptedAt:            in.AcceptedAt,
+		CompletedAt:           in.CompletedAt,
+		DurationMs:            durationMs,
+		BilledVram:            in.BilledVram,
+		EstimatedNodeSeconds:  cloneFloat64Ptr(in.EstimatedNodeSeconds),
+		VramWeight:            cloneFloat64Ptr(in.VramWeight),
+		ConstantSeconds:       cloneFloat64Ptr(in.ConstantSeconds),
+		SecondsPerInputToken:  cloneFloat64Ptr(in.SecondsPerInputToken),
+		SecondsPerOutputToken: cloneFloat64Ptr(in.SecondsPerOutputToken),
 	}
 	if in.TaskFeeGwei != nil {
 		record.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
 	}
 	if in.MedianPriorityGwei != nil {
 		record.MedianPriorityGwei = &models.BigInt{Int: *new(big.Int).Set(in.MedianPriorityGwei)}
+	}
+	if in.ReferencePriorityGwei != nil {
+		record.ReferencePriorityGwei = &models.BigInt{Int: *new(big.Int).Set(in.ReferencePriorityGwei)}
+	}
+	if in.CreditsPerGwei != nil {
+		copied := *in.CreditsPerGwei
+		record.CreditsPerGwei = &copied
 	}
 	if err := tx.Select(
 		"UserID",
@@ -249,7 +263,6 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 		"TokenRatio",
 		"TokenUsageApplicable",
 		"Status",
-		"Credits",
 		"AcceptedAt",
 		"CompletedAt",
 		"DurationMs",
@@ -258,6 +271,11 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 		"MedianPriorityGwei",
 		"EstimatedNodeSeconds",
 		"VramWeight",
+		"ConstantSeconds",
+		"SecondsPerInputToken",
+		"SecondsPerOutputToken",
+		"ReferencePriorityGwei",
+		"CreditsPerGwei",
 	).Create(&record).Error; err != nil {
 		return 0, err
 	}

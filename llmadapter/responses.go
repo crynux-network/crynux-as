@@ -16,7 +16,6 @@ const (
 
 var responsesUnsupportedFields = []string{
 	"stream",
-	"previous_response_id",
 	"conversation",
 	"cancel",
 	"delete",
@@ -25,18 +24,19 @@ var responsesUnsupportedFields = []string{
 /* Request */
 
 type ResponsesRequest struct {
-	Model           string                   `json:"model"`
-	Input           ResponsesInput           `json:"input"`
-	Instructions    string                   `json:"instructions"`
-	Tools           []map[string]interface{} `json:"tools"`
-	Background      bool                     `json:"background"`
-	MaxOutputTokens *int                     `json:"max_output_tokens"`
-	Temperature     *float64                 `json:"temperature"`
-	TopP            *float64                 `json:"top_p"`
-	Stop            ResponsesStop            `json:"stop"`
-	Seed            *int                     `json:"seed"`
-	ToolChoice      any                      `json:"tool_choice"`
-	VramLimit       *uint64                  `json:"vram_limit"`
+	Model              string                   `json:"model"`
+	Input              ResponsesInput           `json:"input"`
+	Instructions       string                   `json:"instructions"`
+	PreviousResponseID string                   `json:"previous_response_id"`
+	Tools              []map[string]interface{} `json:"tools"`
+	Background         bool                     `json:"background"`
+	MaxOutputTokens    *int                     `json:"max_output_tokens"`
+	Temperature        *float64                 `json:"temperature"`
+	TopP               *float64                 `json:"top_p"`
+	Stop               ResponsesStop            `json:"stop"`
+	Seed               *int                     `json:"seed"`
+	ToolChoice         any                      `json:"tool_choice"`
+	VramLimit          *uint64                  `json:"vram_limit"`
 }
 
 type ResponsesInput struct {
@@ -240,10 +240,20 @@ func resolveResponsesInputItemType(index int, item ResponsesInputItem) (string, 
 
 // BuildResponsesTaskArgs converts a parsed Responses request into canonical task args JSON.
 func BuildResponsesTaskArgs(req ResponsesRequest, defaultMaxTokens int) (taskArgsJSON string, err error) {
-	messages, err := responsesInputToMessages(req.Instructions, req.Input)
+	return BuildResponsesTaskArgsWithHistory(req, nil, defaultMaxTokens)
+}
+
+// BuildResponsesTaskArgsWithHistory converts a Responses request plus prior history
+// messages into canonical task args JSON. Previous instructions are not inherited;
+// only req.Instructions is applied for this call.
+func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Message, defaultMaxTokens int) (taskArgsJSON string, err error) {
+	currentMessages, err := responsesInputToMessages(req.Instructions, req.Input)
 	if err != nil {
 		return "", err
 	}
+	messages := make([]models.Message, 0, len(history)+len(currentMessages))
+	messages = append(messages, history...)
+	messages = append(messages, currentMessages...)
 
 	var maxTokens *int
 	if req.MaxOutputTokens != nil {
@@ -284,6 +294,79 @@ func BuildResponsesTaskArgs(req ResponsesRequest, defaultMaxTokens int) (taskArg
 	}
 
 	return string(taskArgsBytes), nil
+}
+
+// BuildResponsesHistoryFromPreviousJob builds chat history from a previous Responses
+// job's stored task args and raw result. Leading system messages from that job's
+// instructions are removed so the current request can supply its own instructions.
+func BuildResponsesHistoryFromPreviousJob(taskArgsJSON string, rawResultJSON string) ([]models.Message, error) {
+	var payload struct {
+		Messages []models.Message `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+		return nil, newValidationError("previous_response_id", "previous response is invalid")
+	}
+	history := stripLeadingSystemMessages(payload.Messages)
+
+	var raw models.GPTTaskResponse
+	if err := json.Unmarshal([]byte(rawResultJSON), &raw); err != nil {
+		return nil, newValidationError("previous_response_id", "previous response is invalid")
+	}
+	assistantMessages, err := rawResponseToHistoryMessages(&raw)
+	if err != nil {
+		return nil, err
+	}
+	history = append(history, assistantMessages...)
+	if len(history) == 0 {
+		return nil, newValidationError("previous_response_id", "previous response is invalid")
+	}
+	return history, nil
+}
+
+func stripLeadingSystemMessages(messages []models.Message) []models.Message {
+	start := 0
+	for start < len(messages) && messages[start].Role == models.LLMRoleSystem {
+		start++
+	}
+	if start == 0 {
+		return append([]models.Message(nil), messages...)
+	}
+	return append([]models.Message(nil), messages[start:]...)
+}
+
+func rawResponseToHistoryMessages(raw *models.GPTTaskResponse) ([]models.Message, error) {
+	if raw == nil || len(raw.Choices) == 0 {
+		return nil, newValidationError("previous_response_id", "previous response is invalid")
+	}
+	choice := raw.Choices[0]
+	content := messageContentToString(choice.Message.Content)
+	cleanContent, parsedToolCalls := NormalizeAssistantContent(content)
+
+	msg := models.Message{
+		Role: models.LLMRoleAssistant,
+	}
+	if cleanContent != "" {
+		msg.Content = cleanContent
+	}
+	if len(choice.Message.ToolCalls) > 0 {
+		msg.ToolCalls = append([]models.ToolCall(nil), choice.Message.ToolCalls...)
+	} else if len(parsedToolCalls) > 0 {
+		msg.ToolCalls = make([]models.ToolCall, 0, len(parsedToolCalls))
+		for i, toolCall := range parsedToolCalls {
+			msg.ToolCalls = append(msg.ToolCalls, models.ToolCall{
+				Id:   fmt.Sprintf("call_%d", i),
+				Type: "function",
+				Function: models.FunctionCall{
+					Name:      toolCall.Name,
+					Arguments: toolCall.Arguments,
+				},
+			})
+		}
+	}
+	if msg.Content == nil && len(msg.ToolCalls) == 0 {
+		msg.Content = ""
+	}
+	return []models.Message{msg}, nil
 }
 
 // FormatResponsesPendingObject returns a queued or in_progress Responses object.

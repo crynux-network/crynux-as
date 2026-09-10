@@ -44,6 +44,7 @@ llm:
   credits_per_gwei: 1
   max_token_ratio: 30
   job_submit_timeout: 600
+  job_retention_days: 30
 ```
 
 Configuration loading MUST fail when any of these values is missing or not greater than zero:
@@ -147,13 +148,13 @@ After a successful Bridge response:
 
 1. The service MUST read `usage.prompt_tokens`, `usage.completion_tokens`, and `usage.total_tokens`.
 2. The service MUST compute Credits with the charge formula using persisted job coefficients, persisted `vram_weight`, the project `token_ratio` used for the call, and the usage token counts.
-3. The service MUST create one `llm_call_records` row with success status, token counts, the project `token_ratio` used for the charge, charged Credits, the billed effective VRAM, call duration, and the pre-forward Task Fee Estimation fields. The call record `estimated_node_seconds` MUST be the pre-forward value persisted on the job. It MUST NOT be replaced by the settle-time recomputation used only for Credits.
-4. When the computed Credits are greater than zero and the account balance is sufficient, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by the same amount in the same database transaction.
+3. The service MUST create one `llm_call_records` row with success status, token counts, the project `token_ratio` used for the charge, the billed effective VRAM, call duration, the pre-forward Task Fee Estimation fields, and the Credits recalculation snapshot (`constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `reference_priority_gwei`, `credits_per_gwei`). The call record MUST NOT store the charged Credits amount. The call record `estimated_node_seconds` MUST be the pre-forward value persisted on the job. It MUST NOT be replaced by the settle-time recomputation used only for Credits.
+4. When the computed Credits are greater than zero and the account balance is sufficient, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by the same amount in the same database transaction. The event amount is the sole permanent store of the charged Credits.
 5. The service MUST mark the LLM job `completed` only after steps 1 through 4 succeed.
 
-Settle MUST NOT re-fetch Relay coefficients for the charge. Settle MUST NOT recompute or replace the already submitted `task_fee_gwei`.
+Settle MUST NOT re-fetch Relay coefficients for the charge. Settle MUST NOT recompute or replace the already submitted `task_fee_gwei`. The full transaction ownership rules are specified in [llm-job-processing.md](./llm-job-processing.md).
 
-When the Bridge call succeeds but the account balance is insufficient for the computed Credits at settle time, the service MUST still create a success `llm_call_records` row with charged Credits set to `0`, MUST NOT create a Credits ledger event, and MUST emit an error log for operators.
+When the Bridge call succeeds but the account balance is insufficient for the computed Credits at settle time, the service MUST still create a success `llm_call_records` row without a Credits amount field, MUST NOT create a Credits ledger event, and MUST emit an error log for operators.
 
 ## Cost Level
 

@@ -19,7 +19,7 @@ func main() {
 
 	dsn := os.Getenv("AS_TEST_DB_DSN")
 	if dsn == "" {
-		dsn = "crynux_as_migtest:astestpass@tcp(127.0.0.1:3306)/crynux_as_test?parseTime=true"
+		dsn = "crynux_as_migtest:astestpass@tcp(127.0.0.1:3306)/crynux_as_test?parseTime=true&collation=utf8mb4_unicode_ci"
 	}
 
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})

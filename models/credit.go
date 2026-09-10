@@ -30,11 +30,11 @@ const (
 // record ID for LLM charge events. The (Type, RefID) pair is unique so one
 // source record produces at most one ledger event.
 type CreditEvent struct {
-	ID        uint              `json:"id" gorm:"primarykey"`
+	ID        uint              `json:"id" gorm:"primarykey;index:idx_credit_events_user_type_status_id,priority:4"`
 	CreatedAt time.Time         `json:"created_at" gorm:"not null"`
-	UserID    uint              `json:"user_id" gorm:"not null;index"`
+	UserID    uint              `json:"user_id" gorm:"not null;index:idx_credit_events_user_type_status_id,priority:1;index"`
 	Amount    BigInt            `json:"amount" gorm:"type:string;size:255;not null"`
-	Type      CreditEventType   `json:"type" gorm:"not null;uniqueIndex:idx_credit_events_type_ref"`
+	Type      CreditEventType   `json:"type" gorm:"not null;uniqueIndex:idx_credit_events_type_ref;index:idx_credit_events_user_type_status_id,priority:2"`
 	RefID     uint              `json:"ref_id" gorm:"not null;uniqueIndex:idx_credit_events_type_ref"`
-	Status    CreditEventStatus `json:"status" gorm:"not null;default:0;index"`
+	Status    CreditEventStatus `json:"status" gorm:"not null;default:0;index:idx_credit_events_user_type_status_id,priority:3;index"`
 }
