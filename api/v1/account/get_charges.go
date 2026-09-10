@@ -7,6 +7,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/service"
+	"database/sql"
 	"errors"
 	"math/big"
 	"time"
@@ -25,6 +26,7 @@ type ChargeData struct {
 	ID               uint                 `json:"id" description:"The LLM call record ID"`
 	CreatedAt        time.Time            `json:"created_at" description:"When the call was recorded"`
 	ProjectID        uint                 `json:"project_id" description:"The project that made the call"`
+	ProjectName      string               `json:"project_name" description:"The current project name"`
 	Model            string               `json:"model" description:"The model ID used for the call"`
 	PromptTokens     uint64               `json:"prompt_tokens" description:"Billed prompt token count"`
 	CompletionTokens uint64               `json:"completion_tokens" description:"Billed completion token count"`
@@ -46,11 +48,20 @@ type GetChargesResponse struct {
 	Data *GetChargesData `json:"data"`
 }
 
-type chargeEventRow struct {
-	ID        uint
-	Amount    models.BigInt
-	RefID     uint
-	CreatedAt time.Time
+type chargeRow struct {
+	ID               uint
+	CreatedAt        time.Time
+	ProjectID        uint
+	ProjectName      sql.NullString
+	Model            string
+	PromptTokens     uint64
+	CompletionTokens uint64
+	TotalTokens      uint64
+	TokenRatio       uint
+	Credits          models.BigInt
+	BilledVram       uint64
+	DurationMs       uint64
+	Status           models.LLMCallStatus
 }
 
 func GetCharges(c *gin.Context, in *GetChargesInput) (*GetChargesResponse, error) {
@@ -98,64 +109,78 @@ func GetCharges(c *gin.Context, in *GetChargesInput) (*GetChargesResponse, error
 		return nil, response.NewExceptionResponse(err)
 	}
 
-	var events []chargeEventRow
-	if err := baseEvents.Session(&gorm.Session{}).
-		Select("id, amount, ref_id, created_at").
-		Order("id DESC").
-		Offset(offset).
-		Limit(limit).
-		Scan(&events).Error; err != nil {
-		log.Errorf("Error listing charge events for user %d: %v", user.ID, err)
-		return nil, response.NewExceptionResponse(err)
-	}
-
-	if len(events) == 0 {
+	if total == 0 {
 		return &GetChargesResponse{
 			Data: &GetChargesData{
 				Charges: []ChargeData{},
-				Total:   total,
+				Total:   0,
 			},
 		}, nil
 	}
 
-	refIDs := make([]uint, 0, len(events))
-	for _, event := range events {
-		refIDs = append(refIDs, event.RefID)
-	}
+	const query = `
+SELECT
+	r.id AS id,
+	r.created_at AS created_at,
+	r.project_id AS project_id,
+	p.name AS project_name,
+	r.model AS model,
+	r.prompt_tokens AS prompt_tokens,
+	r.completion_tokens AS completion_tokens,
+	r.total_tokens AS total_tokens,
+	r.token_ratio AS token_ratio,
+	e.amount AS credits,
+	r.billed_vram AS billed_vram,
+	r.duration_ms AS duration_ms,
+	r.status AS status
+FROM (
+	SELECT id, amount, ref_id, created_at
+	FROM credit_events FORCE INDEX (idx_credit_events_user_type_status_id)
+	WHERE user_id = ?
+		AND type = ?
+		AND status = ?
+	ORDER BY id DESC
+	LIMIT ? OFFSET ?
+) AS e
+JOIN llm_call_records AS r ON r.id = e.ref_id
+LEFT JOIN projects AS p ON p.id = r.project_id
+ORDER BY e.id DESC
+`
 
-	var records []models.LLMCallRecord
-	if err := db.WithContext(dbCtx).
-		Where("id IN ?", refIDs).
-		Find(&records).Error; err != nil {
-		log.Errorf("Error loading call records for charges of user %d: %v", user.ID, err)
+	var rows []chargeRow
+	if err := db.WithContext(dbCtx).Raw(
+		query,
+		user.ID,
+		models.CreditEventTypeLLMCharge,
+		models.CreditEventStatusProcessed,
+		limit,
+		offset,
+	).Scan(&rows).Error; err != nil {
+		log.Errorf("Error listing charges for user %d: %v", user.ID, err)
 		return nil, response.NewExceptionResponse(err)
 	}
-	recordByID := make(map[uint]models.LLMCallRecord, len(records))
-	for _, record := range records {
-		recordByID[record.ID] = record
-	}
 
-	charges := make([]ChargeData, 0, len(events))
-	for _, event := range events {
-		record, ok := recordByID[event.RefID]
-		if !ok {
-			log.Errorf("missing llm call record %d for charge event %d", event.RefID, event.ID)
-			return nil, response.NewExceptionResponse(errors.New("charge call record missing"))
+	charges := make([]ChargeData, 0, len(rows))
+	for _, row := range rows {
+		amount := models.BigInt{Int: *new(big.Int).Set(&row.Credits.Int)}
+		projectName := ""
+		if row.ProjectName.Valid {
+			projectName = row.ProjectName.String
 		}
-		amount := models.BigInt{Int: *new(big.Int).Set(&event.Amount.Int)}
 		charges = append(charges, ChargeData{
-			ID:               record.ID,
-			CreatedAt:        record.CreatedAt,
-			ProjectID:        record.ProjectID,
-			Model:            record.Model,
-			PromptTokens:     record.PromptTokens,
-			CompletionTokens: record.CompletionTokens,
-			TotalTokens:      record.TotalTokens,
-			TokenRatio:       service.DisplayTokenRatio(record.TokenRatio),
+			ID:               row.ID,
+			CreatedAt:        row.CreatedAt,
+			ProjectID:        row.ProjectID,
+			ProjectName:      projectName,
+			Model:            row.Model,
+			PromptTokens:     row.PromptTokens,
+			CompletionTokens: row.CompletionTokens,
+			TotalTokens:      row.TotalTokens,
+			TokenRatio:       service.DisplayTokenRatio(row.TokenRatio),
 			Credits:          amount,
-			BilledVram:       record.BilledVram,
-			DurationMs:       record.DurationMs,
-			Status:           record.Status,
+			BilledVram:       row.BilledVram,
+			DurationMs:       row.DurationMs,
+			Status:           row.Status,
 		})
 	}
 

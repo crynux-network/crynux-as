@@ -159,7 +159,7 @@ Each item MUST include `source` (`job` or `call_record`) and numeric `id`. Clien
 
 ### Charges
 
-`GET /v1/account/charges` MUST select processed LLM charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then join only the selected event `ref_id` values to `llm_call_records`. The response `credits` field MUST equal the event amount.
+`GET /v1/account/charges` MUST select processed LLM charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then in one SQL statement join only the selected page of event `ref_id` values to `llm_call_records` and those call records to `projects`. The response `credits` field MUST equal the event amount. The response MUST include `project_name` from the current project row.
 
 ### Usage stats
 
