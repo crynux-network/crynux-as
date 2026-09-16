@@ -17,13 +17,18 @@ import (
 )
 
 type ProjectData struct {
-	ID            uint   `json:"id" description:"The project ID"`
-	Name          string `json:"name" description:"The project name"`
-	EndpointToken string `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
-	APIKeyPrefix  string `json:"api_key_prefix" description:"The public prefix of the project API key"`
-	PriorityGwei  string `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
-	Status        int8   `json:"status" description:"The project status"`
-	CreatedAt     int64  `json:"created_at" description:"The unix timestamp when the project is created"`
+	ID              uint   `json:"id" description:"The project ID"`
+	Name            string `json:"name" description:"The project name"`
+	EndpointToken   string `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
+	APIKeyPrefix    string `json:"api_key_prefix" description:"The public prefix of the project API key"`
+	PriorityGwei    string `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
+	Status          int8   `json:"status" description:"The project status"`
+	CreatedAt       int64  `json:"created_at" description:"The unix timestamp when the project is created"`
+	LastRequestAt   *int64 `json:"last_request_at" description:"Unix timestamp of the latest finished request that entered usage stats"`
+	RequestCountDay uint64 `json:"request_count_day" description:"Finished request count for the current Unix day"`
+	SuccessCountDay uint64 `json:"success_count_day" description:"Successful request count for the current Unix day"`
+	FailureCountDay uint64 `json:"failure_count_day" description:"Failed request count for the current Unix day"`
+	CreditsDay      string `json:"credits_day" description:"Credits charged for the current Unix day"`
 }
 
 type ProjectResponse struct {
@@ -318,13 +323,18 @@ func findOwnedProject(ctx context.Context, db *gorm.DB, userID, projectID uint) 
 
 func toProjectData(p *models.Project) ProjectData {
 	return ProjectData{
-		ID:            p.ID,
-		Name:          p.Name,
-		EndpointToken: p.EndpointToken,
-		APIKeyPrefix:  p.APIKeyPrefix,
-		PriorityGwei:  p.PriorityGwei.String(),
-		Status:        int8(p.Status),
-		CreatedAt:     p.CreatedAt.Unix(),
+		ID:              p.ID,
+		Name:            p.Name,
+		EndpointToken:   p.EndpointToken,
+		APIKeyPrefix:    p.APIKeyPrefix,
+		PriorityGwei:    p.PriorityGwei.String(),
+		Status:          int8(p.Status),
+		CreatedAt:       p.CreatedAt.Unix(),
+		LastRequestAt:   p.LastRequestAt,
+		RequestCountDay: p.RequestCountDay,
+		SuccessCountDay: p.SuccessCountDay,
+		FailureCountDay: p.FailureCountDay,
+		CreditsDay:      p.CreditsDay.String(),
 	}
 }
 

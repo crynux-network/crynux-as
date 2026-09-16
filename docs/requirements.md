@@ -61,6 +61,7 @@ A user account can create multiple projects. Each project has:
 * A unique `endpoint_token`: a cryptographically random string generated at project creation. The private LLM API base URL of the project is `/api/<endpoint_token>/v1`.
 * Exactly one API key: a cryptographically random secret generated at project creation and stored on the project as a key hash and a short public prefix. The plaintext key is shown to the user only once at creation and when reset.
 * A `priority_gwei` Cost Level that scales Credits and the submitted task fee. See [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md) for the bounds, default at create, and charging rules.
+* Usage summary fields maintained by the usage stats workers: `last_request_at`, `request_count_day`, `success_count_day`, `failure_count_day`, and `credits_day`. These fields cover the current Unix natural day. `GET /v1/projects` and `GET /v1/projects/:project_id` MUST return them.
 
 Project management APIs:
 
@@ -131,8 +132,8 @@ Deleting a project MUST set project status to Deleted. Deleted projects MUST NOT
 
 Two background workers MUST run every minute:
 
-1. The base worker advances a cursor over `llm_call_records` and updates account hourly, project hourly, project-model 10-minute, and project-duration 10-minute stats by `accepted_at`.
-2. The snapshot worker claims dirty projects and rebuilds `1h`, `1d`, and `7d` model Top-10 and completion-duration display histograms from the 10-minute tables.
+1. The base worker advances a cursor over `llm_call_records` and updates account hourly, project hourly, project-model 10-minute, and project-duration 10-minute stats by `accepted_at`. For each aggregated call record, the base worker MUST set `projects.last_request_at` to the greater of its current value and that record's `accepted_at` Unix second.
+2. The snapshot worker claims dirty projects and rebuilds `1h`, `1d`, and `7d` model Top-10 and completion-duration display histograms from the 10-minute tables. For each claimed project, the snapshot worker MUST also refresh the project's current-Unix-day summary fields on `projects` by summing matching rows from `project_usage_hourly_stats` where `period_start` is in `[UnixDayStart(now), HourStartUnix(now)]`. The refreshed fields MUST be `request_count_day`, `success_count_day`, `failure_count_day`, and `credits_day`. The snapshot worker MUST also clear those day summary fields to zero for a bounded batch of projects whose day counters are non-zero and whose `last_request_at` is null or earlier than `UnixDayStart(now)`.
 
 Management APIs:
 

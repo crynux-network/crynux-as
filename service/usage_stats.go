@@ -145,7 +145,17 @@ func applyCallRecordToBaseStats(tx *gorm.DB, record models.LLMCallRecord, credit
 		return err
 	}
 	bucketID := DurationBucketID(record.DurationMs)
-	return upsertProjectDuration10mStat(tx, record.ProjectID, record.UserID, tenMinStart, bucketID, 1)
+	if err := upsertProjectDuration10mStat(tx, record.ProjectID, record.UserID, tenMinStart, bucketID, 1); err != nil {
+		return err
+	}
+	return updateProjectLastRequestAt(tx, record.ProjectID, record.AcceptedAt.Unix())
+}
+
+func updateProjectLastRequestAt(tx *gorm.DB, projectID uint, acceptedUnix int64) error {
+	return tx.Model(&models.Project{}).
+		Where("id = ?", projectID).
+		Where("last_request_at IS NULL OR last_request_at < ?", acceptedUnix).
+		Update("last_request_at", acceptedUnix).Error
 }
 
 func upsertAccountHourlyStat(
@@ -368,6 +378,10 @@ func RefreshProjectUsageSnapshots(ctx context.Context, db *gorm.DB, projectID ui
 			}
 		}
 
+		if err := refreshProjectUsageSummaryDay(tx, projectID, now); err != nil {
+			return err
+		}
+
 		var progress models.UsageStatsProgress
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("project_id = ?", projectID).
@@ -384,6 +398,80 @@ func RefreshProjectUsageSnapshots(ctx context.Context, db *gorm.DB, projectID ui
 		progress.ClaimedGeneration = progress.DirtyGeneration
 		return tx.Save(&progress).Error
 	})
+}
+
+func refreshProjectUsageSummaryDay(tx *gorm.DB, projectID uint, nowUnix int64) error {
+	dayStart := UnixDayStart(nowUnix)
+	currentHour := HourStartUnix(nowUnix)
+
+	var rows []models.ProjectUsageHourlyStat
+	if err := tx.
+		Where("project_id = ? AND period_start >= ? AND period_start <= ?", projectID, dayStart, currentHour).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+
+	var requestCount, successCount, failureCount uint64
+	credits := big.NewInt(0)
+	for _, row := range rows {
+		requestCount += row.RequestCount
+		successCount += row.SuccessCount
+		failureCount += row.FailureCount
+		credits.Add(credits, &row.Credits.Int)
+	}
+
+	return tx.Model(&models.Project{}).
+		Where("id = ?", projectID).
+		Updates(map[string]interface{}{
+			"request_count_day": requestCount,
+			"success_count_day": successCount,
+			"failure_count_day": failureCount,
+			"credits_day":       credits.String(),
+		}).Error
+}
+
+const staleProjectDaySummaryLimit = 20
+
+// ClearStaleProjectDaySummaries zeros current-Unix-day summary fields on projects
+// whose last request is before today and whose day counters are still non-zero.
+func ClearStaleProjectDaySummaries(ctx context.Context, db *gorm.DB, now time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = staleProjectDaySummaryLimit
+	}
+	dayStart := UnixDayStart(now.Unix())
+	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	var cleared int
+	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		var projects []models.Project
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"(request_count_day > 0 OR success_count_day > 0 OR failure_count_day > 0 OR credits_day <> ?) AND (last_request_at IS NULL OR last_request_at < ?)",
+				"0",
+				dayStart,
+			).
+			Order("id ASC").
+			Limit(limit).
+			Find(&projects).Error; err != nil {
+			return err
+		}
+		for _, project := range projects {
+			if err := tx.Model(&models.Project{}).
+				Where("id = ?", project.ID).
+				Updates(map[string]interface{}{
+					"request_count_day": uint64(0),
+					"success_count_day": uint64(0),
+					"failure_count_day": uint64(0),
+					"credits_day":       "0",
+				}).Error; err != nil {
+				return err
+			}
+			cleared++
+		}
+		return nil
+	})
+	return cleared, err
 }
 
 func windowLast1Hour10m(now int64) (int64, int64) {

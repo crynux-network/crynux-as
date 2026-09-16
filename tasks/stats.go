@@ -77,4 +77,7 @@ func runUsageStatsSnapshotOnce(ctx context.Context) {
 			log.Errorf("usage stats snapshot refresh failed for project %d: %v", item.ProjectID, err)
 		}
 	}
+	if _, err := service.ClearStaleProjectDaySummaries(ctx, db, time.Now(), 20); err != nil {
+		log.Errorf("usage stats stale project day summary clear failed: %v", err)
+	}
 }

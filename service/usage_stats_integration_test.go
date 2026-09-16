@@ -185,6 +185,20 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		t.Fatal("expected duration snapshots")
 	}
 
+	var projectAfter models.Project
+	if err := db.First(&projectAfter, project.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if projectAfter.LastRequestAt == nil || *projectAfter.LastRequestAt != now.Unix() {
+		t.Fatalf("last_request_at=%v want %d", projectAfter.LastRequestAt, now.Unix())
+	}
+	if projectAfter.RequestCountDay != 3 || projectAfter.SuccessCountDay != 2 || projectAfter.FailureCountDay != 1 {
+		t.Fatalf("day counts=%+v", projectAfter)
+	}
+	if projectAfter.CreditsDay.Cmp(big.NewInt(42)) != 0 {
+		t.Fatalf("credits_day=%s", projectAfter.CreditsDay.String())
+	}
+
 	// Retry same batch must process zero.
 	processed, err = RunUsageStatsBaseAggregation(ctx, db)
 	if err != nil {
@@ -192,6 +206,58 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	}
 	if processed != 0 {
 		t.Fatalf("reprocess=%d", processed)
+	}
+}
+
+func TestClearStaleProjectDaySummaries(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	dayStart := UnixDayStart(now.Unix())
+	yesterday := dayStart - 3600
+
+	user := models.User{Address: "0xstale"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID:          user.ID,
+		Name:            "stale",
+		EndpointToken:   "ep-stale",
+		APIKeyHash:      "hash-stale",
+		APIKeyPrefix:    "prefix12",
+		PriorityGwei:    models.BigInt{Int: *big.NewInt(10)},
+		Status:          models.ProjectStatusActive,
+		LastRequestAt:   &yesterday,
+		RequestCountDay: 5,
+		SuccessCountDay: 4,
+		FailureCountDay: 1,
+		CreditsDay:      models.BigInt{Int: *big.NewInt(99)},
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	cleared, err := ClearStaleProjectDaySummaries(ctx, db, now, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared != 1 {
+		t.Fatalf("cleared=%d", cleared)
+	}
+
+	var after models.Project
+	if err := db.First(&after, project.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.RequestCountDay != 0 || after.SuccessCountDay != 0 || after.FailureCountDay != 0 {
+		t.Fatalf("day counts after clear=%+v", after)
+	}
+	if after.CreditsDay.Cmp(big.NewInt(0)) != 0 {
+		t.Fatalf("credits_day after clear=%s", after.CreditsDay.String())
+	}
+	if after.LastRequestAt == nil || *after.LastRequestAt != yesterday {
+		t.Fatalf("last_request_at changed unexpectedly: %v", after.LastRequestAt)
 	}
 }
 
