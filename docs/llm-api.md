@@ -1,6 +1,6 @@
 # OpenAI-Compatible LLM API and Charging
 
-This document specifies the private OpenAI-compatible LLM endpoints, the model catalog, VRAM limit resolution, Bridge forwarding, project token ratio, call records, and Task Fee Estimation.
+This document specifies the private OpenAI-compatible LLM endpoints, the model catalog, VRAM limit resolution, Bridge forwarding, project Cost Level (`priority_gwei`), call records, and Task Fee Estimation.
 
 Credits charging for LLM calls is specified only in [credits-billing.md](./credits-billing.md).
 
@@ -43,9 +43,9 @@ Supported request fields in the first version:
 * function `tools`
 * function-call and function-call-output history in `input`
 * `background` (`true` returns immediately with `queued` or `in_progress`; `false` waits for completion)
-* `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, and `vram_limit`
+* `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, `text.format`, and `vram_limit`
 
-The service MUST reject unsupported fields with HTTP 400 and the OpenAI invalid-request error shape. Unsupported fields include `stream`, `conversation`, built-in tools, `cancel`, and `delete`.
+The service MUST reject unsupported fields with HTTP 400 and the OpenAI invalid-request error shape. Unsupported fields include `stream`, `conversation`, built-in tools, `cancel`, `delete`, and `structured_outputs`.
 
 `previous_response_id` MUST follow [llm-job-processing.md](./llm-job-processing.md): only a same-project, still-retained, successfully completed Responses job is accepted; the new job MUST store the fully expanded `TaskArgsJSON`; previous instructions MUST NOT be inherited as this call's instructions.
 
@@ -58,6 +58,27 @@ When `background` is `false`, the handler MUST use the same persisted job flow a
 Returns the persisted Responses object for the project's response ID. A missing, foreign, or retention-expired response ID MUST return HTTP 404.
 
 Terminal `completed` responses MUST include formatted `output` and `usage` only after the raw Bridge result, formatted result, and billing settlement are stored. Terminal `failed` responses MUST include an OpenAI-format error object.
+
+## Structured Output and Function Tools
+
+Chat Completions `response_format` and Responses `text.format` MUST accept `text`, `json_object`, and `json_schema`. The service MUST omit the canonical constraint for `text`. It MUST map the other two forms to the same canonical `response_format` shape. A `json_schema` format MUST contain a non-empty name and an object-valued schema. Unknown format fields and the public vLLM `structured_outputs` extension MUST be rejected. Public `regex`, `choice`, `grammar`, `structural_tag`, whitespace, and additional-properties controls MUST NOT be accepted.
+
+Function tools MUST have unique, non-empty names. Chat Completions tools MUST use the nested `{"type":"function","function":...}` shape. Responses tools MUST use the Responses flat function shape and MUST be converted to the canonical nested shape. Built-in tools MUST be rejected.
+
+`tool_choice` MUST support `none`, `auto`, `required`, and one named function. A named choice MUST identify exactly one declared function. Responses named choices MUST be converted to the canonical Chat Completions named-choice shape. An omitted choice MUST become `auto` when tools are present and `none` otherwise.
+
+The canonical behavior MUST be:
+
+* `none`: tools remain available to the model input template, generation receives no tool constraint, and AS MUST NOT parse generated text as tool calls.
+* `auto`: generation receives a tool constraint only when at least one tool has `strict=true`.
+* `required`: generation MUST produce at least one declared function call.
+* named function: generation MUST allow only the selected function.
+
+A required, named, or strict-auto tool constraint MUST take precedence over `response_format` for that call. `response_format` output MUST remain assistant `content` or Responses `output_text`; AS MUST NOT parse or rewrite its JSON value.
+
+AS MUST parse constrained raw tool output through an ordered syntax registry covering `llama`, `kimi`, `deepseek_r1`, `deepseek_v3_1`, `deepseek_v3_2`, `deepseek_v4`, `qwen_3`, `qwen_3_coder`, `qwen_3_5`, `glm_4_7`, `hermes`, `hy_v4`, and `kimi_k3`. Parser selection MUST use generated syntax and MUST NOT use the request model ID. A parsed function name MUST match a declared tool. Named-function output containing only a JSON arguments object MUST be restored with the selected function name.
+
+Chat Completions MUST return parsed calls in `message.tool_calls` and set `finish_reason=tool_calls`. Responses MUST return parsed calls as `function_call` output items. Simulated SSE MUST use the same persisted formatted result. `previous_response_id` history reconstruction MUST use the previous job's canonical task arguments so `none`, named choice, and syntax parsing remain consistent.
 
 ## LLM Job Execution
 
@@ -186,34 +207,15 @@ The effective VRAM of a request MUST be resolved as:
 
 The model lookup MUST be case-insensitive. The effective VRAM is used for `vram_weight`, Relay execution-time selection (`min_vram`), and Bridge raw task `min_vram`.
 
-## Authentication
+## Project Cost Level
 
-Each project stores a `token_ratio` that is the user cost level. It scales Credits and the submitted task fee as specified in [credits-billing.md](./credits-billing.md) and Task Fee Estimation.
+Each project stores a `priority_gwei` that is the user Cost Level. It scales Credits and the submitted task fee as specified in [credits-billing.md](./credits-billing.md) and Task Fee Estimation.
 
-### Allowed values
+`priority_gwei` MUST be a decimal integer string. Project create and update MUST reject a `priority_gwei` outside the inclusive range `[llm.min_priority_gwei, llm.max_priority_gwei]`.
 
-The API exposes `token_ratio` as a floating-point number. The allowed set is:
+When a project is created, the service MUST set `projects.priority_gwei` to the Queue Median Hint resolved by `ResolveQueueMedianHint`, clamped into `[min_priority_gwei, max_priority_gwei]`. The create request MUST NOT require the client to supply Cost Level. After creation, only an explicit project update MUST change `priority_gwei`.
 
-* `0.1` through `1.0` in steps of `0.1`
-* `2` through `llm.max_token_ratio` in steps of `1`
-
-The default value is `1.0`.
-
-Values below `1` MUST use exactly one decimal place. Values at or above `1` MUST be whole numbers from the allowed set.
-
-### Storage
-
-The database column `projects.token_ratio` MUST store the ratio as an unsigned integer equal to the display value multiplied by `10`:
-
-| Display | Stored |
-|---------|--------|
-| `0.1` | `1` |
-| `1.0` | `10` |
-| `2` | `20` |
-| `10` | `100` |
-| `30` | `300` |
-
-Project create and update APIs MUST accept the display float, validate it against the allowed set, and persist the stored integer. Project read APIs MUST return the display float.
+Project read APIs MUST return `priority_gwei` as a decimal integer string.
 
 ## LLM Charging Rules
 
@@ -230,9 +232,9 @@ llm:
   execution_time_cache_ttl: 300
   base_vram: 8
   empty_queue_median_priority_gwei: "34"
-  reference_priority_gwei: "34"
-  credits_per_gwei: 1
-  max_token_ratio: 30
+  min_priority_gwei: "1"
+  max_priority_gwei: "1000000000"
+  credits_per_gwei: "1"
   job_submit_timeout: 600
   job_retention_days: 30
   project_recent_requests_limit: 50
@@ -244,14 +246,14 @@ llm:
 * `queued_priority_refresh_interval` is the queued-task priority snapshot refresh interval in seconds. Every YAML configuration template MUST set it to `300`.
 * `execution_time_cache_ttl` is the per-key TTL in seconds for LLM execution-time coefficients cached from Relay. Every YAML configuration template MUST set it to `300`.
 * `base_vram` is the VRAM weight base in GB used by Task Fee Estimation and Credits. Operators MUST keep it aligned with Relay `task_pricing.base_vram`. Every YAML configuration template MUST set it to `8`.
-* `empty_queue_median_priority_gwei` is the median priority hint used when the queued-priority cache has never observed a non-empty queue. It MUST NOT enter task fee or Credits. Every YAML configuration template MUST set it to a positive decimal integer string. Every Gwei-denominated LLM configuration and response field whose name ends in `_gwei` MUST use a decimal integer string.
-* `reference_priority_gwei` and `credits_per_gwei` are specified in [credits-billing.md](./credits-billing.md). `reference_priority_gwei` MUST be a decimal integer string. `credits_per_gwei` MUST be an unsigned integer.
-* `max_token_ratio` is the maximum allowed project cost level display value. The allowed `token_ratio` set is `0.1` through `1.0` in steps of `0.1`, then `2` through `max_token_ratio` in steps of `1`. Configuration loading MUST fail when `max_token_ratio` is less than `2`.
+* `empty_queue_median_priority_gwei` is the median priority hint used when the queued-priority cache has never observed a non-empty queue, and when creating a project with no usable live or remembered median. It MUST NOT enter `billable_gwei` except when it becomes the project's stored `priority_gwei` at project creation through the Queue Median Hint rules. Every YAML configuration template MUST set it to a positive decimal integer string. Every Gwei-denominated LLM configuration and response field whose name ends in `_gwei` MUST use a decimal integer string.
+* `min_priority_gwei` and `max_priority_gwei` are the hard bounds for project Cost Level values. They MUST be positive decimal integer strings. Configuration loading MUST fail when `min_priority_gwei` is greater than `max_priority_gwei`.
+* `credits_per_gwei` is specified in [credits-billing.md](./credits-billing.md). It MUST be a positive decimal string.
 * `job_submit_timeout` is the maximum age in seconds of a `pending_submit` LLM job before the worker stops Bridge submit retries and marks the job failed. Every YAML configuration template MUST set it to a positive integer.
 * `job_retention_days` is the number of days a terminal settled job remains readable for Responses lookup and `previous_response_id`. Every YAML configuration template MUST set it to a positive integer. Example configurations MUST use `30`.
 * `project_recent_requests_limit` is the maximum number of Recent Requests rows returned for a project. Every YAML configuration template MUST set it to a positive integer.
 
-Configuration loading MUST fail when any required LLM configuration value is zero or missing, including the Credits and reference-priority fields required by [credits-billing.md](./credits-billing.md).
+Configuration loading MUST fail when any required LLM configuration value is zero or missing, including the Credits and Cost Level bound fields required by [credits-billing.md](./credits-billing.md). Configuration MUST NOT include `reference_priority_gwei` or `max_token_ratio`.
 
 ### Call Record Fields
 
@@ -262,7 +264,7 @@ Each `llm_call_records` row MUST contain:
 * `project_id`
 * `model`
 * `prompt_tokens`, `completion_tokens`, `total_tokens`
-* `token_ratio` (the project cost level used for the charge, stored as display × 10)
+* `priority_gwei` (the project Cost Level used for the charge, as a decimal integer string)
 * `status` (success or failed)
 * `duration_ms`
 * `billed_vram` (the resolved effective VRAM in GB used for VRAM weight and Bridge forwarding)
@@ -279,10 +281,9 @@ A settled success call record MUST also contain the Credits recalculation snapsh
 * `constant_seconds`
 * `seconds_per_input_token`
 * `seconds_per_output_token`
-* `reference_priority_gwei`
 * `credits_per_gwei`
 
-The call record MUST NOT store the charged Credits amount. Actual Credits changes MUST exist only on processed `credit_events` rows.
+The call record MUST NOT store the charged Credits amount. The call record MUST NOT store `reference_priority_gwei`. Actual Credits changes MUST exist only on processed `credit_events` rows.
 
 When Task Fee Estimation fails and the request is aborted before Bridge forwarding, the failure `llm_call_records` row MUST leave the four fee fields empty. Management query APIs MUST NOT expose the fee fields or recalculation snapshot fields.
 
@@ -306,19 +307,18 @@ vram_weight =
     max(effective_vram, base_vram) / base_vram
 
 billable_gwei =
-    reference_priority_gwei * token_ratio_display * estimated_node_seconds * vram_weight
+    priority_gwei * estimated_node_seconds * vram_weight
 
 task_fee_gwei =
     floor(billable_gwei)
 ```
 
 * `estimated_prompt_tokens` and `max_completion_tokens` MUST be the same values used by the Credits balance precheck.
-* `token_ratio_display` MUST be the project token ratio display float (`projects.token_ratio` stored integer divided by `10`).
+* `priority_gwei` MUST be the project's stored Cost Level (`projects.priority_gwei`), snapshotted onto the job at create.
 * `effective_vram` MUST be the resolved effective VRAM of the request.
 * `base_vram` MUST come from `llm.base_vram`.
 * `vram_weight` MUST be computed locally by Crynux AS. The service MUST NOT query Relay for `vram_weight`.
 * `constant_seconds`, `seconds_per_input_token`, and `seconds_per_output_token` MUST come from Relay `GET /v2/models/llm/execution-time` with query `model=<request model>` and `min_vram=<effective_vram>`.
-* `reference_priority_gwei` MUST come from `llm.reference_priority_gwei` as a decimal integer string.
 
 `task_fee_gwei` MUST be computed with floating-point intermediates and MUST truncate toward zero to a non-negative integer Gwei value, persisted as a decimal integer string where stored as text.
 
@@ -326,7 +326,7 @@ The service MUST resolve `median_priority_gwei` with the Queue Median Hint rules
 
 ### Queue Median Hint
 
-When the service needs a current queue median hint for `billing_config`, WebUI display, or the job/call-record snapshot:
+When the service needs a current queue median hint for `billing_config`, WebUI display, project creation default Cost Level, or the job/call-record snapshot:
 
 1. If the latest priority snapshot has a non-null `median_priority_gwei` and `queued_task_count > 0`, the service MUST use that value.
 2. Else if the cache still holds the most recent non-empty `median_priority_gwei`, the service MUST use that value.
@@ -343,7 +343,7 @@ Task Fee Estimation MUST fail when:
 
 Reading or resolving the queue median hint MUST NOT cause Task Fee Estimation to fail.
 
-After configuration `reference_priority_gwei`, project `token_ratio`, validated coefficients, and `vram_weight` are available, computing `billable_gwei` and `task_fee_gwei` MUST succeed. Ordinary arithmetic on those validated inputs is not a business failure mode.
+After project `priority_gwei`, validated coefficients, and `vram_weight` are available, computing `billable_gwei` and `task_fee_gwei` MUST succeed. Ordinary arithmetic on those validated inputs is not a business failure mode.
 
 When Task Fee Estimation fails, the service MUST:
 

@@ -40,7 +40,7 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 		UserID:               project.UserID,
 		ProjectID:            project.ID,
 		Model:                model,
-		TokenRatio:           project.TokenRatio,
+		PriorityGwei:         &project.PriorityGwei.Int,
 		TokenUsageApplicable: true,
 		Status:               models.LLMCallStatusFailed,
 		Credits:              big.NewInt(0),

@@ -10,6 +10,8 @@ type llmTaskArgsPayload struct {
 	Model            string                      `json:"model"`
 	Messages         any                         `json:"messages"`
 	Tools            []map[string]interface{}    `json:"tools,omitempty"`
+	ToolChoice       any                         `json:"tool_choice,omitempty"`
+	ResponseFormat   map[string]interface{}      `json:"response_format,omitempty"`
 	GenerationConfig *models.GPTGenerationConfig `json:"generation_config,omitempty"`
 	TemplateArgs     map[string]interface{}      `json:"template_args,omitempty"`
 	Seed             int                         `json:"seed"`
@@ -22,6 +24,8 @@ func buildLLMTaskArgsPayload(args models.GPTTaskArgs, messages any) llmTaskArgsP
 		Model:            args.Model,
 		Messages:         messages,
 		Tools:            args.Tools,
+		ToolChoice:       args.ToolChoice,
+		ResponseFormat:   args.ResponseFormat,
 		GenerationConfig: args.GenerationConfig,
 		TemplateArgs:     args.TemplateArgs,
 		Seed:             args.Seed,

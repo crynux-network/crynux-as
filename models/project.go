@@ -19,6 +19,6 @@ type Project struct {
 	EndpointToken string        `json:"endpoint_token" gorm:"type:string;size:128;not null;uniqueIndex"`
 	APIKeyHash    string        `json:"-" gorm:"column:api_key_hash;type:string;size:128;not null;uniqueIndex"`
 	APIKeyPrefix  string        `json:"api_key_prefix" gorm:"column:api_key_prefix;type:string;size:16;not null"`
-	TokenRatio    uint          `json:"token_ratio" gorm:"not null;default:10"`
+	PriorityGwei  BigInt        `json:"priority_gwei" gorm:"type:string;size:255;not null"`
 	Status        ProjectStatus `json:"status" gorm:"not null;default:0;index"`
 }

@@ -170,14 +170,19 @@ func checkLLMConfig() error {
 	if _, err := appConfig.ParseEmptyQueueMedianPriorityGwei(); err != nil {
 		return fmt.Errorf("llm.empty_queue_median_priority_gwei is invalid: %w", err)
 	}
-	if _, err := appConfig.ParseReferencePriorityGwei(); err != nil {
-		return fmt.Errorf("llm.reference_priority_gwei is invalid: %w", err)
+	minPriority, err := appConfig.ParseMinPriorityGwei()
+	if err != nil {
+		return fmt.Errorf("llm.min_priority_gwei is invalid: %w", err)
 	}
-	if appConfig.LLM.CreditsPerGwei == 0 {
-		return errors.New("llm.credits_per_gwei is not set")
+	maxPriority, err := appConfig.ParseMaxPriorityGwei()
+	if err != nil {
+		return fmt.Errorf("llm.max_priority_gwei is invalid: %w", err)
 	}
-	if appConfig.LLM.MaxTokenRatio < 2 {
-		return errors.New("llm.max_token_ratio must be an integer >= 2")
+	if minPriority.Cmp(maxPriority) > 0 {
+		return errors.New("llm.min_priority_gwei must be less than or equal to llm.max_priority_gwei")
+	}
+	if _, err := appConfig.ParseCreditsPerGwei(); err != nil {
+		return fmt.Errorf("llm.credits_per_gwei is invalid: %w", err)
 	}
 	if appConfig.LLM.JobSubmitTimeout == 0 {
 		return errors.New("llm.job_submit_timeout is not set")
@@ -195,8 +200,16 @@ func (cfg *AppConfig) ParseEmptyQueueMedianPriorityGwei() (*big.Int, error) {
 	return parsePositiveDecimalGwei(cfg.LLM.EmptyQueueMedianPriorityGwei)
 }
 
-func (cfg *AppConfig) ParseReferencePriorityGwei() (*big.Int, error) {
-	return parsePositiveDecimalGwei(cfg.LLM.ReferencePriorityGwei)
+func (cfg *AppConfig) ParseMinPriorityGwei() (*big.Int, error) {
+	return parsePositiveDecimalGwei(cfg.LLM.MinPriorityGwei)
+}
+
+func (cfg *AppConfig) ParseMaxPriorityGwei() (*big.Int, error) {
+	return parsePositiveDecimalGwei(cfg.LLM.MaxPriorityGwei)
+}
+
+func (cfg *AppConfig) ParseCreditsPerGwei() (*big.Rat, error) {
+	return ParsePositiveDecimalRate(cfg.LLM.CreditsPerGwei)
 }
 
 func parsePositiveDecimalGwei(value string) (*big.Int, error) {
@@ -213,6 +226,22 @@ func parsePositiveDecimalGwei(value string) (*big.Int, error) {
 		return nil, errors.New("must be a positive decimal integer")
 	}
 	return priority, nil
+}
+
+// ParsePositiveDecimalRate parses a positive decimal string (including fractions such as "1/1000000").
+func ParsePositiveDecimalRate(value string) (*big.Rat, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, errors.New("must be a positive decimal")
+	}
+	rate := new(big.Rat)
+	if _, ok := rate.SetString(trimmed); !ok {
+		return nil, errors.New("must be a positive decimal")
+	}
+	if rate.Sign() <= 0 {
+		return nil, errors.New("must be a positive decimal")
+	}
+	return rate, nil
 }
 
 func ReadFromFile(file string) string {

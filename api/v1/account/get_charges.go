@@ -6,7 +6,6 @@ import (
 	"crynux_as/api/v1/response"
 	"crynux_as/config"
 	"crynux_as/models"
-	"crynux_as/service"
 	"database/sql"
 	"errors"
 	"math/big"
@@ -31,7 +30,7 @@ type ChargeData struct {
 	PromptTokens     uint64               `json:"prompt_tokens" description:"Billed prompt token count"`
 	CompletionTokens uint64               `json:"completion_tokens" description:"Billed completion token count"`
 	TotalTokens      uint64               `json:"total_tokens" description:"Billed total token count"`
-	TokenRatio       float64              `json:"token_ratio" description:"Project cost level (token ratio) used for the charge"`
+	PriorityGwei     string               `json:"priority_gwei" description:"Project Cost Level priority in Gwei used for the charge"`
 	Credits          models.BigInt        `json:"credits" description:"Credits charged for the call"`
 	BilledVram       uint64               `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
 	DurationMs       uint64               `json:"duration_ms" description:"Call duration in milliseconds"`
@@ -57,7 +56,7 @@ type chargeRow struct {
 	PromptTokens     uint64
 	CompletionTokens uint64
 	TotalTokens      uint64
-	TokenRatio       uint
+	PriorityGwei     string
 	Credits          models.BigInt
 	BilledVram       uint64
 	DurationMs       uint64
@@ -128,7 +127,7 @@ SELECT
 	r.prompt_tokens AS prompt_tokens,
 	r.completion_tokens AS completion_tokens,
 	r.total_tokens AS total_tokens,
-	r.token_ratio AS token_ratio,
+	r.priority_gwei AS priority_gwei,
 	e.amount AS credits,
 	r.billed_vram AS billed_vram,
 	r.duration_ms AS duration_ms,
@@ -176,7 +175,7 @@ ORDER BY e.id DESC
 			PromptTokens:     row.PromptTokens,
 			CompletionTokens: row.CompletionTokens,
 			TotalTokens:      row.TotalTokens,
-			TokenRatio:       service.DisplayTokenRatio(row.TokenRatio),
+			PriorityGwei:     row.PriorityGwei,
 			Credits:          amount,
 			BilledVram:       row.BilledVram,
 			DurationMs:       row.DurationMs,

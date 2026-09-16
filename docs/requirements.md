@@ -60,7 +60,7 @@ A user account can create multiple projects. Each project has:
 * A name.
 * A unique `endpoint_token`: a cryptographically random string generated at project creation. The private LLM API base URL of the project is `/api/<endpoint_token>/v1`.
 * Exactly one API key: a cryptographically random secret generated at project creation and stored on the project as a key hash and a short public prefix. The plaintext key is shown to the user only once at creation and when reset.
-* A `token_ratio` that scales billed tokens relative to consumed tokens. See [llm-api.md](./llm-api.md) for the allowed values, storage format, and charging rules.
+* A `priority_gwei` Cost Level that scales Credits and the submitted task fee. See [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md) for the bounds, default at create, and charging rules.
 
 Project management APIs:
 
@@ -74,7 +74,7 @@ A project MUST only be visible to and manageable by its owning account.
 
 ## OpenAI-Compatible LLM API
 
-The detailed endpoint, Bridge forwarding, token-ratio, pricing, balance precheck, and Credits settle rules are specified in [llm-api.md](./llm-api.md).
+The detailed endpoint, Bridge forwarding, Cost Level (`priority_gwei`), pricing, balance precheck, and Credits settle rules are specified in [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md).
 
 ### Endpoints
 
@@ -117,7 +117,7 @@ Each LLM call is charged from the Credits balance of the owning account using th
 
 Every LLM call, successful or failed, MUST be recorded as one `llm_call_records` row as specified in [llm-job-processing.md](./llm-job-processing.md). The call record MUST contain the account `user_id` snapshot, project, optional unique `llm_job_id`, model, prompt/completion/total token counts, `token_usage_applicable`, success or failure status, `accepted_at`, `completed_at`, `duration_ms = completed_at - accepted_at`, and the billed effective VRAM. The call record MUST NOT store the charged Credits amount. Actual Credits changes MUST exist only on processed `credit_events` rows.
 
-`GET /v1/projects/:project_id/requests` is a JWT-authenticated management API. It MUST verify that the project belongs to the authenticated account and is not Deleted. It MUST return one merged list of unfinished project jobs and finished project call records, newest first, with total length at most `llm.project_recent_requests_limit`. The API MUST NOT accept `limit`, `offset`, or any other client-controlled page size. Each item MUST include `id`, `source`, `created_at`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `token_ratio`, `credits`, `billed_vram`, `duration_ms`, and `status`. `source` MUST be `job` or `call_record`. `status` MUST be one of `queued`, `in_progress`, `success`, or `failed` mapped as specified in [llm-job-processing.md](./llm-job-processing.md). In-progress items MUST return null for `prompt_tokens`, `completion_tokens`, `total_tokens`, `duration_ms`, and `credits`. Finished items MUST take `credits` from the processed LLM charge event amount, or `0` when no event exists. The `token_ratio` MUST be the display float of the cost level stored on the job or call record. The response MUST NOT include `task_fee_gwei`, `median_priority_gwei`, `estimated_node_seconds`, or `vram_weight`. The response field MUST be `requests`.
+`GET /v1/projects/:project_id/requests` is a JWT-authenticated management API. It MUST verify that the project belongs to the authenticated account and is not Deleted. It MUST return one merged list of unfinished project jobs and finished project call records, newest first, with total length at most `llm.project_recent_requests_limit`. The API MUST NOT accept `limit`, `offset`, or any other client-controlled page size. Each item MUST include `id`, `source`, `created_at`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `priority_gwei`, `credits`, `billed_vram`, `duration_ms`, and `status`. `source` MUST be `job` or `call_record`. `status` MUST be one of `queued`, `in_progress`, `success`, or `failed` mapped as specified in [llm-job-processing.md](./llm-job-processing.md). In-progress items MUST return null for `prompt_tokens`, `completion_tokens`, `total_tokens`, `duration_ms`, and `credits`. Finished items MUST take `credits` from the processed LLM charge event amount, or `0` when no event exists. The `priority_gwei` MUST be the Cost Level decimal integer string stored on the job or call record. The response MUST NOT include `task_fee_gwei`, `median_priority_gwei`, `estimated_node_seconds`, or `vram_weight`. The response field MUST be `requests`.
 
 ## Usage Statistics
 

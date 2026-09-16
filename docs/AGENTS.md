@@ -5,9 +5,10 @@
 | [requirements.md](./requirements.md) | Functional requirements: wallet login and accounts, multi-chain multi-token deposits and Credits crediting, projects and private LLM API endpoints, Bridge forwarding and usage-based charging, and per-project usage statistics |
 | [architecture.md](./architecture.md) | Technical architecture: components, deposit and LLM charging data flows, Relay loaded-models / queued-priority / execution-time caches, multi-chain multi-token configuration model, and Credits ledger consistency rules |
 | [deposit-processing.md](./deposit-processing.md) | Deposit processing specification: per-network scan workers, cursor and log filter rules, `credits_per_token` conversion, unknown-sender ignore rules, and atomic Credits ledger updates |
-| [llm-api.md](./llm-api.md) | OpenAI-compatible LLM API specification: private endpoints, model catalog from the loaded-models cache, VRAM limit and effective VRAM resolution, Bridge forwarding, project token ratio, call records, and Task Fee Estimation |
+| [llm-api.md](./llm-api.md) | OpenAI-compatible LLM API specification: private endpoints, model catalog from the loaded-models cache, VRAM limit and effective VRAM resolution, Bridge forwarding, project Cost Level (`priority_gwei`), call records, and Task Fee Estimation |
 | [llm-job-processing.md](./llm-job-processing.md) | LLM execution and ledger ownership: `llm_jobs`, `llm_call_records`, `credit_events`, and `credit_accounts` responsibilities, request processing order, settle and failure transactions, Responses retention, Recent Requests merge, and retention cleanup |
-| [credits-billing.md](./credits-billing.md) | Credits billing and shared `billable_gwei` task-fee inputs: fixed `reference_priority_gwei`, Relay execution-time coefficients, VRAM weight, cost level, settle rules, and pricing-examples API |
+| [model-compatibility/](./model-compatibility/) | OpenAI-compatible request conversion, canonical task persistence and raw-task transport, raw assistant-text parsing, and public response construction |
+| [credits-billing.md](./credits-billing.md) | Credits billing and shared `billable_gwei` task-fee inputs: project Cost Level `priority_gwei`, Relay execution-time coefficients, VRAM weight, settle rules, and pricing-examples API |
 
 ## Doc Update Requirements
 

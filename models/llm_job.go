@@ -36,7 +36,7 @@ type LLMJob struct {
 	UpdatedAt             time.Time           `gorm:"not null"`
 	ProjectID             uint                `gorm:"not null;index:idx_llm_jobs_project_status_created,priority:1;index:idx_llm_jobs_project_public_id,priority:1;index"`
 	UserID                uint                `gorm:"not null;index"`
-	TokenRatio            uint                `gorm:"not null;default:0"`
+	PriorityGwei          BigInt              `gorm:"type:string;size:255;not null"`
 	PublicID              string              `gorm:"type:string;size:128;index:idx_llm_jobs_project_public_id,priority:2;index"`
 	APIType               LLMAPIType          `gorm:"not null"`
 	Model                 string              `gorm:"type:string;size:255;not null"`

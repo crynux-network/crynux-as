@@ -45,10 +45,10 @@ type FunctionCall struct {
 }
 
 type Message struct {
-	Role       LLMRole     `json:"role"`
-	Content    any         `json:"content,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	Role       LLMRole    `json:"role"`
+	Content    any        `json:"content,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type MessageContentBlock struct {
@@ -80,6 +80,8 @@ type GPTTaskArgs struct {
 	Model            string                   `json:"model"`
 	Messages         []Message                `json:"messages"`
 	Tools            []map[string]interface{} `json:"tools,omitempty"`
+	ToolChoice       any                      `json:"tool_choice,omitempty"`
+	ResponseFormat   map[string]interface{}   `json:"response_format,omitempty"`
 	GenerationConfig *GPTGenerationConfig     `json:"generation_config,omitempty"`
 	TemplateArgs     map[string]interface{}   `json:"template_args,omitempty"`
 	Seed             int                      `json:"seed"`

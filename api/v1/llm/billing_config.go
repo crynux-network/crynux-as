@@ -10,9 +10,9 @@ import (
 
 type BillingConfigData struct {
 	BaseVRAM              uint64  `json:"base_vram" description:"Base VRAM in GB used for vram_weight"`
-	ReferencePriorityGwei string  `json:"reference_priority_gwei" description:"Fixed reference priority in Gwei"`
-	CreditsPerGwei        uint64  `json:"credits_per_gwei" description:"Credits charged per billable Gwei"`
-	MaxTokenRatio         uint64  `json:"max_token_ratio" description:"Maximum allowed cost level token_ratio display value"`
+	CreditsPerGwei        string  `json:"credits_per_gwei" description:"Credits charged per billable Gwei as a positive decimal string"`
+	MinPriorityGwei       string  `json:"min_priority_gwei" description:"Minimum allowed project Cost Level priority_gwei"`
+	MaxPriorityGwei       string  `json:"max_priority_gwei" description:"Maximum allowed project Cost Level priority_gwei"`
 	MedianPriorityGwei    string  `json:"median_priority_gwei" description:"Current queue median priority hint in Gwei"`
 	HighestPriorityGwei   *string `json:"highest_priority_gwei" description:"Current queue highest priority in Gwei when the queue is non-empty"`
 	LowestPriorityGwei    *string `json:"lowest_priority_gwei" description:"Current queue lowest priority in Gwei when the queue is non-empty"`
@@ -30,11 +30,11 @@ func GetBillingConfig(c *gin.Context) (*GetBillingConfigResponse, error) {
 		return nil, err
 	}
 	data := &BillingConfigData{
-		BaseVRAM:              llmCfg.BaseVRAM,
-		ReferencePriorityGwei: llmCfg.ReferencePriorityGwei,
-		CreditsPerGwei:        llmCfg.CreditsPerGwei,
-		MaxTokenRatio:         llmCfg.MaxTokenRatio,
-		MedianPriorityGwei:    median.String(),
+		BaseVRAM:           llmCfg.BaseVRAM,
+		CreditsPerGwei:     llmCfg.CreditsPerGwei,
+		MinPriorityGwei:    llmCfg.MinPriorityGwei,
+		MaxPriorityGwei:    llmCfg.MaxPriorityGwei,
+		MedianPriorityGwei: median.String(),
 	}
 	if highest, lowest, ok := service.ResolveQueuePriorityBounds(); ok {
 		highestStr := highest.String()

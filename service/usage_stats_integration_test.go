@@ -63,7 +63,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		EndpointToken: "ep",
 		APIKeyHash:    "hash",
 		APIKeyPrefix:  "prefix12",
-		TokenRatio:    10,
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
 		Status:        models.ProjectStatusActive,
 	}
 	if err := db.Create(&project).Error; err != nil {
@@ -77,7 +77,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		PromptTokens:         10,
 		CompletionTokens:     5,
 		TotalTokens:          15,
-		TokenRatio:           10,
+		PriorityGwei:         models.BigInt{Int: *big.NewInt(10)},
 		TokenUsageApplicable: 1,
 		Status:               models.LLMCallStatusSuccess,
 		AcceptedAt:           now,
@@ -200,8 +200,9 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := &config.AppConfig{}
-	cfg.LLM.ReferencePriorityGwei = "10"
-	cfg.LLM.CreditsPerGwei = 1
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000"
+	cfg.LLM.CreditsPerGwei = "1"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -219,7 +220,7 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 		EndpointToken: "e2",
 		APIKeyHash:    "h2",
 		APIKeyPrefix:  "prefix22",
-		TokenRatio:    10,
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
 		Status:        models.ProjectStatusDeleted,
 	}
 	if err := db.Create(&project).Error; err != nil {
@@ -233,7 +234,7 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 	job := models.LLMJob{
 		ProjectID:             project.ID,
 		UserID:                user.ID,
-		TokenRatio:            10,
+		PriorityGwei:          models.BigInt{Int: *big.NewInt(10)},
 		Model:                 "m",
 		APIType:               models.LLMAPITypeChatCompletions,
 		TaskArgsJSON:          "{}",
@@ -269,10 +270,10 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 	if record.ConstantSeconds == nil || *record.ConstantSeconds != 1 {
 		t.Fatal("constant seconds snapshot missing")
 	}
-	if record.ReferencePriorityGwei == nil || record.ReferencePriorityGwei.String() != "10" {
-		t.Fatal("reference priority snapshot missing")
+	if record.PriorityGwei.Cmp(big.NewInt(10)) != 0 {
+		t.Fatalf("priority_gwei=%s, want 10", record.PriorityGwei.String())
 	}
-	if record.CreditsPerGwei == nil || *record.CreditsPerGwei != 1 {
+	if record.CreditsPerGwei == nil || *record.CreditsPerGwei != "1" {
 		t.Fatal("credits_per_gwei snapshot missing")
 	}
 
@@ -324,7 +325,7 @@ func TestProcessLLMCallSkipsEventWhenCreditsZero(t *testing.T) {
 		EndpointToken: "e0",
 		APIKeyHash:    "h0",
 		APIKeyPrefix:  "prefix00",
-		TokenRatio:    10,
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
 		Status:        models.ProjectStatusActive,
 	}
 	if err := db.Create(&project).Error; err != nil {
@@ -430,7 +431,7 @@ func TestFailAndRecordLLMJobSingleTransaction(t *testing.T) {
 	job := models.LLMJob{
 		ProjectID:    1,
 		UserID:       9,
-		TokenRatio:   10,
+		PriorityGwei: models.BigInt{Int: *big.NewInt(10)},
 		Model:        "m",
 		APIType:      models.LLMAPITypeChatCompletions,
 		TaskArgsJSON: "{}",

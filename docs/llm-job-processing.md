@@ -38,11 +38,11 @@ Each row MUST contain:
 * final status (`success` or `failed`)
 * prompt, completion, and total token counts when token usage applies
 * `token_usage_applicable`
-* `token_ratio`
+* `priority_gwei`
 * `accepted_at`, `completed_at`, and `duration_ms = completed_at - accepted_at`
 * billed effective VRAM
 * optional pre-submit task-fee fields (`task_fee_gwei`, `median_priority_gwei`, `estimated_node_seconds`, `vram_weight`)
-* for settled success charges, the Credits recalculation snapshot: `constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `reference_priority_gwei`, and `credits_per_gwei`
+* for settled success charges, the Credits recalculation snapshot: `constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, and `credits_per_gwei`
 
 `llm_call_records` MUST NOT store request bodies, prompts, completions, result bodies, or the actual Credits amount charged.
 
@@ -87,7 +87,7 @@ When authentication succeeds but request validation, VRAM resolution, task-fee e
 
 ### Job creation
 
-When the request is accepted for execution, the API MUST create one `llm_jobs` row with status `pending_submit`, create-time snapshots for user, token ratio, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`.
+When the request is accepted for execution, the API MUST create one `llm_jobs` row with status `pending_submit`, create-time snapshots for user, `priority_gwei`, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`.
 
 For Responses requests with `previous_response_id`, the API MUST resolve the previous job before creating the new job:
 

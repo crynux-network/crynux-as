@@ -118,7 +118,7 @@ type RecordLLMCallInput struct {
 	PromptTokens          uint64
 	CompletionTokens      uint64
 	TotalTokens           uint64
-	TokenRatio            uint
+	PriorityGwei          *big.Int
 	TokenUsageApplicable  bool
 	Status                models.LLMCallStatus
 	Credits               *big.Int
@@ -132,8 +132,7 @@ type RecordLLMCallInput struct {
 	ConstantSeconds       *float64
 	SecondsPerInputToken  *float64
 	SecondsPerOutputToken *float64
-	ReferencePriorityGwei *big.Int
-	CreditsPerGwei        *uint64
+	CreditsPerGwei        *string
 	Charge                bool
 }
 
@@ -226,7 +225,6 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 		PromptTokens:          in.PromptTokens,
 		CompletionTokens:      in.CompletionTokens,
 		TotalTokens:           in.TotalTokens,
-		TokenRatio:            in.TokenRatio,
 		TokenUsageApplicable:  tokenUsageApplicable,
 		Status:                in.Status,
 		AcceptedAt:            in.AcceptedAt,
@@ -239,14 +237,14 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 		SecondsPerInputToken:  cloneFloat64Ptr(in.SecondsPerInputToken),
 		SecondsPerOutputToken: cloneFloat64Ptr(in.SecondsPerOutputToken),
 	}
+	if in.PriorityGwei != nil {
+		record.PriorityGwei = models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)}
+	}
 	if in.TaskFeeGwei != nil {
 		record.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
 	}
 	if in.MedianPriorityGwei != nil {
 		record.MedianPriorityGwei = &models.BigInt{Int: *new(big.Int).Set(in.MedianPriorityGwei)}
-	}
-	if in.ReferencePriorityGwei != nil {
-		record.ReferencePriorityGwei = &models.BigInt{Int: *new(big.Int).Set(in.ReferencePriorityGwei)}
 	}
 	if in.CreditsPerGwei != nil {
 		copied := *in.CreditsPerGwei
@@ -260,7 +258,7 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 		"PromptTokens",
 		"CompletionTokens",
 		"TotalTokens",
-		"TokenRatio",
+		"PriorityGwei",
 		"TokenUsageApplicable",
 		"Status",
 		"AcceptedAt",
@@ -274,7 +272,6 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 		"ConstantSeconds",
 		"SecondsPerInputToken",
 		"SecondsPerOutputToken",
-		"ReferencePriorityGwei",
 		"CreditsPerGwei",
 	).Create(&record).Error; err != nil {
 		return 0, err

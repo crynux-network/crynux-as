@@ -5,7 +5,6 @@ import (
 	"crynux_as/api/v1/response"
 	"crynux_as/config"
 	"crynux_as/models"
-	"crynux_as/service"
 	"database/sql"
 	"errors"
 	"math/big"
@@ -28,7 +27,7 @@ type ProjectRequestData struct {
 	PromptTokens     *uint64         `json:"prompt_tokens" description:"Billed prompt token count, null while in progress"`
 	CompletionTokens *uint64         `json:"completion_tokens" description:"Billed completion token count, null while in progress"`
 	TotalTokens      *uint64         `json:"total_tokens" description:"Billed total token count, null while in progress"`
-	TokenRatio       float64         `json:"token_ratio" description:"Project cost level (token ratio)"`
+	PriorityGwei     string          `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
 	Credits          *models.BigInt  `json:"credits" description:"Credits charged, null while in progress"`
 	BilledVram       uint64          `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
 	DurationMs       *uint64         `json:"duration_ms" description:"Call duration in milliseconds, null while in progress"`
@@ -52,7 +51,7 @@ type projectRequestRow struct {
 	PromptTokens     sql.NullInt64
 	CompletionTokens sql.NullInt64
 	TotalTokens      sql.NullInt64
-	TokenRatio       uint
+	PriorityGwei     string
 	Credits          sql.NullString
 	BilledVram       uint64
 	DurationMs       sql.NullInt64
@@ -88,7 +87,7 @@ SELECT
 	prompt_tokens,
 	completion_tokens,
 	total_tokens,
-	token_ratio,
+	priority_gwei,
 	credits,
 	billed_vram,
 	duration_ms,
@@ -102,7 +101,7 @@ FROM (
 		CAST(NULL AS SIGNED) AS prompt_tokens,
 		CAST(NULL AS SIGNED) AS completion_tokens,
 		CAST(NULL AS SIGNED) AS total_tokens,
-		j.token_ratio AS token_ratio,
+		j.priority_gwei AS priority_gwei,
 		CAST(NULL AS CHAR) AS credits,
 		j.billed_vram AS billed_vram,
 		CAST(NULL AS SIGNED) AS duration_ms,
@@ -111,7 +110,7 @@ FROM (
 			ELSE 'in_progress'
 		END AS status
 	FROM (
-		SELECT id, created_at, model, token_ratio, billed_vram, status
+		SELECT id, created_at, model, priority_gwei, billed_vram, status
 		FROM llm_jobs
 		WHERE project_id = ?
 			AND status IN (?, ?, ?)
@@ -129,7 +128,7 @@ FROM (
 		r.prompt_tokens AS prompt_tokens,
 		r.completion_tokens AS completion_tokens,
 		r.total_tokens AS total_tokens,
-		r.token_ratio AS token_ratio,
+		r.priority_gwei AS priority_gwei,
 		COALESCE(e.amount, '0') AS credits,
 		r.billed_vram AS billed_vram,
 		r.duration_ms AS duration_ms,
@@ -145,7 +144,7 @@ FROM (
 			prompt_tokens,
 			completion_tokens,
 			total_tokens,
-			token_ratio,
+			priority_gwei,
 			billed_vram,
 			duration_ms,
 			status
@@ -189,10 +188,10 @@ LIMIT ?
 			ID:         row.ID,
 			Source:     row.Source,
 			CreatedAt:  row.CreatedAt,
-			Model:      row.Model,
-			TokenRatio: service.DisplayTokenRatio(row.TokenRatio),
-			BilledVram: row.BilledVram,
-			Status:     row.Status,
+			Model:        row.Model,
+			PriorityGwei: row.PriorityGwei,
+			BilledVram:   row.BilledVram,
+			Status:       row.Status,
 		}
 		if row.Source == "call_record" {
 			promptTokens := uint64(row.PromptTokens.Int64)

@@ -79,9 +79,9 @@ type AppConfig struct {
 		ExecutionTimeCacheTTL         uint64 `mapstructure:"execution_time_cache_ttl"`
 		BaseVRAM                      uint64 `mapstructure:"base_vram"`
 		EmptyQueueMedianPriorityGwei  string `mapstructure:"empty_queue_median_priority_gwei"`
-		ReferencePriorityGwei         string `mapstructure:"reference_priority_gwei"`
-		CreditsPerGwei                uint64 `mapstructure:"credits_per_gwei"`
-		MaxTokenRatio                 uint64 `mapstructure:"max_token_ratio"`
+		MinPriorityGwei               string `mapstructure:"min_priority_gwei"`
+		MaxPriorityGwei               string `mapstructure:"max_priority_gwei"`
+		CreditsPerGwei                string `mapstructure:"credits_per_gwei"`
 		JobSubmitTimeout              uint64 `mapstructure:"job_submit_timeout"`
 		JobRetentionDays              uint64 `mapstructure:"job_retention_days"`
 		ProjectRecentRequestsLimit    uint64 `mapstructure:"project_recent_requests_limit"`

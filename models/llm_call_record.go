@@ -19,7 +19,7 @@ type LLMCallRecord struct {
 	PromptTokens          uint64        `json:"prompt_tokens" gorm:"not null;default:0"`
 	CompletionTokens      uint64        `json:"completion_tokens" gorm:"not null;default:0"`
 	TotalTokens           uint64        `json:"total_tokens" gorm:"not null;default:0"`
-	TokenRatio            uint          `json:"token_ratio" gorm:"not null;default:0"`
+	PriorityGwei          BigInt        `json:"priority_gwei" gorm:"type:string;size:255;not null"`
 	TokenUsageApplicable  int8          `json:"token_usage_applicable" gorm:"not null"`
 	Status                LLMCallStatus `json:"status" gorm:"not null;default:0;index"`
 	AcceptedAt            time.Time     `json:"accepted_at" gorm:"not null;index"`
@@ -33,6 +33,5 @@ type LLMCallRecord struct {
 	ConstantSeconds       *float64      `json:"constant_seconds"`
 	SecondsPerInputToken  *float64      `json:"seconds_per_input_token"`
 	SecondsPerOutputToken *float64      `json:"seconds_per_output_token"`
-	ReferencePriorityGwei *BigInt       `json:"reference_priority_gwei" gorm:"type:string;size:255"`
-	CreditsPerGwei        *uint64       `json:"credits_per_gwei"`
+	CreditsPerGwei        *string       `json:"credits_per_gwei" gorm:"type:string;size:255"`
 }

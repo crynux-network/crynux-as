@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	projectContextKey  = "llm_project"
-	llmJobWaitTimeout  = 10 * time.Minute
+	projectContextKey = "llm_project"
+	llmJobWaitTimeout = 10 * time.Minute
 )
 
 var estimateTaskFeeFn = service.EstimateTaskFee
@@ -71,7 +71,7 @@ func CreateResponse(c *gin.Context) {
 			writeClientError(c, http.StatusBadRequest, "previous_response_id: previous response is invalid")
 			return
 		}
-		history, err = llmadapter.BuildResponsesHistoryFromPreviousJob(prevJob.TaskArgsJSON, *prevJob.RawResultJSON)
+		history, err = llmadapter.BuildResponsesHistoryFromPreviousJob(prevJob.PublicID, prevJob.TaskArgsJSON, *prevJob.RawResultJSON)
 		if err != nil {
 			_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil)
 			writeLLMAdapterError(c, err)
@@ -107,7 +107,7 @@ func CreateResponse(c *gin.Context) {
 		c.Request.Context(),
 		req.Model,
 		effectiveVram,
-		project.TokenRatio,
+		&project.PriorityGwei.Int,
 		estPrompt,
 		maxCompletion,
 	)
@@ -375,7 +375,7 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 		UserID:               project.UserID,
 		ProjectID:            project.ID,
 		Model:                model,
-		TokenRatio:           project.TokenRatio,
+		PriorityGwei:         &project.PriorityGwei.Int,
 		TokenUsageApplicable: true,
 		Status:               models.LLMCallStatusFailed,
 		Credits:              big.NewInt(0),

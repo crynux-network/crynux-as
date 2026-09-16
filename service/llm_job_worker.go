@@ -291,16 +291,20 @@ func llmJobTaskFeeWei(job *models.LLMJob) (*big.Int, error) {
 
 func formatLLMJobResult(job *models.LLMJob, raw *models.GPTTaskResponse) ([]byte, error) {
 	created := job.CreatedAt.Unix()
+	var taskArgs models.GPTTaskArgs
+	if err := json.Unmarshal([]byte(job.TaskArgsJSON), &taskArgs); err != nil {
+		return nil, fmt.Errorf("invalid persisted task args: %w", err)
+	}
 	switch job.APIType {
 	case models.LLMAPITypeChatCompletions:
 		taskID := fmt.Sprintf("chatcmpl-%d", job.ID)
-		return llmadapter.FormatChatCompletionsResponse(raw, taskID, created)
+		return llmadapter.FormatChatCompletionsResponseWithTaskArgs(raw, taskID, created, &taskArgs)
 	case models.LLMAPITypeCompletions:
 		taskID := fmt.Sprintf("cmpl-%d", job.ID)
 		return llmadapter.FormatCompletionsResponse(raw, taskID, created)
 	case models.LLMAPITypeResponses:
 		params := responsesObjectParamsFromJob(job, llmadapter.ResponsesStatusCompleted)
-		return llmadapter.FormatResponsesObject(params, raw)
+		return llmadapter.FormatResponsesObjectWithTaskArgs(params, raw, &taskArgs)
 	default:
 		return nil, fmt.Errorf("unsupported api type %d", job.APIType)
 	}

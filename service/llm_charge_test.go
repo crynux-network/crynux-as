@@ -10,26 +10,24 @@ func TestCalcCredits(t *testing.T) {
 		name                  string
 		promptTokens          uint64
 		completionTokens      uint64
-		tokenRatio            uint
+		priorityGwei          int64
 		vramWeight            float64
 		constantSeconds       float64
 		secondsPerInputToken  float64
 		secondsPerOutputToken float64
-		referencePriority     int64
-		creditsPerGwei        uint64
+		creditsPerGwei        string
 		expected              int64
 	}{
 		{
-			name:             "basic",
-			promptTokens:     1000,
-			completionTokens: 100,
-			tokenRatio:       10,
-			vramWeight:       1,
-			constantSeconds:  30,
-			secondsPerInputToken: 0.001,
+			name:                  "basic",
+			promptTokens:          1000,
+			completionTokens:      100,
+			priorityGwei:          10,
+			vramWeight:            1,
+			constantSeconds:       30,
+			secondsPerInputToken:  0.001,
 			secondsPerOutputToken: 0.01,
-			referencePriority: 10,
-			creditsPerGwei:    1,
+			creditsPerGwei:        "1",
 			// estimated = 32, billable = 320
 			expected: 320,
 		},
@@ -37,24 +35,44 @@ func TestCalcCredits(t *testing.T) {
 			name:             "credits_per_gwei scales",
 			promptTokens:     0,
 			completionTokens: 0,
-			tokenRatio:       10,
+			priorityGwei:     4,
 			vramWeight:       2,
 			constantSeconds:  5,
-			referencePriority: 4,
-			creditsPerGwei:    3,
-			// billable = 4 * 1 * 5 * 2 = 40; credits = 120
+			creditsPerGwei:   "3",
+			// billable = 4 * 5 * 2 = 40; credits = 120
 			expected: 120,
 		},
 		{
-			name:             "truncates toward zero",
+			name:             "minimum one credit when floor is zero",
 			promptTokens:     0,
 			completionTokens: 0,
-			tokenRatio:       1,
+			priorityGwei:     1,
 			vramWeight:       1,
-			constantSeconds:  2.9,
-			referencePriority: 1,
-			creditsPerGwei:    1,
-			expected:          0,
+			constantSeconds:  0.29,
+			creditsPerGwei:   "1",
+			expected:         1,
+		},
+		{
+			name:             "decimal credits_per_gwei",
+			promptTokens:     0,
+			completionTokens: 0,
+			priorityGwei:     1_000_000_000,
+			vramWeight:       1,
+			constantSeconds:  1,
+			creditsPerGwei:   "0.000001",
+			// billable = 1e9; credits = 1000
+			expected: 1000,
+		},
+		{
+			name:             "minimum one credit with tiny credits_per_gwei",
+			promptTokens:     0,
+			completionTokens: 0,
+			priorityGwei:     273,
+			vramWeight:       3,
+			constantSeconds:  455.5,
+			creditsPerGwei:   "0.000001",
+			// billable ≈ 373083; floor(billable * G) = 0; credits = 1
+			expected: 1,
 		},
 	}
 
@@ -63,12 +81,11 @@ func TestCalcCredits(t *testing.T) {
 			got, err := CalcCredits(
 				tc.promptTokens,
 				tc.completionTokens,
-				tc.tokenRatio,
+				big.NewInt(tc.priorityGwei),
 				tc.vramWeight,
 				tc.constantSeconds,
 				tc.secondsPerInputToken,
 				tc.secondsPerOutputToken,
-				big.NewInt(tc.referencePriority),
 				tc.creditsPerGwei,
 			)
 			if err != nil {

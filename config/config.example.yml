@@ -68,9 +68,9 @@ llm:
   execution_time_cache_ttl: 300
   base_vram: 8
   empty_queue_median_priority_gwei: "34"
-  reference_priority_gwei: "34"
-  credits_per_gwei: 1
-  max_token_ratio: 30
+  min_priority_gwei: "1"
+  max_priority_gwei: "1000000000"
+  credits_per_gwei: "1"
   job_submit_timeout: 600
   job_retention_days: 30
   project_recent_requests_limit: 50

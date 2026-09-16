@@ -10,8 +10,7 @@ import (
 )
 
 type CalcBillableInput struct {
-	ReferencePriorityGwei *big.Int
-	TokenRatioStored      uint
+	PriorityGwei          *big.Int
 	EffectiveVram         uint64
 	BaseVram              uint64
 	ConstantSeconds       float64
@@ -39,17 +38,14 @@ type CalcTaskFeeResult struct {
 	SecondsPerOutputToken float64
 }
 
-// CalcBillableGwei computes shared billable_gwei from fixed reference priority,
-// token ratio, estimated node seconds, and VRAM weight.
+// CalcBillableGwei computes shared billable_gwei from project Cost Level
+// priority_gwei, estimated node seconds, and VRAM weight.
 func CalcBillableGwei(in CalcBillableInput) (*CalcBillableResult, error) {
-	if in.ReferencePriorityGwei == nil {
-		return nil, errors.New("reference_priority_gwei is required")
+	if in.PriorityGwei == nil {
+		return nil, errors.New("priority_gwei is required")
 	}
-	if in.ReferencePriorityGwei.Sign() <= 0 {
-		return nil, errors.New("reference_priority_gwei must be positive")
-	}
-	if in.TokenRatioStored == 0 {
-		return nil, errors.New("token_ratio is required")
+	if in.PriorityGwei.Sign() <= 0 {
+		return nil, errors.New("priority_gwei must be positive")
 	}
 	if in.BaseVram == 0 {
 		return nil, errors.New("base_vram must be a positive integer")
@@ -76,8 +72,7 @@ func CalcBillableGwei(in CalcBillableInput) (*CalcBillableResult, error) {
 	vramWeight := float64(vramDemand) / float64(in.BaseVram)
 
 	billableGwei, taskFeeGwei, err := billableFromParts(
-		in.ReferencePriorityGwei,
-		in.TokenRatioStored,
+		in.PriorityGwei,
 		estimatedNodeSeconds,
 		vramWeight,
 	)
@@ -94,8 +89,7 @@ func CalcBillableGwei(in CalcBillableInput) (*CalcBillableResult, error) {
 }
 
 func billableFromParts(
-	referencePriorityGwei *big.Int,
-	tokenRatioStored uint,
+	priorityGwei *big.Int,
 	estimatedNodeSeconds float64,
 	vramWeight float64,
 ) (*big.Float, *big.Int, error) {
@@ -106,9 +100,7 @@ func billableFromParts(
 		return nil, nil, errors.New("vram_weight must be a positive finite number")
 	}
 
-	tokenRatioDisplay := DisplayTokenRatio(tokenRatioStored)
-	product := new(big.Float).SetInt(referencePriorityGwei)
-	product.Mul(product, big.NewFloat(tokenRatioDisplay))
+	product := new(big.Float).SetInt(priorityGwei)
 	product.Mul(product, big.NewFloat(estimatedNodeSeconds*vramWeight))
 	if product.Sign() < 0 {
 		return nil, nil, errors.New("billable_gwei must be non-negative")
@@ -121,21 +113,34 @@ func billableFromParts(
 	return product, fee, nil
 }
 
-// CalcCreditsFromBillable returns floor(billable_gwei * credits_per_gwei).
-func CalcCreditsFromBillable(billableGwei *big.Float, creditsPerGwei uint64) (*big.Int, error) {
+// ParseCreditsPerGwei parses a positive decimal string into a *big.Rat.
+func ParseCreditsPerGwei(value string) (*big.Rat, error) {
+	return config.ParsePositiveDecimalRate(value)
+}
+
+// CalcCreditsFromBillable returns max(1, floor(billable_gwei * credits_per_gwei)).
+func CalcCreditsFromBillable(billableGwei *big.Float, creditsPerGwei *big.Rat) (*big.Int, error) {
 	if billableGwei == nil {
 		return nil, errors.New("billable_gwei is required")
 	}
-	if creditsPerGwei == 0 {
+	if creditsPerGwei == nil || creditsPerGwei.Sign() <= 0 {
 		return nil, errors.New("credits_per_gwei must be positive")
 	}
 	if billableGwei.Sign() < 0 {
 		return nil, errors.New("billable_gwei must be non-negative")
 	}
-	scaled := new(big.Float).Mul(billableGwei, new(big.Float).SetUint64(creditsPerGwei))
-	credits, _ := scaled.Int(nil)
-	if credits == nil {
-		credits = big.NewInt(0)
+
+	billableRat, _ := billableGwei.Rat(nil)
+	if billableRat == nil {
+		return nil, errors.New("billable_gwei is invalid")
+	}
+	product := new(big.Rat).Mul(billableRat, creditsPerGwei)
+	if product.Sign() < 0 {
+		return nil, errors.New("credits must be non-negative")
+	}
+	credits := new(big.Int).Quo(product.Num(), product.Denom())
+	if credits.Sign() == 0 {
+		credits = big.NewInt(1)
 	}
 	return credits, nil
 }
@@ -144,20 +149,20 @@ func CalcCreditsFromBillable(billableGwei *big.Float, creditsPerGwei uint64) (*b
 // persisted vram_weight using the shared billable_gwei formula.
 func CalcCredits(
 	promptTokens, completionTokens uint64,
-	tokenRatioStored uint,
+	priorityGwei *big.Int,
 	vramWeight float64,
 	constantSeconds, secondsPerInputToken, secondsPerOutputToken float64,
-	referencePriorityGwei *big.Int,
-	creditsPerGwei uint64,
+	creditsPerGwei string,
 ) (*big.Int, error) {
-	if referencePriorityGwei == nil {
-		return nil, errors.New("reference_priority_gwei is required")
+	if priorityGwei == nil {
+		return nil, errors.New("priority_gwei is required")
 	}
-	if referencePriorityGwei.Sign() <= 0 {
-		return nil, errors.New("reference_priority_gwei must be positive")
+	if priorityGwei.Sign() <= 0 {
+		return nil, errors.New("priority_gwei must be positive")
 	}
-	if tokenRatioStored == 0 {
-		return nil, errors.New("token_ratio is required")
+	rate, err := ParseCreditsPerGwei(creditsPerGwei)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateExecutionTimeCoefficients(
 		constantSeconds,
@@ -172,15 +177,14 @@ func CalcCredits(
 		secondsPerOutputToken*float64(completionTokens)
 
 	billableGwei, _, err := billableFromParts(
-		referencePriorityGwei,
-		tokenRatioStored,
+		priorityGwei,
 		estimatedNodeSeconds,
 		vramWeight,
 	)
 	if err != nil {
 		return nil, err
 	}
-	return CalcCreditsFromBillable(billableGwei, creditsPerGwei)
+	return CalcCreditsFromBillable(billableGwei, rate)
 }
 
 func validateExecutionTimeCoefficients(constantSeconds, secondsPerInputToken, secondsPerOutputToken float64) error {
@@ -199,14 +203,14 @@ func EstimateTaskFee(
 	ctx context.Context,
 	model string,
 	effectiveVram uint64,
-	tokenRatioStored uint,
+	priorityGwei *big.Int,
 	estimatedPromptTokens uint64,
 	maxCompletionTokens uint64,
 ) (*CalcTaskFeeResult, error) {
 	appCfg := config.GetConfig()
-	referencePriority, err := appCfg.ParseReferencePriorityGwei()
+	rate, err := appCfg.ParseCreditsPerGwei()
 	if err != nil {
-		return nil, fmt.Errorf("parse reference priority: %w", err)
+		return nil, fmt.Errorf("parse credits_per_gwei: %w", err)
 	}
 
 	coefficients, err := GetLLMExecutionTime(ctx, model, effectiveVram)
@@ -222,8 +226,7 @@ func EstimateTaskFee(
 	}
 
 	billable, err := CalcBillableGwei(CalcBillableInput{
-		ReferencePriorityGwei: referencePriority,
-		TokenRatioStored:      tokenRatioStored,
+		PriorityGwei:          priorityGwei,
 		EffectiveVram:         effectiveVram,
 		BaseVram:              appCfg.LLM.BaseVRAM,
 		ConstantSeconds:       coefficients.ConstantSeconds,
@@ -236,7 +239,7 @@ func EstimateTaskFee(
 		return nil, err
 	}
 
-	credits, err := CalcCreditsFromBillable(billable.BillableGwei, appCfg.LLM.CreditsPerGwei)
+	credits, err := CalcCreditsFromBillable(billable.BillableGwei, rate)
 	if err != nil {
 		return nil, err
 	}

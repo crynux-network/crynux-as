@@ -36,7 +36,13 @@ type ResponsesRequest struct {
 	Stop               ResponsesStop            `json:"stop"`
 	Seed               *int                     `json:"seed"`
 	ToolChoice         any                      `json:"tool_choice"`
+	Text               ResponsesText            `json:"text"`
+	ResponseFormat     map[string]interface{}   `json:"-"`
 	VramLimit          *uint64                  `json:"vram_limit"`
+}
+
+type ResponsesText struct {
+	Format any `json:"format"`
 }
 
 type ResponsesInput struct {
@@ -112,14 +118,14 @@ type ResponsesAPIObject struct {
 }
 
 type ResponsesOutputItem struct {
-	Type      string                   `json:"type"`
-	ID        string                   `json:"id,omitempty"`
-	Role      string                   `json:"role,omitempty"`
-	Status    string                   `json:"status,omitempty"`
-	Content   []ResponsesContentPart   `json:"content,omitempty"`
-	CallID    string                   `json:"call_id,omitempty"`
-	Name      string                   `json:"name,omitempty"`
-	Arguments string                   `json:"arguments,omitempty"`
+	Type      string                 `json:"type"`
+	ID        string                 `json:"id,omitempty"`
+	Role      string                 `json:"role,omitempty"`
+	Status    string                 `json:"status,omitempty"`
+	Content   []ResponsesContentPart `json:"content,omitempty"`
+	CallID    string                 `json:"call_id,omitempty"`
+	Name      string                 `json:"name,omitempty"`
+	Arguments string                 `json:"arguments,omitempty"`
 }
 
 type ResponsesContentPart struct {
@@ -142,10 +148,10 @@ type ResponsesAPIError struct {
 /* Meta */
 
 type ResponsesMeta struct {
-	Model             string
-	Background        bool
-	MaxOutputTokens   *int
-	VramLimit         *uint64
+	Model           string
+	Background      bool
+	MaxOutputTokens *int
+	VramLimit       *uint64
 }
 
 type ResponsesObjectParams struct {
@@ -162,6 +168,9 @@ func ParseResponsesRequest(body []byte) (ResponsesRequest, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return ResponsesRequest{}, newValidationError("", "invalid JSON body")
+	}
+	if _, exists := raw["structured_outputs"]; exists {
+		return ResponsesRequest{}, newValidationError("structured_outputs", "is not supported")
 	}
 
 	for _, field := range responsesUnsupportedFields {
@@ -189,25 +198,27 @@ func ParseResponsesRequest(body []byte) (ResponsesRequest, error) {
 		return ResponsesRequest{}, newValidationError("input", "input is required")
 	}
 
-	if err := validateResponsesTools(req.Tools); err != nil {
+	tools, err := normalizeResponsesTools(req.Tools)
+	if err != nil {
 		return ResponsesRequest{}, err
 	}
+	req.Tools = tools
+	toolChoice, err := normalizeToolChoice(req.ToolChoice, tools, true)
+	if err != nil {
+		return ResponsesRequest{}, err
+	}
+	req.ToolChoice = toolChoice
+	responseFormat, err := normalizeResponsesTextFormat(req.Text.Format)
+	if err != nil {
+		return ResponsesRequest{}, err
+	}
+	req.ResponseFormat = responseFormat
 
 	if err := validateResponsesInputItems(req.Input.Items); err != nil {
 		return ResponsesRequest{}, err
 	}
 
 	return req, nil
-}
-
-func validateResponsesTools(tools []map[string]interface{}) error {
-	for i, tool := range tools {
-		toolType, _ := tool["type"].(string)
-		if toolType != "" && toolType != "function" {
-			return newValidationError("tools", fmt.Sprintf("built-in tool type %q at index %d is not supported", toolType, i))
-		}
-	}
-	return nil
 }
 
 func validateResponsesInputItems(items []ResponsesInputItem) error {
@@ -278,6 +289,8 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 		Model:            req.Model,
 		Messages:         messages,
 		Tools:            req.Tools,
+		ToolChoice:       req.ToolChoice,
+		ResponseFormat:   req.ResponseFormat,
 		GenerationConfig: generationConfig,
 		Seed:             seed,
 		DType:            resolveDType(req.Model),
@@ -299,10 +312,8 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 // BuildResponsesHistoryFromPreviousJob builds chat history from a previous Responses
 // job's stored task args and raw result. Leading system messages from that job's
 // instructions are removed so the current request can supply its own instructions.
-func BuildResponsesHistoryFromPreviousJob(taskArgsJSON string, rawResultJSON string) ([]models.Message, error) {
-	var payload struct {
-		Messages []models.Message `json:"messages"`
-	}
+func BuildResponsesHistoryFromPreviousJob(responseID string, taskArgsJSON string, rawResultJSON string) ([]models.Message, error) {
+	var payload models.GPTTaskArgs
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
 		return nil, newValidationError("previous_response_id", "previous response is invalid")
 	}
@@ -312,7 +323,7 @@ func BuildResponsesHistoryFromPreviousJob(taskArgsJSON string, rawResultJSON str
 	if err := json.Unmarshal([]byte(rawResultJSON), &raw); err != nil {
 		return nil, newValidationError("previous_response_id", "previous response is invalid")
 	}
-	assistantMessages, err := rawResponseToHistoryMessages(&raw)
+	assistantMessages, err := rawResponseToHistoryMessages(responseID, &raw, &payload)
 	if err != nil {
 		return nil, err
 	}
@@ -334,13 +345,13 @@ func stripLeadingSystemMessages(messages []models.Message) []models.Message {
 	return append([]models.Message(nil), messages[start:]...)
 }
 
-func rawResponseToHistoryMessages(raw *models.GPTTaskResponse) ([]models.Message, error) {
+func rawResponseToHistoryMessages(responseID string, raw *models.GPTTaskResponse, taskArgs *models.GPTTaskArgs) ([]models.Message, error) {
 	if raw == nil || len(raw.Choices) == 0 {
 		return nil, newValidationError("previous_response_id", "previous response is invalid")
 	}
 	choice := raw.Choices[0]
 	content := messageContentToString(choice.Message.Content)
-	cleanContent, parsedToolCalls := NormalizeAssistantContent(content)
+	cleanContent, parsedToolCalls := NormalizeAssistantContentForTask(content, taskArgs)
 
 	msg := models.Message{
 		Role: models.LLMRoleAssistant,
@@ -354,7 +365,7 @@ func rawResponseToHistoryMessages(raw *models.GPTTaskResponse) ([]models.Message
 		msg.ToolCalls = make([]models.ToolCall, 0, len(parsedToolCalls))
 		for i, toolCall := range parsedToolCalls {
 			msg.ToolCalls = append(msg.ToolCalls, models.ToolCall{
-				Id:   fmt.Sprintf("call_%d", i),
+				Id:   fmt.Sprintf("call_%s_%d", responseID, i),
 				Type: "function",
 				Function: models.FunctionCall{
 					Name:      toolCall.Name,
@@ -385,6 +396,11 @@ func FormatResponsesPendingObject(params ResponsesObjectParams) ([]byte, error) 
 
 // FormatResponsesObject returns a completed or failed Responses object from raw GPT task output.
 func FormatResponsesObject(params ResponsesObjectParams, raw *models.GPTTaskResponse) ([]byte, error) {
+	return FormatResponsesObjectWithTaskArgs(params, raw, nil)
+}
+
+// FormatResponsesObjectWithTaskArgs converts raw output using the canonical request contract.
+func FormatResponsesObjectWithTaskArgs(params ResponsesObjectParams, raw *models.GPTTaskResponse, taskArgs *models.GPTTaskArgs) ([]byte, error) {
 	obj := ResponsesAPIObject{
 		ID:         params.ID,
 		Object:     "response",
@@ -409,7 +425,7 @@ func FormatResponsesObject(params ResponsesObjectParams, raw *models.GPTTaskResp
 		return nil, fmt.Errorf("gpt task response is required for completed response")
 	}
 
-	output, err := rawResponseToOutputItems(params.ID, raw)
+	output, err := rawResponseToOutputItems(params.ID, raw, taskArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -422,14 +438,14 @@ func FormatResponsesObject(params ResponsesObjectParams, raw *models.GPTTaskResp
 	return json.Marshal(obj)
 }
 
-func rawResponseToOutputItems(responseID string, raw *models.GPTTaskResponse) ([]ResponsesOutputItem, error) {
+func rawResponseToOutputItems(responseID string, raw *models.GPTTaskResponse, taskArgs *models.GPTTaskArgs) ([]ResponsesOutputItem, error) {
 	if len(raw.Choices) == 0 {
 		return []ResponsesOutputItem{}, nil
 	}
 
 	choice := raw.Choices[0]
 	content := messageContentToString(choice.Message.Content)
-	cleanContent, parsedToolCalls := NormalizeAssistantContent(content)
+	cleanContent, parsedToolCalls := NormalizeAssistantContentForTask(content, taskArgs)
 
 	output := make([]ResponsesOutputItem, 0, 1+len(parsedToolCalls))
 	if cleanContent != "" || len(parsedToolCalls) == 0 {

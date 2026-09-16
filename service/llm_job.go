@@ -51,7 +51,7 @@ func CreateLLMJob(ctx context.Context, db *gorm.DB, in CreateLLMJobInput) (*mode
 	job := models.LLMJob{
 		ProjectID:    in.Project.ID,
 		UserID:       in.Project.UserID,
-		TokenRatio:   in.Project.TokenRatio,
+		PriorityGwei: in.Project.PriorityGwei,
 		APIType:      in.APIType,
 		Model:        in.Model,
 		BilledVram:   in.BilledVram,
@@ -161,7 +161,7 @@ func CompleteAndSettleLLMJob(
 	if job.Status == models.LLMJobStatusCompleted && job.BillingStatus == models.LLMJobBillingBilled {
 		return job, nil
 	}
-	if job.UserID == 0 || job.TokenRatio == 0 {
+	if job.UserID == 0 || job.PriorityGwei.Sign() == 0 {
 		project, err := loadProjectByID(ctx, db, job.ProjectID)
 		if err != nil {
 			return nil, err
@@ -169,8 +169,8 @@ func CompleteAndSettleLLMJob(
 		if job.UserID == 0 {
 			job.UserID = project.UserID
 		}
-		if job.TokenRatio == 0 {
-			job.TokenRatio = project.TokenRatio
+		if job.PriorityGwei.Sign() == 0 {
+			job.PriorityGwei = project.PriorityGwei
 		}
 	}
 	if job.UserID == 0 {
@@ -184,20 +184,14 @@ func CompleteAndSettleLLMJob(
 	}
 
 	appCfg := config.GetConfig()
-	referencePriority, err := appCfg.ParseReferencePriorityGwei()
-	if err != nil {
-		return nil, fmt.Errorf("parse reference priority: %w", err)
-	}
-
 	credits, err := CalcCredits(
 		promptTokens,
 		completionTokens,
-		job.TokenRatio,
+		&job.PriorityGwei.Int,
 		*job.VramWeight,
 		*job.ConstantSeconds,
 		*job.SecondsPerInputToken,
 		*job.SecondsPerOutputToken,
-		referencePriority,
 		appCfg.LLM.CreditsPerGwei,
 	)
 	if err != nil {
@@ -225,12 +219,12 @@ func CompleteAndSettleLLMJob(
 
 		jobID := locked.ID
 		userID := locked.UserID
-		tokenRatio := locked.TokenRatio
+		priorityGwei := locked.PriorityGwei
 		if userID == 0 {
 			userID = job.UserID
 		}
-		if tokenRatio == 0 {
-			tokenRatio = job.TokenRatio
+		if priorityGwei.Sign() == 0 {
+			priorityGwei = job.PriorityGwei
 		}
 		in := RecordLLMCallInput{
 			UserID:                userID,
@@ -240,7 +234,7 @@ func CompleteAndSettleLLMJob(
 			PromptTokens:          promptTokens,
 			CompletionTokens:      completionTokens,
 			TotalTokens:           totalTokens,
-			TokenRatio:            tokenRatio,
+			PriorityGwei:          &priorityGwei.Int,
 			TokenUsageApplicable:  true,
 			Status:                models.LLMCallStatusSuccess,
 			Credits:               credits,
@@ -250,7 +244,6 @@ func CompleteAndSettleLLMJob(
 			ConstantSeconds:       cloneFloat64Ptr(locked.ConstantSeconds),
 			SecondsPerInputToken:  cloneFloat64Ptr(locked.SecondsPerInputToken),
 			SecondsPerOutputToken: cloneFloat64Ptr(locked.SecondsPerOutputToken),
-			ReferencePriorityGwei: referencePriority,
 			CreditsPerGwei:        &creditsPerGwei,
 			Charge:                true,
 		}
@@ -291,7 +284,7 @@ func FailAndRecordLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob, e
 	if job == nil {
 		return nil, errors.New("job is required")
 	}
-	if job.UserID == 0 || job.TokenRatio == 0 {
+	if job.UserID == 0 || job.PriorityGwei.Sign() == 0 {
 		project, err := loadProjectByID(ctx, db, job.ProjectID)
 		if err != nil {
 			return nil, err
@@ -299,8 +292,8 @@ func FailAndRecordLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob, e
 		if job.UserID == 0 {
 			job.UserID = project.UserID
 		}
-		if job.TokenRatio == 0 {
-			job.TokenRatio = project.TokenRatio
+		if job.PriorityGwei.Sign() == 0 {
+			job.PriorityGwei = project.PriorityGwei
 		}
 	}
 	if job.UserID == 0 {
@@ -324,19 +317,19 @@ func FailAndRecordLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob, e
 
 		jobID := locked.ID
 		userID := locked.UserID
-		tokenRatio := locked.TokenRatio
+		priorityGwei := locked.PriorityGwei
 		if userID == 0 {
 			userID = job.UserID
 		}
-		if tokenRatio == 0 {
-			tokenRatio = job.TokenRatio
+		if priorityGwei.Sign() == 0 {
+			priorityGwei = job.PriorityGwei
 		}
 		in := RecordLLMCallInput{
 			UserID:                userID,
 			ProjectID:             locked.ProjectID,
 			LLMJobID:              &jobID,
 			Model:                 locked.Model,
-			TokenRatio:            tokenRatio,
+			PriorityGwei:          &priorityGwei.Int,
 			TokenUsageApplicable:  true,
 			Status:                models.LLMCallStatusFailed,
 			Credits:               big.NewInt(0),

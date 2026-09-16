@@ -112,7 +112,7 @@ func TestParseResponsesRequestRejectsEmptyTypeWithoutRole(t *testing.T) {
 func TestBuildResponsesHistoryFromPreviousJob(t *testing.T) {
 	taskArgs := `{"model":"qwen/qwen3-7b","messages":[{"role":"system","content":"old instructions"},{"role":"user","content":"hello"}],"seed":0}`
 	raw := `{"model":"qwen/qwen3-7b","choices":[{"index":0,"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
-	history, err := BuildResponsesHistoryFromPreviousJob(taskArgs, raw)
+	history, err := BuildResponsesHistoryFromPreviousJob("resp_previous", taskArgs, raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestBuildResponsesHistoryFromPreviousJob(t *testing.T) {
 func TestBuildResponsesHistoryIncludesToolCalls(t *testing.T) {
 	taskArgs := `{"model":"qwen/qwen3-7b","messages":[{"role":"user","content":"call tool"}],"seed":0}`
 	raw := `{"model":"qwen/qwen3-7b","choices":[{"index":0,"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"q\":\"a\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
-	history, err := BuildResponsesHistoryFromPreviousJob(taskArgs, raw)
+	history, err := BuildResponsesHistoryFromPreviousJob("resp_previous", taskArgs, raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,3 +171,17 @@ func TestBuildResponsesHistoryIncludesToolCalls(t *testing.T) {
 	}
 }
 
+func TestBuildResponsesHistoryReusesPublishedParsedToolCallID(t *testing.T) {
+	taskArgs := `{"model":"model","messages":[{"role":"user","content":"call tool"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],"tool_choice":"required","seed":0}`
+	raw := `{"model":"model","choices":[{"index":0,"message":{"role":"assistant","content":"<tool_call>{\"name\":\"lookup\",\"arguments\":{\"q\":\"a\"}}</tool_call>"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+	history, err := BuildResponsesHistoryFromPreviousJob("resp_previous", taskArgs, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || len(history[1].ToolCalls) != 1 {
+		t.Fatalf("history=%+v", history)
+	}
+	if history[1].ToolCalls[0].Id != "call_resp_previous_0" {
+		t.Fatalf("call id=%q", history[1].ToolCalls[0].Id)
+	}
+}

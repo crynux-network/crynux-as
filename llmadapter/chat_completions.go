@@ -199,6 +199,14 @@ type StreamOptionsMeta struct {
 
 // BuildChatCompletionsTaskArgs parses a chat completions request body and returns canonical task args JSON.
 func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON string, meta ChatCompletionsMeta, err error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", ChatCompletionsMeta{}, newValidationError("", "invalid JSON body")
+	}
+	if _, exists := raw["structured_outputs"]; exists {
+		return "", ChatCompletionsMeta{}, newValidationError("structured_outputs", "is not supported")
+	}
+
 	var req ChatCompletionsRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", ChatCompletionsMeta{}, newValidationError("", "invalid JSON body")
@@ -210,6 +218,19 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 	}
 	if len(req.Messages) == 0 {
 		return "", ChatCompletionsMeta{}, newValidationError("messages", "messages is required")
+	}
+
+	tools, err := normalizeChatTools(req.Tools)
+	if err != nil {
+		return "", ChatCompletionsMeta{}, err
+	}
+	toolChoice, err := normalizeToolChoice(req.ToolChoice, tools, false)
+	if err != nil {
+		return "", ChatCompletionsMeta{}, err
+	}
+	responseFormat, err := normalizeChatResponseFormat(req.ResponseFormat)
+	if err != nil {
+		return "", ChatCompletionsMeta{}, err
 	}
 
 	messages := make([]models.Message, len(req.Messages))
@@ -236,7 +257,9 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 	taskArgs := models.GPTTaskArgs{
 		Model:            req.Model,
 		Messages:         messages,
-		Tools:            req.Tools,
+		Tools:            tools,
+		ToolChoice:       toolChoice,
+		ResponseFormat:   responseFormat,
 		GenerationConfig: generationConfig,
 		Seed:             req.Seed,
 		DType:            resolveDType(req.Model),
@@ -269,6 +292,11 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 
 // FormatChatCompletionsResponse converts a raw GPT task response into OpenAI chat completions JSON.
 func FormatChatCompletionsResponse(raw *models.GPTTaskResponse, taskID string, created int64) ([]byte, error) {
+	return FormatChatCompletionsResponseWithTaskArgs(raw, taskID, created, nil)
+}
+
+// FormatChatCompletionsResponseWithTaskArgs converts a raw response using the canonical request contract.
+func FormatChatCompletionsResponseWithTaskArgs(raw *models.GPTTaskResponse, taskID string, created int64, taskArgs *models.GPTTaskArgs) ([]byte, error) {
 	if raw == nil {
 		return nil, fmt.Errorf("gpt task response is required")
 	}
@@ -276,7 +304,7 @@ func FormatChatCompletionsResponse(raw *models.GPTTaskResponse, taskID string, c
 	choices := make([]CCResChoice, len(raw.Choices))
 	for i, choice := range raw.Choices {
 		choiceMessageContent := messageContentToString(choice.Message.Content)
-		cleanContent, parsedToolCalls := NormalizeAssistantContent(choiceMessageContent)
+		cleanContent, parsedToolCalls := NormalizeAssistantContentForTask(choiceMessageContent, taskArgs)
 
 		finishReason := string(choice.FinishReason)
 		toolCalls := choice.Message.ToolCalls

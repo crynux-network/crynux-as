@@ -33,13 +33,22 @@ func TestCreateLLMTaskSendsLargeFinalFeeAsWeiString(t *testing.T) {
 		if got := string(body["task_fee"]); got != `"20000000000000000000"` {
 			t.Errorf("task_fee JSON = %s, want a decimal string", got)
 		}
+		wantTaskArgs := `{"model":"test","tool_choice":"required","response_format":{"type":"json_object"}}`
+		var gotTaskArgs string
+		if err := json.Unmarshal(body["task_args"], &gotTaskArgs); err != nil {
+			t.Error(err)
+		}
+		if got := gotTaskArgs; got != wantTaskArgs {
+			t.Errorf("task_args JSON = %s, want %s", got, wantTaskArgs)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{"id":1,"status":"running"}}`))
 	}))
 	defer server.Close()
 
 	client := NewRawTaskClient(server.URL, "key")
-	task, err := client.CreateLLMTask(context.Background(), `{"model":"test"}`, 24, taskFeeWei)
+	taskArgs := `{"model":"test","tool_choice":"required","response_format":{"type":"json_object"}}`
+	task, err := client.CreateLLMTask(context.Background(), taskArgs, 24, taskFeeWei)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -76,7 +76,7 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		c.Request.Context(),
 		parsed.model,
 		effectiveVram,
-		project.TokenRatio,
+		&project.PriorityGwei.Int,
 		estPrompt,
 		maxCompletion,
 	)
