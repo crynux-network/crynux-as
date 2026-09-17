@@ -209,13 +209,51 @@ The model lookup MUST be case-insensitive. The effective VRAM is used for `vram_
 
 ## Project Cost Level
 
-Each project stores a `priority_gwei` that is the user Cost Level. It scales Credits and the submitted task fee as specified in [credits-billing.md](./credits-billing.md) and Task Fee Estimation.
+Each project stores a Cost Level configuration that determines the effective `priority_gwei` used for Credits and the submitted task fee as specified in [credits-billing.md](./credits-billing.md) and Task Fee Estimation.
 
-`priority_gwei` MUST be a decimal integer string. Project create and update MUST reject a `priority_gwei` outside the inclusive range `[llm.min_priority_gwei, llm.max_priority_gwei]`.
+### Stored Fields
 
-When a project is created, the service MUST set `projects.priority_gwei` to the Queue Median Hint resolved by `ResolveQueueMedianHint`, clamped into `[min_priority_gwei, max_priority_gwei]`. The create request MUST NOT require the client to supply Cost Level. After creation, only an explicit project update MUST change `priority_gwei`.
+| Field | Required | Meaning |
+|-------|----------|---------|
+| `cost_level_mode` | Yes | `static` or `auto`. Default at create and for migrated existing projects: `static`. |
+| `priority_gwei` | Yes | Static-mode Cost Level as a decimal integer Gwei string. Independent of auto fields. |
+| `auto_queue_position` | Nullable until Auto is configured | Integer in `[0, 100]`. Default at create: `50`. |
+| `auto_max_priority_gwei` | Nullable until Auto is configured | Auto-mode upper cap as a decimal integer Gwei string within `[llm.min_priority_gwei, llm.max_priority_gwei]`. |
 
-Project read APIs MUST return `priority_gwei` as a decimal integer string.
+Switching mode MUST NOT overwrite the other mode's stored values. Project update MUST reject `cost_level_mode` values other than `static` or `auto`. Project update MUST reject a `priority_gwei` or `auto_max_priority_gwei` outside the inclusive range `[llm.min_priority_gwei, llm.max_priority_gwei]`. Project update MUST reject an `auto_queue_position` outside `[0, 100]`. Setting `cost_level_mode` to `auto` MUST be rejected when `auto_max_priority_gwei` is missing or invalid after applying the same update payload.
+
+### Create Defaults
+
+When a project is created, the service MUST:
+
+1. Set `cost_level_mode` to `static`.
+2. Set `priority_gwei` to the Queue Median Hint resolved by `ResolveQueueMedianHint`, clamped into `[min_priority_gwei, max_priority_gwei]`.
+3. Set `auto_queue_position` to `50`.
+4. Set `auto_max_priority_gwei` from one consistent queued-priority snapshot: the live `highest_priority_gwei` when the queue is non-empty and both bounds are present and valid; otherwise `llm.min_priority_gwei`. Clamp the result into `[min_priority_gwei, max_priority_gwei]`.
+
+The create request MUST NOT require the client to supply Cost Level fields. After creation, only an explicit project update MUST change Cost Level fields.
+
+Migration of existing projects MUST set `cost_level_mode` to `static` and MUST preserve the existing `priority_gwei`. Migration MUST NOT invent Auto values for existing projects; `auto_queue_position` and `auto_max_priority_gwei` MAY remain null until the first Auto configuration update.
+
+### Effective Priority Resolution
+
+Before Credits precheck and Task Fee Estimation for an LLM request, the service MUST resolve one effective `priority_gwei` for that request:
+
+1. When `cost_level_mode` is `static`, the effective value MUST be the project's stored `priority_gwei`.
+2. When `cost_level_mode` is `auto`:
+   1. If the live queued-priority snapshot has `queued_task_count > 0` and both `lowest_priority_gwei` and `highest_priority_gwei` are present, positive, and `highest >= lowest`, compute:
+      ```text
+      effective = lowest + floor((highest - lowest) * auto_queue_position / 100)
+      ```
+      using integer arithmetic. The result MUST lie in `[lowest, highest]`.
+   2. Otherwise the effective value MUST be `llm.min_priority_gwei`.
+   3. The service MUST then set `effective = min(effective, auto_max_priority_gwei)`.
+   4. The service MUST clamp the result into `[llm.min_priority_gwei, llm.max_priority_gwei]`.
+3. When `cost_level_mode` is `auto` and `auto_max_priority_gwei` is missing, the request MUST fail as a server error and MUST NOT forward to Bridge.
+
+The resolved effective value MUST be snapshotted onto the LLM job and call record. Settle MUST use that snapshot and MUST NOT re-resolve from the project or live queue.
+
+Project read APIs MUST return `cost_level_mode`, `priority_gwei`, `auto_queue_position` (null when unset), and `auto_max_priority_gwei` (null when unset). `priority_gwei` and `auto_max_priority_gwei` MUST be decimal integer strings when present. Project update MUST be a partial update: omitted Cost Level fields MUST remain unchanged, and a rename that omits Cost Level fields MUST NOT require or clear them.
 
 ## LLM Charging Rules
 
@@ -264,7 +302,7 @@ Each `llm_call_records` row MUST contain:
 * `project_id`
 * `model`
 * `prompt_tokens`, `completion_tokens`, `total_tokens`
-* `priority_gwei` (the project Cost Level used for the charge, as a decimal integer string)
+* `priority_gwei` (the effective Cost Level used for the charge, as a decimal integer string)
 * `status` (success or failed)
 * `duration_ms`
 * `billed_vram` (the resolved effective VRAM in GB used for VRAM weight and Bridge forwarding)
@@ -291,7 +329,7 @@ When Task Fee Estimation fails and the request is aborted before Bridge forwardi
 
 Task fee estimation is part of the shared pre-forward path in [credits-billing.md](./credits-billing.md). The service MUST compute `billable_gwei` once for Credits precheck and task fee, then set `task_fee_gwei = floor(billable_gwei)`. The worker MUST convert the persisted Gwei fee to Wei and send it as the Bridge raw task's final `task_fee`.
 
-The task fee formula MUST use the shared `billable_gwei` defined in [credits-billing.md](./credits-billing.md). Task fee MUST NOT use the live queued-task `median_priority_gwei` as a multiplier.
+The task fee formula MUST use the shared `billable_gwei` defined in [credits-billing.md](./credits-billing.md). Task fee MUST NOT use the live queued-task `median_priority_gwei` as a multiplier. For static mode, task fee MUST NOT use live queue bounds. For auto mode, live queue bounds MAY determine the effective `priority_gwei` only at job create before the snapshot.
 
 ### Formula
 
@@ -314,7 +352,7 @@ task_fee_gwei =
 ```
 
 * `estimated_prompt_tokens` and `max_completion_tokens` MUST be the same values used by the Credits balance precheck.
-* `priority_gwei` MUST be the project's stored Cost Level (`projects.priority_gwei`), snapshotted onto the job at create.
+* `priority_gwei` MUST be the effective Cost Level resolved for the request from the project Cost Level mode, snapshotted onto the job at create.
 * `effective_vram` MUST be the resolved effective VRAM of the request.
 * `base_vram` MUST come from `llm.base_vram`.
 * `vram_weight` MUST be computed locally by Crynux AS. The service MUST NOT query Relay for `vram_weight`.

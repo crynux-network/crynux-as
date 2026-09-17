@@ -17,18 +17,21 @@ import (
 )
 
 type ProjectData struct {
-	ID              uint   `json:"id" description:"The project ID"`
-	Name            string `json:"name" description:"The project name"`
-	EndpointToken   string `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
-	APIKeyPrefix    string `json:"api_key_prefix" description:"The public prefix of the project API key"`
-	PriorityGwei    string `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
-	Status          int8   `json:"status" description:"The project status"`
-	CreatedAt       int64  `json:"created_at" description:"The unix timestamp when the project is created"`
-	LastRequestAt   *int64 `json:"last_request_at" description:"Unix timestamp of the latest finished request that entered usage stats"`
-	RequestCountDay uint64 `json:"request_count_day" description:"Finished request count for the current Unix day"`
-	SuccessCountDay uint64 `json:"success_count_day" description:"Successful request count for the current Unix day"`
-	FailureCountDay uint64 `json:"failure_count_day" description:"Failed request count for the current Unix day"`
-	CreditsDay      string `json:"credits_day" description:"Credits charged for the current Unix day"`
+	ID                  uint   `json:"id" description:"The project ID"`
+	Name                string `json:"name" description:"The project name"`
+	EndpointToken       string `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
+	APIKeyPrefix        string `json:"api_key_prefix" description:"The public prefix of the project API key"`
+	CostLevelMode       string `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
+	PriorityGwei        string `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
+	AutoQueuePosition   *int   `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
+	AutoMaxPriorityGwei *string `json:"auto_max_priority_gwei" description:"Auto Cost Level max priority in Gwei"`
+	Status              int8   `json:"status" description:"The project status"`
+	CreatedAt           int64  `json:"created_at" description:"The unix timestamp when the project is created"`
+	LastRequestAt       *int64 `json:"last_request_at" description:"Unix timestamp of the latest finished request that entered usage stats"`
+	RequestCountDay     uint64 `json:"request_count_day" description:"Finished request count for the current Unix day"`
+	SuccessCountDay     uint64 `json:"success_count_day" description:"Successful request count for the current Unix day"`
+	FailureCountDay     uint64 `json:"failure_count_day" description:"Failed request count for the current Unix day"`
+	CreditsDay          string `json:"credits_day" description:"Credits charged for the current Unix day"`
 }
 
 type ProjectResponse struct {
@@ -73,15 +76,24 @@ func CreateProject(c *gin.Context, in *CreateProjectInput) (*CreateProjectRespon
 		log.Errorf("Error resolving initial project priority: %v", err)
 		return nil, response.NewExceptionResponse(err)
 	}
+	autoMaxPriorityGwei, err := service.InitialProjectAutoMaxPriorityGwei()
+	if err != nil {
+		log.Errorf("Error resolving initial auto max priority: %v", err)
+		return nil, response.NewExceptionResponse(err)
+	}
+	autoQueuePosition := service.DefaultAutoQueuePosition
 
 	project := models.Project{
-		UserID:        user.ID,
-		Name:          in.Name,
-		EndpointToken: endpointToken,
-		APIKeyHash:    utils.HashToken(apiKey),
-		APIKeyPrefix:  apiKeyPrefix(apiKey),
-		PriorityGwei:  models.BigInt{Int: *priorityGwei},
-		Status:        models.ProjectStatusActive,
+		UserID:              user.ID,
+		Name:                in.Name,
+		EndpointToken:       endpointToken,
+		APIKeyHash:          utils.HashToken(apiKey),
+		APIKeyPrefix:        apiKeyPrefix(apiKey),
+		CostLevelMode:       models.CostLevelModeStatic,
+		PriorityGwei:        models.BigInt{Int: *priorityGwei},
+		AutoQueuePosition:   &autoQueuePosition,
+		AutoMaxPriorityGwei: &models.BigInt{Int: *autoMaxPriorityGwei},
+		Status:              models.ProjectStatusActive,
 	}
 
 	db := config.GetDB()
@@ -163,15 +175,26 @@ func GetProject(c *gin.Context, in *GetProjectInput) (*ProjectResponse, error) {
 }
 
 type UpdateProjectInput struct {
-	ProjectID    uint    `path:"project_id" validate:"required" description:"The project ID"`
-	Name         string  `json:"name" validate:"required" description:"The new project name"`
-	PriorityGwei *string `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
+	ProjectID           uint    `path:"project_id" validate:"required" description:"The project ID"`
+	Name                *string `json:"name" description:"The new project name"`
+	CostLevelMode       *string `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
+	PriorityGwei        *string `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
+	AutoQueuePosition   *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
+	AutoMaxPriorityGwei *string `json:"auto_max_priority_gwei" description:"Auto Cost Level max priority in Gwei"`
 }
 
 func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, error) {
 	user, err := currentUser(c)
 	if err != nil {
 		return nil, err
+	}
+
+	if in.Name == nil &&
+		in.CostLevelMode == nil &&
+		in.PriorityGwei == nil &&
+		in.AutoQueuePosition == nil &&
+		in.AutoMaxPriorityGwei == nil {
+		return nil, response.NewValidationErrorResponse("body", "at least one field is required")
 	}
 
 	db := config.GetDB()
@@ -184,6 +207,14 @@ func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, er
 		return nil, response.NewExceptionResponse(err)
 	}
 
+	if in.Name != nil {
+		name := *in.Name
+		if name == "" {
+			return nil, response.NewValidationErrorResponse("name", "name is required")
+		}
+		project.Name = name
+	}
+
 	if in.PriorityGwei != nil {
 		parsed, err := service.ParsePriorityGwei(*in.PriorityGwei)
 		if err != nil {
@@ -192,10 +223,45 @@ func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, er
 		project.PriorityGwei = models.BigInt{Int: *parsed}
 	}
 
+	if in.AutoQueuePosition != nil {
+		parsed, err := service.ParseAutoQueuePosition(*in.AutoQueuePosition)
+		if err != nil {
+			return nil, response.NewValidationErrorResponse("auto_queue_position", err.Error())
+		}
+		project.AutoQueuePosition = &parsed
+	}
+
+	if in.AutoMaxPriorityGwei != nil {
+		parsed, err := service.ParsePriorityGwei(*in.AutoMaxPriorityGwei)
+		if err != nil {
+			return nil, response.NewValidationErrorResponse("auto_max_priority_gwei", err.Error())
+		}
+		project.AutoMaxPriorityGwei = &models.BigInt{Int: *parsed}
+	}
+
+	if in.CostLevelMode != nil {
+		mode, err := service.ParseCostLevelMode(*in.CostLevelMode)
+		if err != nil {
+			return nil, response.NewValidationErrorResponse("cost_level_mode", err.Error())
+		}
+		if mode == models.CostLevelModeAuto {
+			if project.AutoMaxPriorityGwei == nil || project.AutoMaxPriorityGwei.Sign() <= 0 {
+				return nil, response.NewValidationErrorResponse(
+					"auto_max_priority_gwei",
+					"auto_max_priority_gwei is required for auto mode",
+				)
+			}
+			if project.AutoQueuePosition == nil {
+				pos := service.DefaultAutoQueuePosition
+				project.AutoQueuePosition = &pos
+			}
+		}
+		project.CostLevelMode = mode
+	}
+
 	dbCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	project.Name = in.Name
 	if err := db.WithContext(dbCtx).Save(project).Error; err != nil {
 		log.Errorf("Error updating project %d for user %d: %v", in.ProjectID, user.ID, err)
 		return nil, response.NewExceptionResponse(err)
@@ -322,20 +388,31 @@ func findOwnedProject(ctx context.Context, db *gorm.DB, userID, projectID uint) 
 }
 
 func toProjectData(p *models.Project) ProjectData {
-	return ProjectData{
-		ID:              p.ID,
-		Name:            p.Name,
-		EndpointToken:   p.EndpointToken,
-		APIKeyPrefix:    p.APIKeyPrefix,
-		PriorityGwei:    p.PriorityGwei.String(),
-		Status:          int8(p.Status),
-		CreatedAt:       p.CreatedAt.Unix(),
-		LastRequestAt:   p.LastRequestAt,
-		RequestCountDay: p.RequestCountDay,
-		SuccessCountDay: p.SuccessCountDay,
-		FailureCountDay: p.FailureCountDay,
-		CreditsDay:      p.CreditsDay.String(),
+	mode := p.CostLevelMode
+	if mode == "" {
+		mode = models.CostLevelModeStatic
 	}
+	data := ProjectData{
+		ID:                p.ID,
+		Name:              p.Name,
+		EndpointToken:     p.EndpointToken,
+		APIKeyPrefix:      p.APIKeyPrefix,
+		CostLevelMode:     mode,
+		PriorityGwei:      p.PriorityGwei.String(),
+		AutoQueuePosition: p.AutoQueuePosition,
+		Status:            int8(p.Status),
+		CreatedAt:         p.CreatedAt.Unix(),
+		LastRequestAt:     p.LastRequestAt,
+		RequestCountDay:   p.RequestCountDay,
+		SuccessCountDay:   p.SuccessCountDay,
+		FailureCountDay:   p.FailureCountDay,
+		CreditsDay:        p.CreditsDay.String(),
+	}
+	if p.AutoMaxPriorityGwei != nil {
+		value := p.AutoMaxPriorityGwei.String()
+		data.AutoMaxPriorityGwei = &value
+	}
+	return data
 }
 
 func apiKeyPrefix(apiKey string) string {

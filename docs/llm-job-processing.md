@@ -87,7 +87,7 @@ When authentication succeeds but request validation, VRAM resolution, task-fee e
 
 ### Job creation
 
-When the request is accepted for execution, the API MUST create one `llm_jobs` row with status `pending_submit`, create-time snapshots for user, `priority_gwei`, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`.
+When the request is accepted for execution, the API MUST create one `llm_jobs` row with status `pending_submit`, create-time snapshots for user, the resolved effective `priority_gwei`, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`.
 
 For Responses requests with `previous_response_id`, the API MUST resolve the previous job before creating the new job:
 

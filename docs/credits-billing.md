@@ -20,11 +20,15 @@ billable_gwei =
 * `task_fee_gwei = floor(billable_gwei)`
 * `credits = max(1, floor(billable_gwei * credits_per_gwei))`
 
-`priority_gwei` MUST be the project Cost Level stored on `projects.priority_gwei`.
+`priority_gwei` MUST be the effective Cost Level resolved for the request from the project Cost Level mode and snapshotted at job create. For `static` mode that value MUST be `projects.priority_gwei`. For `auto` mode that value MUST be computed from the live queue bounds and the project's `auto_queue_position`, then capped by `auto_max_priority_gwei`, as specified in [llm-api.md](./llm-api.md) Project Cost Level.
 
-The live queued-task `median_priority_gwei`, `highest_priority_gwei`, and `lowest_priority_gwei` MUST be used only for management UI comparison. They MUST NOT enter `billable_gwei`, Credits, or task fee.
+The live queued-task `median_priority_gwei` MUST be used only for management UI comparison and MUST NOT enter `billable_gwei`, Credits, or task fee as a multiplier.
 
-For the same model, token counts, effective VRAM, and project `priority_gwei`, Credits and task fee MUST NOT change when the live queue median or bounds change.
+For `static` mode, the live `highest_priority_gwei` and `lowest_priority_gwei` MUST be used only for management UI comparison. They MUST NOT enter `billable_gwei`, Credits, or task fee.
+
+For `auto` mode, the live `highest_priority_gwei` and `lowest_priority_gwei` MAY determine the effective `priority_gwei` at job create. After the job snapshot is written, later queue changes MUST NOT change that request's Credits or task fee.
+
+For the same model, token counts, effective VRAM, and the same snapshotted effective `priority_gwei`, Credits and task fee MUST NOT change when the live queue median or bounds change after job create.
 
 ## Configuration
 
@@ -78,7 +82,7 @@ The following items MUST NOT appear in configuration and MUST NOT be used for Cr
 |-------|--------|--------|
 | Prompt tokens | `P` | Bridge `usage.prompt_tokens` at settle; precheck estimate before forward |
 | Completion tokens | `C` | Bridge `usage.completion_tokens` at settle; precheck estimate before forward |
-| Project Cost Level | `Prio` | `projects.priority_gwei` at job create; snapshotted on the job and call record |
+| Project Cost Level | `Prio` | Effective `priority_gwei` resolved from the project Cost Level mode at job create; snapshotted on the job and call record |
 | Effective VRAM | `v` | Resolved effective VRAM in GB |
 | Base VRAM | `B` | `llm.base_vram` |
 | Constant seconds | `T0` | Relay LLM execution-time coefficient for `(model, min_vram=v)` |
@@ -109,7 +113,7 @@ credits =
 
 `billable_gwei` and `task_fee_gwei` MUST be computed with floating-point intermediates and MUST truncate toward zero to non-negative integer values. After truncating `floor(billable_gwei * G)` toward zero to a non-negative integer, Credits for a chargeable LLM request MUST be raised to `1` when that truncated value is `0`.
 
-`Prio` MUST be the project's stored `priority_gwei` snapshotted at job create. The service MUST NOT substitute the live queued-task median priority into `Prio`.
+`Prio` MUST be the effective request `priority_gwei` snapshotted at job create. The service MUST NOT substitute the live queued-task median priority into `Prio`. For static mode the service MUST NOT substitute live queue bounds into `Prio`. For auto mode the service MUST resolve `Prio` once before estimation using the Project Cost Level rules in [llm-api.md](./llm-api.md) and MUST NOT re-resolve during settle.
 
 ## Execution-Time Coefficients
 
@@ -120,16 +124,17 @@ The service MUST obtain `T0`, `Tin`, and `Tout` from Relay `GET /v2/models/llm/e
 For each LLM request that requires Credits precheck and task fee, the service MUST run these steps in order:
 
 1. Resolve effective VRAM and precheck token estimates (`P` estimate and `C` estimate).
-2. Fetch and validate execution-time coefficients for `(model, effective_vram)`.
-3. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and `billable_gwei` using the project's snapshotted `priority_gwei`.
-4. Reject with HTTP 402 when the account balance is strictly less than `max(1, floor(billable_gwei * G))`.
-5. Set `task_fee_gwei = floor(billable_gwei)` from the same `billable_gwei`.
-6. Resolve `median_priority_gwei` with the Queue Median Hint rules in [llm-api.md](./llm-api.md). This resolution MUST always produce a value and MUST NOT fail the request.
-7. Persist on the LLM job: `constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `vram_weight`, `task_fee_gwei`, precheck `estimated_node_seconds`, and the resolved `median_priority_gwei` snapshot.
+2. Resolve the request effective `priority_gwei` from the project Cost Level mode as specified in [llm-api.md](./llm-api.md) Project Cost Level.
+3. Fetch and validate execution-time coefficients for `(model, effective_vram)`.
+4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and `billable_gwei` using the request's resolved effective `priority_gwei`.
+5. Reject with HTTP 402 when the account balance is strictly less than `max(1, floor(billable_gwei * G))`.
+6. Set `task_fee_gwei = floor(billable_gwei)` from the same `billable_gwei`.
+7. Resolve `median_priority_gwei` with the Queue Median Hint rules in [llm-api.md](./llm-api.md). This resolution MUST always produce a value and MUST NOT fail the request.
+8. Persist on the LLM job: the resolved effective `priority_gwei`, `constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `vram_weight`, `task_fee_gwei`, precheck `estimated_node_seconds`, and the resolved `median_priority_gwei` snapshot.
 
 Credits precheck and task fee MUST use the same coefficient fetch and the same `billable_gwei`. The service MUST NOT run a Credits precheck that uses a different formula or a second coefficient fetch from the task fee path.
 
-When step 2 fails validation or Relay fetch rules in [llm-api.md](./llm-api.md) Task Fee Estimation Failure, the service MUST NOT forward the request and MUST NOT charge Credits for that attempt.
+When step 3 fails validation or Relay fetch rules in [llm-api.md](./llm-api.md) Task Fee Estimation Failure, the service MUST NOT forward the request and MUST NOT charge Credits for that attempt.
 
 After coefficients and configuration values are validated as usable non-negative finite inputs, computing `billable_gwei`, `task_fee_gwei`, and the Credits precheck amount MUST succeed. The service MUST NOT treat ordinary arithmetic of those validated inputs as a business failure mode.
 
@@ -156,45 +161,101 @@ When the Bridge call succeeds but the account balance is insufficient for the co
 
 ## Cost Level
 
-The project `priority_gwei` is the user Cost Level.
+The effective request `priority_gwei` is the user Cost Level used for charging.
 
 * Credits scale with `Prio`.
 * Task fee scales with `Prio`.
 
-Raising Cost Level MUST increase both Credits and the submitted task fee for the same model and token counts.
+Raising the effective Cost Level MUST increase both Credits and the submitted task fee for the same model and token counts.
 
-The live median priority MUST NOT change Credits or task fee by itself. When the queue becomes more congested, the same Cost Level MUST keep the same task fee and the same Credits; scheduling may become slower until the user raises `priority_gwei`.
+In `static` mode, the live median priority and queue bounds MUST NOT change Credits or task fee by themselves. When the queue becomes more congested, the same stored `priority_gwei` MUST keep the same task fee and the same Credits; scheduling may become slower until the user raises `priority_gwei`.
 
-Project create and update rules for `priority_gwei` are specified in [llm-api.md](./llm-api.md) Project Cost Level.
+In `auto` mode, different requests from the same project MAY resolve different effective `priority_gwei` values when the live queue bounds change. Each request MUST still charge from its own create-time snapshot.
+
+Project create and update rules for Cost Level fields are specified in [llm-api.md](./llm-api.md) Project Cost Level.
 
 ## Cost Level WebUI
 
-The Crynux AS WebUI project Cost Level panel MUST control and display `projects.priority_gwei` as a decimal integer Gwei value.
+The Crynux AS WebUI project Cost Level panel MUST support modes `static` and `auto` with a short explanation for each mode. The mode cards MUST place Auto on the left and Static on the right.
 
-The panel MUST provide:
+* Auto: the system adjusts Cost Level to the user's chosen queue position. Credits for the same task can change, but they never exceed the user's set maximum.
+* Static: the project uses a fixed Cost Level. The same task always spends the same Credits, but tasks may wait too long in the queue.
+
+The Cost Level panel intro copy MUST state that Cost Level controls how many Credits each request spends and how long tasks wait in the queue. That intro MUST appear above the mode cards for every mode. User-facing Cost Level panel copy MUST NOT mention Gwei or task fee in the intro or in the mode card explanations.
+
+The panel MUST persist mode and both mode setting sets independently. Switching mode MUST NOT clear or overwrite the other mode's stored values.
+
+When the Cost Level panel is collapsed, the header preview MUST show a mode tag (`Auto` or `Static`) and the current setting values in a unified layout: Auto MUST show `auto_queue_position` as a percent and `auto_max_priority_gwei` as `position% · max`; Static MUST show only `priority_gwei`.
+
+### Static controls
+
+When mode is `static`, the panel MUST provide:
 
 1. A logarithmic slider bound to `priority_gwei`, mapped on the axis from `min_priority_gwei` to `max_priority_gwei` returned by `GET /v1/llm/billing_config`.
 2. A numeric input bound to the same `priority_gwei`. On blur or save, the value MUST be parsed as a positive decimal integer and clamped into `[min_priority_gwei, max_priority_gwei]`.
 3. A separate queue range bar under the slider when both `highest_priority_gwei` and `lowest_priority_gwei` are present in `billing_config`. The bar MUST map `lowest_priority_gwei` and `highest_priority_gwei` onto the same logarithmic axis as the slider bounds.
 
-The panel MUST NOT read model rows from `GET /v1/llm/pricing_examples` for queue comparison. `pricing_examples` is only for per-model Credits and execution-time example tables.
+Static control layout:
+
+1. The numeric input MUST be on the left of the control group.
+2. The slider MUST be to the right of the numeric input, with a `Cheaper` label left of the track and a `Faster` label right of the track.
+3. The queue range bar MUST sit directly under the slider track.
+4. The queue range bar track MUST share the same width and the same left/right edges as the visible slider track (`SliderTrack`). It MUST NOT extend under `Cheaper`, `Faster`, or the numeric input. It MUST NOT add horizontal padding or inset relative to the slider column. Thumb overhang MUST NOT change the range bar width.
+5. The numeric `priority_gwei` control MUST use a larger type size than the side labels and MUST use the primary highlight text color. Its outer bordered box MUST use a tall fixed control height with flexbox-centered digits around a natural-height input.
+6. The digits MUST be vertically centered inside that outer box. The implementation MUST NOT rely on a tall native `<input>` height plus line-height to center the text.
+7. The numeric box MUST stay left-aligned. The slider-plus-range-bar block MUST occupy about 80% of the remaining row width and MUST be horizontally centered in that remaining space. The queue range bar MUST size to its visible track and Current queue min / Current queue max labels without extra empty height below the labels.
+8. Spacing from the intro text to the mode cards, from the mode cards to the control row, and from the control row to the example tables MUST use the larger panel gaps used by the WebUI Cost Level panel.
 
 Queue range bar rules:
 
-1. Min marker: position of `lowest_priority_gwei` on the log axis.
-2. Max marker: position of `highest_priority_gwei` on the log axis.
-3. When at least one queue bound maps inside `[min_priority_gwei, max_priority_gwei]`, the segment between the clamped Min and Max positions MUST be blue, and the segments outside that interval MUST be red.
+1. Current queue min marker: position of `lowest_priority_gwei` on the log axis. The label under the marker MUST be `Current queue min`.
+2. Current queue max marker: position of `highest_priority_gwei` on the log axis. The label under the marker MUST be `Current queue max`.
+3. When at least one queue bound maps inside `[min_priority_gwei, max_priority_gwei]`, the segment between the clamped Current queue min and Current queue max positions MUST be blue, and the segments outside that interval MUST be red.
 4. When both mapped queue bounds fall outside the allowed range on the same side, the entire bar MUST be red.
-5. The panel MUST NOT draw Min and Max markers on the slider track itself.
+5. The panel MUST NOT draw Current queue min and Current queue max markers on the slider track itself.
 6. The panel MUST NOT show a separate Queue position text block with effective priority, median, or ratio.
 7. The panel MUST NOT present the markers as a queue wait time. The panel MUST NOT estimate queue wait seconds.
 
 When `highest_priority_gwei` or `lowest_priority_gwei` is absent, the panel MUST omit the range bar.
 
-When a project is created, the service MUST set `projects.priority_gwei` to the Queue Median Hint resolved by `ResolveQueueMedianHint`, clamped into `[min_priority_gwei, max_priority_gwei]`. The create request MUST NOT require the client to supply Cost Level.
+### Auto controls
 
-The WebUI Credits and execution-time example tables on the project page MUST recompute when the user changes `priority_gwei`.
+When mode is `auto`, the panel MUST provide two separate setting groups. The groups MUST NOT share one slider. Each group MUST use the same control chrome as Static mode: a left tall numeric input and a right dual-bar block.
 
+#### Queue position group
+
+1. A numeric input and linear slider bound to `auto_queue_position`.
+2. The WebUI MUST clamp `auto_queue_position` into `[1, 99]` for display, editing, and save. Values loaded from the API outside that range MUST be clamped into `[1, 99]` before display.
+3. The dual-bar block MUST place the linear slider above a fixed decorative range bar. The range bar MUST be symmetric: red from `0%` to `10%`, blue from `10%` to `90%`, and red from `90%` to `100%` of the track width. Marker labels under the blue ends MUST be `Queue min` and `Queue max`.
+4. The position slider MUST NOT accept values in the red segments. Its `min` MUST be `1` and its `max` MUST be `99`. The slider track MUST be horizontally inset so value `1` sits on the `Queue min` marker and value `99` sits on the `Queue max` marker; the thumb MUST NOT travel over the red segments.
+
+#### Max Cost Level group
+
+1. A numeric input and logarithmic slider bound to `auto_max_priority_gwei`, using the same hard bounds and parsing/clamping rules as the static Gwei controls.
+2. The dual-bar block MUST match the Static control layout: `Cheaper` / logarithmic slider / `Faster`, with the live Current queue min / Current queue max range bar under the slider when live bounds are present.
+3. When the project has no stored `auto_max_priority_gwei` and the user first selects Auto, the WebUI MUST initialize the cap to the current `highest_priority_gwei` from `billing_config` when present, otherwise `min_priority_gwei`, then save that value with the mode change.
+
+#### Auto control layout
+
+1. The Queue position group MUST appear above the Max Cost Level group.
+2. Each group MUST use a bordered section with a group title (`Queue position`, `Max Cost Level`) and a short group description. The Queue position description MUST state that when each task is sent, the system reads the current queue min and max Cost Level and sets this request's Cost Level from the configured position. The Queue position description MUST NOT say that values outside the blue range are not allowed.
+3. Vertical spacing between the two groups MUST be larger than the spacing inside one dual-bar control.
+4. Inside each group, the numeric input MUST use the Static tall input treatment (`h-20`, primary digits, flex-centered). The dual-bar block MUST occupy about 80% of the remaining row width and MUST be horizontally centered in that remaining space.
+5. The Auto controls MUST NOT allow a Gwei value outside the configured hard bounds.
+6. Spacing from the mode cards to the Auto control block, and from the Auto control block to the example tables, MUST use the same larger panel gaps as Static (`mb-20`).
+
+### Example tables
+
+The panel MUST NOT read model rows from `GET /v1/llm/pricing_examples` for queue comparison. `pricing_examples` is only for per-model Credits and execution-time example tables.
+
+When mode is `static`, the WebUI Credits and execution-time example tables on the project page MUST recompute when the user changes `priority_gwei`. Credits example cells MUST use the current static `priority_gwei`.
+
+When mode is `auto`, Credits example cells MUST use `auto_max_priority_gwei`. The Credits table title MUST be `Maximum Credits per 1M tokens`. The execution-time table MUST remain independent of Cost Level.
+
+The project list MUST distinguish modes:
+
+* Static: show a `Static` mode tag, the stored `priority_gwei`, and the current queue-range status tag derived from that value (`In range`, `Too low`, or `Too high`). The `priority_gwei` number color MUST use a discrete palette: `too_low` and `Slowest`/`Slower` in red, `Balanced` in blue, `Faster`/`Fastest` and `too_high` in yellow. The WebUI MUST NOT use a continuous tone gradient for that color.
+* Auto: show an `Auto` mode tag, the stored `auto_queue_position` as a percent, and the stored `auto_max_priority_gwei` as Max. The list MUST NOT present a previous request's snapshotted effective priority as the current Auto setting.
 ## Relationship to Task Fee
 
 | Quantity | Credits | Task fee |
@@ -205,7 +266,8 @@ The WebUI Credits and execution-time example tables on the project page MUST rec
 | `priority_gwei` (`Prio`) | Yes | Yes |
 | `credits_per_gwei` (`G`) | Yes | No |
 | Live `median_priority_gwei` | No | No |
-| Live `highest_priority_gwei` / `lowest_priority_gwei` | No | No |
+| Live `highest_priority_gwei` / `lowest_priority_gwei` for static mode | No | No |
+| Live `highest_priority_gwei` / `lowest_priority_gwei` for auto effective-priority resolution at job create | Yes, only through resolved `Prio` | Yes, only through resolved `Prio` |
 
 Credits and task fee MUST remain separate ledger outcomes. Credits debit the user Credits balance. Task fee is paid on the Crynux Network through Bridge raw task submission.
 
@@ -277,7 +339,7 @@ For each selected model, coefficients MUST come from Relay execution-time with `
 
 `pricing_prompt_tokens` and `pricing_completion_tokens` MUST both be `1000000`. They are the token counts the UI MUST use for the Credits-per-1M-token Input and Output unit examples.
 
-The WebUI Credits table title MUST be `Credits per 1M tokens`. Column headers MUST be `Model`, `1M Input`, and `1M Output`. The WebUI MUST NOT present the sum of the Input and Output cells as the Credits for one combined request.
+The WebUI Credits table title MUST be `Credits per 1M tokens` in static mode and `Maximum Credits per 1M tokens` in auto mode. Column headers MUST be `Model`, `1M Input`, and `1M Output`. The WebUI MUST NOT present the sum of the Input and Output cells as the Credits for one combined request.
 
 Credits example cells MUST use marginal token work only. They MUST NOT include `constant_seconds` (`T0`):
 
@@ -291,7 +353,7 @@ billable_gwei = Prio * estimated_node_seconds * vram_weight
 credits = floor(billable_gwei * G)
 ```
 
-with `Prio` equal to the project's current `priority_gwei`, `vram_weight = max(min_vram, base_vram) / base_vram` using `base_vram` from `billing_config` and the example row `min_vram`, and `G` from `billing_config`. Pricing-example Credits cells MUST use `floor(billable_gwei * G)` without raising a zero result to `1`. The per-request minimum of `1` Credit applies only to Credits precheck and settle for a real LLM request.
+with `Prio` equal to the project's current static `priority_gwei` when mode is `static`, or the project's `auto_max_priority_gwei` when mode is `auto`, `vram_weight = max(min_vram, base_vram) / base_vram` using `base_vram` from `billing_config` and the example row `min_vram`, and `G` from `billing_config`. Pricing-example Credits cells MUST use `floor(billable_gwei * G)` without raising a zero result to `1`. The per-request minimum of `1` Credit applies only to Credits precheck and settle for a real LLM request.
 
 `time_prompt_tokens` MUST be `512`. `time_completion_tokens` MUST be `2048`. They are the token counts the UI MUST use when showing estimated execution seconds for a typical smaller call. The time example MUST include `constant_seconds`:
 

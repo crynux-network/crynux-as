@@ -40,7 +40,7 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, "", 0, acceptedAt, time.Now(), nil)
+		_ = recordFailedCall(c.Request.Context(), project, "", 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "failed to read request body")
 		return
 	}
@@ -49,14 +49,14 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 	parsed, err := parseLLMJobRequest(body, apiType, int(appCfg.LLM.DefaultMaxTokens))
 	if err != nil {
 		model := extractModelFromBody(body)
-		_ = recordFailedCall(c.Request.Context(), project, model, 0, acceptedAt, time.Now(), nil)
+		_ = recordFailedCall(c.Request.Context(), project, model, 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
 
 	userVram, err := vramlimit.ResolveUserVramLimit(parsed.vramLimit, c.Param("vram_limit"))
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, parsed.model, 0, acceptedAt, time.Now(), nil)
+		_ = recordFailedCall(c.Request.Context(), project, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -72,22 +72,29 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 
 	estPrompt := estimatePromptTokens(body, apiType)
 	maxCompletion := service.ResolveMaxCompletionTokens(parsed.maxTokens, parsed.maxCompletionTokens, appCfg.LLM.DefaultMaxTokens)
+	priorityGwei, err := service.ResolveEffectivePriorityGwei(project)
+	if err != nil {
+		log.Errorf("Resolve effective priority failed for project %d: %v", project.ID, err)
+		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), nil, nil)
+		writeServerError(c)
+		return
+	}
 	taskFee, err := estimateTaskFeeFn(
 		c.Request.Context(),
 		parsed.model,
 		effectiveVram,
-		&project.PriorityGwei.Int,
+		priorityGwei,
 		estPrompt,
 		maxCompletion,
 	)
 	if err != nil {
 		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, parsed.model, err)
-		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), nil)
+		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
 		writeServerError(c)
 		return
 	}
 	if err := service.EnsureSufficientBalance(&account.Balance.Int, taskFee.Credits); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), taskFee)
+		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
 		writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
 		return
 	}
@@ -101,6 +108,7 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		Stream:                parsed.stream,
 		RequestBody:           body,
 		TaskArgsJSON:          parsed.taskArgsJSON,
+		PriorityGwei:          priorityGwei,
 		TaskFeeGwei:           taskFee.TaskFeeGwei,
 		MedianPriorityGwei:    taskFee.MedianPriorityGwei,
 		EstimatedNodeSeconds:  float64Ptr(taskFee.EstimatedNodeSeconds),

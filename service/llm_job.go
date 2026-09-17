@@ -28,6 +28,7 @@ type CreateLLMJobInput struct {
 	Stream                bool
 	RequestBody           []byte
 	TaskArgsJSON          string
+	PriorityGwei          *big.Int
 	TaskFeeGwei           *big.Int
 	MedianPriorityGwei    *big.Int
 	EstimatedNodeSeconds  *float64
@@ -47,11 +48,14 @@ func CreateLLMJob(ctx context.Context, db *gorm.DB, in CreateLLMJobInput) (*mode
 	if in.TaskArgsJSON == "" {
 		return nil, errors.New("task args json is required")
 	}
+	if in.PriorityGwei == nil || in.PriorityGwei.Sign() <= 0 {
+		return nil, errors.New("priority_gwei is required")
+	}
 
 	job := models.LLMJob{
 		ProjectID:    in.Project.ID,
 		UserID:       in.Project.UserID,
-		PriorityGwei: in.Project.PriorityGwei,
+		PriorityGwei: models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
 		APIType:      in.APIType,
 		Model:        in.Model,
 		BilledVram:   in.BilledVram,
@@ -147,6 +151,27 @@ func WaitForLLMJob(ctx context.Context, db *gorm.DB, jobID uint, timeout time.Du
 	}
 }
 
+func fillJobUserAndPriority(ctx context.Context, db *gorm.DB, job *models.LLMJob) error {
+	if job.UserID != 0 && job.PriorityGwei.Sign() != 0 {
+		return nil
+	}
+	project, err := loadProjectByID(ctx, db, job.ProjectID)
+	if err != nil {
+		return err
+	}
+	if job.UserID == 0 {
+		job.UserID = project.UserID
+	}
+	if job.PriorityGwei.Sign() == 0 {
+		effective, err := ResolveEffectivePriorityGwei(project)
+		if err != nil {
+			return err
+		}
+		job.PriorityGwei = models.BigInt{Int: *effective}
+	}
+	return nil
+}
+
 func CompleteAndSettleLLMJob(
 	ctx context.Context,
 	db *gorm.DB,
@@ -161,17 +186,8 @@ func CompleteAndSettleLLMJob(
 	if job.Status == models.LLMJobStatusCompleted && job.BillingStatus == models.LLMJobBillingBilled {
 		return job, nil
 	}
-	if job.UserID == 0 || job.PriorityGwei.Sign() == 0 {
-		project, err := loadProjectByID(ctx, db, job.ProjectID)
-		if err != nil {
-			return nil, err
-		}
-		if job.UserID == 0 {
-			job.UserID = project.UserID
-		}
-		if job.PriorityGwei.Sign() == 0 {
-			job.PriorityGwei = project.PriorityGwei
-		}
+	if err := fillJobUserAndPriority(ctx, db, job); err != nil {
+		return nil, err
 	}
 	if job.UserID == 0 {
 		return nil, errors.New("job user_id is required")
@@ -284,17 +300,8 @@ func FailAndRecordLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob, e
 	if job == nil {
 		return nil, errors.New("job is required")
 	}
-	if job.UserID == 0 || job.PriorityGwei.Sign() == 0 {
-		project, err := loadProjectByID(ctx, db, job.ProjectID)
-		if err != nil {
-			return nil, err
-		}
-		if job.UserID == 0 {
-			job.UserID = project.UserID
-		}
-		if job.PriorityGwei.Sign() == 0 {
-			job.PriorityGwei = project.PriorityGwei
-		}
+	if err := fillJobUserAndPriority(ctx, db, job); err != nil {
+		return nil, err
 	}
 	if job.UserID == 0 {
 		return nil, errors.New("job user_id is required")

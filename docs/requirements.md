@@ -60,7 +60,7 @@ A user account can create multiple projects. Each project has:
 * A name.
 * A unique `endpoint_token`: a cryptographically random string generated at project creation. The private LLM API base URL of the project is `/api/<endpoint_token>/v1`.
 * Exactly one API key: a cryptographically random secret generated at project creation and stored on the project as a key hash and a short public prefix. The plaintext key is shown to the user only once at creation and when reset.
-* A `priority_gwei` Cost Level that scales Credits and the submitted task fee. See [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md) for the bounds, default at create, and charging rules.
+* A Cost Level configuration with mode `static` or `auto`. Static mode stores a fixed `priority_gwei`. Auto mode stores an independent `auto_queue_position` (0–100) and `auto_max_priority_gwei` cap. The effective `priority_gwei` used for Credits and the submitted task fee is resolved at each LLM request and snapshotted on the job. See [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md) for the bounds, defaults, resolution rules, and charging rules.
 * Usage summary fields maintained by the usage stats workers: `last_request_at`, `request_count_day`, `success_count_day`, `failure_count_day`, and `credits_day`. These fields cover the current Unix natural day. `GET /v1/projects` and `GET /v1/projects/:project_id` MUST return them.
 
 Project management APIs:
@@ -75,7 +75,7 @@ A project MUST only be visible to and manageable by its owning account.
 
 ## OpenAI-Compatible LLM API
 
-The detailed endpoint, Bridge forwarding, Cost Level (`priority_gwei`), pricing, balance precheck, and Credits settle rules are specified in [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md).
+The detailed endpoint, Bridge forwarding, Cost Level modes and effective `priority_gwei` resolution, pricing, balance precheck, and Credits settle rules are specified in [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md).
 
 ### Endpoints
 
