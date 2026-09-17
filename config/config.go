@@ -63,6 +63,9 @@ func InitConfig(configPath string) error {
 	if err := checkLLMConfig(); err != nil {
 		return err
 	}
+	if err := checkUsageStatsConfig(); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -196,6 +199,21 @@ func checkLLMConfig() error {
 	return nil
 }
 
+func checkUsageStatsConfig() error {
+	if appConfig.UsageStats.RecentFailureWindowSeconds == 0 {
+		return errors.New("usage_stats.recent_failure_window_seconds is not set")
+	}
+	threshold, err := appConfig.ParseRecentFailureRateThreshold()
+	if err != nil {
+		return fmt.Errorf("usage_stats.recent_failure_rate_threshold is invalid: %w", err)
+	}
+	one := big.NewRat(1, 1)
+	if threshold.Cmp(one) > 0 {
+		return errors.New("usage_stats.recent_failure_rate_threshold must be less than or equal to 1")
+	}
+	return nil
+}
+
 func (cfg *AppConfig) ParseEmptyQueueMedianPriorityGwei() (*big.Int, error) {
 	return parsePositiveDecimalGwei(cfg.LLM.EmptyQueueMedianPriorityGwei)
 }
@@ -210,6 +228,10 @@ func (cfg *AppConfig) ParseMaxPriorityGwei() (*big.Int, error) {
 
 func (cfg *AppConfig) ParseCreditsPerGwei() (*big.Rat, error) {
 	return ParsePositiveDecimalRate(cfg.LLM.CreditsPerGwei)
+}
+
+func (cfg *AppConfig) ParseRecentFailureRateThreshold() (*big.Rat, error) {
+	return ParsePositiveDecimalRate(cfg.UsageStats.RecentFailureRateThreshold)
 }
 
 func parsePositiveDecimalGwei(value string) (*big.Int, error) {

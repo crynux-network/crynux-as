@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crynux_as/config"
 	"crynux_as/models"
 	"errors"
 	"fmt"
@@ -382,6 +383,14 @@ func RefreshProjectUsageSnapshots(ctx context.Context, db *gorm.DB, projectID ui
 			return err
 		}
 
+		windowSeconds := uint64(3600)
+		if cfg := config.GetConfig(); cfg != nil {
+			windowSeconds = cfg.UsageStats.RecentFailureWindowSeconds
+		}
+		if err := refreshProjectRecentFailureWindowCounts(tx, projectID, now, windowSeconds); err != nil {
+			return err
+		}
+
 		var progress models.UsageStatsProgress
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("project_id = ?", projectID).
@@ -472,6 +481,112 @@ func ClearStaleProjectDaySummaries(ctx context.Context, db *gorm.DB, now time.Ti
 		return nil
 	})
 	return cleared, err
+}
+
+const recentFailureWindowRefreshLimit = 20
+
+func recentFailureWindow10m(nowUnix int64, windowSeconds uint64) (int64, int64) {
+	current := TenMinuteStartUnix(nowUnix)
+	buckets := (windowSeconds + 599) / 600
+	if buckets < 1 {
+		buckets = 1
+	}
+	return current - int64(buckets-1)*600, current + 600
+}
+
+func refreshProjectRecentFailureWindowCounts(tx *gorm.DB, projectID uint, nowUnix int64, windowSeconds uint64) error {
+	if windowSeconds == 0 {
+		windowSeconds = 3600
+	}
+	windowStart, windowEnd := recentFailureWindow10m(nowUnix, windowSeconds)
+
+	var project models.Project
+	if err := tx.Select("id", "last_request_at").
+		Where("id = ?", projectID).
+		First(&project).Error; err != nil {
+		return err
+	}
+
+	if project.LastRequestAt == nil || *project.LastRequestAt < windowStart {
+		return tx.Model(&models.Project{}).
+			Where("id = ?", projectID).
+			Updates(map[string]interface{}{
+				"recent_window_success_count": uint64(0),
+				"recent_window_failure_count": uint64(0),
+			}).Error
+	}
+
+	type windowTotals struct {
+		SuccessCount uint64
+		FailureCount uint64
+	}
+	var totals windowTotals
+	if err := tx.Model(&models.ProjectModelUsage10mStat{}).
+		Select("COALESCE(SUM(success_count), 0) AS success_count, COALESCE(SUM(failure_count), 0) AS failure_count").
+		Where("project_id = ? AND period_start >= ? AND period_start < ?", projectID, windowStart, windowEnd).
+		Scan(&totals).Error; err != nil {
+		return err
+	}
+
+	return tx.Model(&models.Project{}).
+		Where("id = ?", projectID).
+		Updates(map[string]interface{}{
+			"recent_window_success_count": totals.SuccessCount,
+			"recent_window_failure_count": totals.FailureCount,
+		}).Error
+}
+
+// RefreshRecentFailureWindowCounts refreshes recent-window success/failure counts for a
+// bounded batch of projects that may still need aging or sliding-window updates.
+func RefreshRecentFailureWindowCounts(ctx context.Context, db *gorm.DB, now time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = recentFailureWindowRefreshLimit
+	}
+	windowSeconds := uint64(3600)
+	if cfg := config.GetConfig(); cfg != nil && cfg.UsageStats.RecentFailureWindowSeconds > 0 {
+		windowSeconds = cfg.UsageStats.RecentFailureWindowSeconds
+	}
+	windowStart, _ := recentFailureWindow10m(now.Unix(), windowSeconds)
+
+	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	var refreshed int
+	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		var projects []models.Project
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "last_request_at").
+			Where(
+				"(recent_window_success_count > 0 OR recent_window_failure_count > 0) OR (last_request_at IS NOT NULL AND last_request_at >= ?)",
+				windowStart,
+			).
+			Order("id ASC").
+			Limit(limit).
+			Find(&projects).Error; err != nil {
+			return err
+		}
+		for _, project := range projects {
+			if err := refreshProjectRecentFailureWindowCounts(tx, project.ID, now.Unix(), windowSeconds); err != nil {
+				return err
+			}
+			refreshed++
+		}
+		return nil
+	})
+	return refreshed, err
+}
+
+// ElevatedRecentFailureRate reports whether failure/(success+failure) is strictly greater than threshold.
+func ElevatedRecentFailureRate(successCount, failureCount uint64, threshold *big.Rat) bool {
+	total := successCount + failureCount
+	if total == 0 || threshold == nil {
+		return false
+	}
+	rate := new(big.Rat).SetFrac(
+		new(big.Int).SetUint64(failureCount),
+		new(big.Int).SetUint64(total),
+	)
+	return rate.Cmp(threshold) > 0
 }
 
 func windowLast1Hour10m(now int64) (int64, int64) {

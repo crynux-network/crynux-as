@@ -74,3 +74,6 @@ llm:
   job_submit_timeout: 600
   job_retention_days: 30
   project_recent_requests_limit: 50
+usage_stats:
+  recent_failure_window_seconds: 3600
+  recent_failure_rate_threshold: "0.2"

@@ -80,4 +80,7 @@ func runUsageStatsSnapshotOnce(ctx context.Context) {
 	if _, err := service.ClearStaleProjectDaySummaries(ctx, db, time.Now(), 20); err != nil {
 		log.Errorf("usage stats stale project day summary clear failed: %v", err)
 	}
+	if _, err := service.RefreshRecentFailureWindowCounts(ctx, db, time.Now(), 20); err != nil {
+		log.Errorf("usage stats recent failure window refresh failed: %v", err)
+	}
 }

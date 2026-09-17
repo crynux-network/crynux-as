@@ -17,21 +17,24 @@ import (
 )
 
 type ProjectData struct {
-	ID                  uint   `json:"id" description:"The project ID"`
-	Name                string `json:"name" description:"The project name"`
-	EndpointToken       string `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
-	APIKeyPrefix        string `json:"api_key_prefix" description:"The public prefix of the project API key"`
-	CostLevelMode       string `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
-	PriorityGwei        string `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
-	AutoQueuePosition   *int   `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
-	AutoMaxPriorityGwei *string `json:"auto_max_priority_gwei" description:"Auto Cost Level max priority in Gwei"`
-	Status              int8   `json:"status" description:"The project status"`
-	CreatedAt           int64  `json:"created_at" description:"The unix timestamp when the project is created"`
-	LastRequestAt       *int64 `json:"last_request_at" description:"Unix timestamp of the latest finished request that entered usage stats"`
-	RequestCountDay     uint64 `json:"request_count_day" description:"Finished request count for the current Unix day"`
-	SuccessCountDay     uint64 `json:"success_count_day" description:"Successful request count for the current Unix day"`
-	FailureCountDay     uint64 `json:"failure_count_day" description:"Failed request count for the current Unix day"`
-	CreditsDay          string `json:"credits_day" description:"Credits charged for the current Unix day"`
+	ID                        uint    `json:"id" description:"The project ID"`
+	Name                      string  `json:"name" description:"The project name"`
+	EndpointToken             string  `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
+	APIKeyPrefix              string  `json:"api_key_prefix" description:"The public prefix of the project API key"`
+	CostLevelMode             string  `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
+	PriorityGwei              string  `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
+	AutoQueuePosition         *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
+	AutoMaxPriorityGwei       *string `json:"auto_max_priority_gwei" description:"Auto Cost Level max priority in Gwei"`
+	Status                    int8    `json:"status" description:"The project status"`
+	CreatedAt                 int64   `json:"created_at" description:"The unix timestamp when the project is created"`
+	LastRequestAt             *int64  `json:"last_request_at" description:"Unix timestamp of the latest finished request that entered usage stats"`
+	RequestCountDay           uint64  `json:"request_count_day" description:"Finished request count for the current Unix day"`
+	SuccessCountDay           uint64  `json:"success_count_day" description:"Successful request count for the current Unix day"`
+	FailureCountDay           uint64  `json:"failure_count_day" description:"Failed request count for the current Unix day"`
+	CreditsDay                string  `json:"credits_day" description:"Credits charged for the current Unix day"`
+	RecentWindowSuccessCount  uint64  `json:"recent_window_success_count" description:"Successful request count in the configured recent failure window"`
+	RecentWindowFailureCount  uint64  `json:"recent_window_failure_count" description:"Failed request count in the configured recent failure window"`
+	ElevatedRecentFailureRate bool    `json:"elevated_recent_failure_rate" description:"True when recent-window failure rate is strictly above the configured threshold"`
 }
 
 type ProjectResponse struct {
@@ -392,21 +395,34 @@ func toProjectData(p *models.Project) ProjectData {
 	if mode == "" {
 		mode = models.CostLevelModeStatic
 	}
+	elevated := false
+	if cfg := config.GetConfig(); cfg != nil {
+		if threshold, err := cfg.ParseRecentFailureRateThreshold(); err == nil {
+			elevated = service.ElevatedRecentFailureRate(
+				p.RecentWindowSuccessCount,
+				p.RecentWindowFailureCount,
+				threshold,
+			)
+		}
+	}
 	data := ProjectData{
-		ID:                p.ID,
-		Name:              p.Name,
-		EndpointToken:     p.EndpointToken,
-		APIKeyPrefix:      p.APIKeyPrefix,
-		CostLevelMode:     mode,
-		PriorityGwei:      p.PriorityGwei.String(),
-		AutoQueuePosition: p.AutoQueuePosition,
-		Status:            int8(p.Status),
-		CreatedAt:         p.CreatedAt.Unix(),
-		LastRequestAt:     p.LastRequestAt,
-		RequestCountDay:   p.RequestCountDay,
-		SuccessCountDay:   p.SuccessCountDay,
-		FailureCountDay:   p.FailureCountDay,
-		CreditsDay:        p.CreditsDay.String(),
+		ID:                        p.ID,
+		Name:                      p.Name,
+		EndpointToken:             p.EndpointToken,
+		APIKeyPrefix:              p.APIKeyPrefix,
+		CostLevelMode:             mode,
+		PriorityGwei:              p.PriorityGwei.String(),
+		AutoQueuePosition:         p.AutoQueuePosition,
+		Status:                    int8(p.Status),
+		CreatedAt:                 p.CreatedAt.Unix(),
+		LastRequestAt:             p.LastRequestAt,
+		RequestCountDay:           p.RequestCountDay,
+		SuccessCountDay:           p.SuccessCountDay,
+		FailureCountDay:           p.FailureCountDay,
+		CreditsDay:                p.CreditsDay.String(),
+		RecentWindowSuccessCount:  p.RecentWindowSuccessCount,
+		RecentWindowFailureCount:  p.RecentWindowFailureCount,
+		ElevatedRecentFailureRate: elevated,
 	}
 	if p.AutoMaxPriorityGwei != nil {
 		value := p.AutoMaxPriorityGwei.String()

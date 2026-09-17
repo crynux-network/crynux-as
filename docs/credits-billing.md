@@ -256,6 +256,8 @@ The project list MUST distinguish modes:
 
 * Static: show a `Static` mode tag, the stored `priority_gwei`, and the current queue-range status tag derived from that value (`In range`, `Too low`, or `Too high`). The `priority_gwei` number color MUST use a discrete palette: `too_low` and `Slowest`/`Slower` in red, `Balanced` in blue, `Faster`/`Fastest` and `too_high` in yellow. The WebUI MUST NOT use a continuous tone gradient for that color.
 * Auto: show an `Auto` mode tag, the stored `auto_queue_position` as a percent, and the stored `auto_max_priority_gwei` as Max. The list MUST NOT present a previous request's snapshotted effective priority as the current Auto setting.
+
+The project list Failed count for the current Unix day MUST use a red number color when `elevated_recent_failure_rate` is true, and MUST use a muted gray number color otherwise.
 ## Relationship to Task Fee
 
 | Quantity | Credits | Task fee |

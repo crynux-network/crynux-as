@@ -86,4 +86,9 @@ type AppConfig struct {
 		JobRetentionDays              uint64 `mapstructure:"job_retention_days"`
 		ProjectRecentRequestsLimit    uint64 `mapstructure:"project_recent_requests_limit"`
 	} `mapstructure:"llm"`
+
+	UsageStats struct {
+		RecentFailureWindowSeconds uint64 `mapstructure:"recent_failure_window_seconds"`
+		RecentFailureRateThreshold string `mapstructure:"recent_failure_rate_threshold"`
+	} `mapstructure:"usage_stats"`
 }

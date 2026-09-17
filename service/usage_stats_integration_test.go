@@ -198,6 +198,13 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	if projectAfter.CreditsDay.Cmp(big.NewInt(42)) != 0 {
 		t.Fatalf("credits_day=%s", projectAfter.CreditsDay.String())
 	}
+	if projectAfter.RecentWindowSuccessCount != 2 || projectAfter.RecentWindowFailureCount != 1 {
+		t.Fatalf(
+			"recent window counts success=%d failure=%d",
+			projectAfter.RecentWindowSuccessCount,
+			projectAfter.RecentWindowFailureCount,
+		)
+	}
 
 	// Retry same batch must process zero.
 	processed, err = RunUsageStatsBaseAggregation(ctx, db)
@@ -448,14 +455,14 @@ func TestDeleteExpiredTerminalLLMJobs(t *testing.T) {
 		Status:       models.LLMJobStatusInProgress,
 	}
 	keepUnsettled := models.LLMJob{
-		ProjectID:    1,
-		UserID:       1,
-		Model:        "m",
-		APIType:      models.LLMAPITypeChatCompletions,
-		TaskArgsJSON: "{}",
-		Status:       models.LLMJobStatusCompleted,
+		ProjectID:     1,
+		UserID:        1,
+		Model:         "m",
+		APIType:       models.LLMAPITypeChatCompletions,
+		TaskArgsJSON:  "{}",
+		Status:        models.LLMJobStatusCompleted,
 		BillingStatus: models.LLMJobBillingPending,
-		CompletedAt:  &old,
+		CompletedAt:   &old,
 	}
 	deleteMe := models.LLMJob{
 		ProjectID:       1,
@@ -532,5 +539,129 @@ func TestFailAndRecordLLMJobSingleTransaction(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("after retry count=%d", count)
+	}
+}
+
+func TestElevatedRecentFailureRate(t *testing.T) {
+	threshold := big.NewRat(1, 5)
+	if ElevatedRecentFailureRate(4, 1, threshold) {
+		t.Fatal("20% must not elevate with strict greater-than threshold")
+	}
+	if !ElevatedRecentFailureRate(3, 1, threshold) {
+		t.Fatal("25% must elevate")
+	}
+	if ElevatedRecentFailureRate(0, 0, threshold) {
+		t.Fatal("empty window must not elevate")
+	}
+	if !ElevatedRecentFailureRate(0, 1, threshold) {
+		t.Fatal("100% failure must elevate")
+	}
+}
+
+func TestRecentFailureWindowCountsAging(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	windowStart, _ := recentFailureWindow10m(now.Unix(), 3600)
+	staleAt := windowStart - 1
+
+	user := models.User{Address: "0xwindow"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID:                   user.ID,
+		Name:                     "window",
+		EndpointToken:            "ep-window",
+		APIKeyHash:               "hash-window",
+		APIKeyPrefix:             "prefix12",
+		PriorityGwei:             models.BigInt{Int: *big.NewInt(10)},
+		Status:                   models.ProjectStatusActive,
+		LastRequestAt:            &staleAt,
+		RecentWindowSuccessCount: 2,
+		RecentWindowFailureCount: 3,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	refreshed, err := RefreshRecentFailureWindowCounts(ctx, db, now, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed != 1 {
+		t.Fatalf("refreshed=%d", refreshed)
+	}
+
+	var after models.Project
+	if err := db.First(&after, project.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.RecentWindowSuccessCount != 0 || after.RecentWindowFailureCount != 0 {
+		t.Fatalf(
+			"aged counts success=%d failure=%d",
+			after.RecentWindowSuccessCount,
+			after.RecentWindowFailureCount,
+		)
+	}
+}
+
+func TestRecentFailureWindowCountsFrom10mStats(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	now := time.Now().UTC()
+	periodStart := TenMinuteStartUnix(now.Unix())
+	accepted := now.Unix()
+
+	user := models.User{Address: "0xrate"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID:        user.ID,
+		Name:          "rate",
+		EndpointToken: "ep-rate",
+		APIKeyHash:    "hash-rate",
+		APIKeyPrefix:  "prefix12",
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
+		Status:        models.ProjectStatusActive,
+		LastRequestAt: &accepted,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.ProjectModelUsage10mStat{
+		ProjectID:    project.ID,
+		UserID:       user.ID,
+		Model:        "m1",
+		PeriodStart:  periodStart,
+		RequestCount: 5,
+		SuccessCount: 3,
+		FailureCount: 2,
+		Credits:      models.BigInt{Int: *big.NewInt(0)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return refreshProjectRecentFailureWindowCounts(tx, project.ID, now.Unix(), 3600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var after models.Project
+	if err := db.First(&after, project.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.RecentWindowSuccessCount != 3 || after.RecentWindowFailureCount != 2 {
+		t.Fatalf(
+			"window counts success=%d failure=%d",
+			after.RecentWindowSuccessCount,
+			after.RecentWindowFailureCount,
+		)
+	}
+
+	threshold := big.NewRat(1, 5)
+	if !ElevatedRecentFailureRate(after.RecentWindowSuccessCount, after.RecentWindowFailureCount, threshold) {
+		t.Fatal("expected elevated failure rate for 2/5")
 	}
 }
