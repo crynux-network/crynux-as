@@ -33,7 +33,8 @@ func Rollback() error {
 }
 
 func InitMigration(db *gorm.DB) {
-	db.Set("gorm:table_options", "CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci")
+	// Set() returns clone=0; Session() keeps table_options while isolating each query Statement.
+	db = db.Set("gorm:table_options", "CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci").Session(&gorm.Session{})
 
 	// Add new migrations here
 	migrationScripts = append(migrationScripts, migrations.M20260723(db))
@@ -50,4 +51,5 @@ func InitMigration(db *gorm.DB) {
 	migrationScripts = append(migrationScripts, migrations.M20260918(db))
 	migrationScripts = append(migrationScripts, migrations.M20260919(db))
 	migrationScripts = append(migrationScripts, migrations.M20260920(db))
+	migrationScripts = append(migrationScripts, migrations.M20260921(db))
 }

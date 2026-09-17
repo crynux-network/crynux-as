@@ -80,7 +80,7 @@ Before editing a migration, check the official documentation for these exact ver
 
 The online system is using MySQL v8.1.0 as the DB server. Make sure the migrations are compatible with it.
 
-MySQL migrations MUST create tables with `CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`. `InitMigration` sets this through `gorm:table_options`. Application MySQL DSNs MUST include `collation=utf8mb4_unicode_ci` and MUST NOT include `charset=`. The Go MySQL driver applies `charset=` as MySQL 8 default `utf8mb4_0900_ai_ci`, which conflicts with table `utf8mb4_unicode_ci` on string UNION queries.
+MySQL migrations MUST create tables with `CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`. `InitMigration` sets this through `gorm:table_options` on a `Session()`-wrapped DB handle. Application MySQL DSNs MUST include `collation=utf8mb4_unicode_ci` and MUST NOT include `charset=`. The Go MySQL driver applies `charset=` as MySQL 8 default `utf8mb4_0900_ai_ci`, which conflicts with table `utf8mb4_unicode_ci` on string UNION queries.
 
 ### Mandatory Local MySQL Testing
 
