@@ -22,6 +22,8 @@ Implemented endpoints:
 
 The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields.
 
+Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. AS MUST map those public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
+
 ## Responses API
 
 ### `POST /api/<endpoint_token>/v1/responses`
@@ -44,6 +46,8 @@ Supported request fields in the first version:
 * function-call and function-call-output history in `input`
 * `background` (`true` returns immediately with `queued` or `in_progress`; `false` waits for completion)
 * `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, `text.format`, and `vram_limit`
+* `chat_template_kwargs`
+* `reasoning.effort`
 
 The service MUST reject unsupported fields with HTTP 400 and the OpenAI invalid-request error shape. Unsupported fields include `stream`, `conversation`, built-in tools, `cancel`, `delete`, and `structured_outputs`.
 

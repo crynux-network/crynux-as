@@ -33,6 +33,7 @@ type ChatCompletionsRequest struct {
 	N                   int                      `json:"n"`
 	Prediction          *CCReqPrediction         `json:"prediction"`
 	ReasoningEffort     string                   `json:"reasoning_effort"`
+	ChatTemplateKwargs  map[string]interface{}   `json:"chat_template_kwargs"`
 	ResponseFormat      map[string]interface{}   `json:"response_format"`
 	StructuredOutputs   bool                     `json:"structured_outputs"`
 	ServiceTier         string                   `json:"service_tier"`
@@ -261,6 +262,7 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 		ToolChoice:       toolChoice,
 		ResponseFormat:   responseFormat,
 		GenerationConfig: generationConfig,
+		TemplateArgs:     buildTemplateArgs(req.ChatTemplateKwargs, req.ReasoningEffort),
 		Seed:             req.Seed,
 		DType:            resolveDType(req.Model),
 	}

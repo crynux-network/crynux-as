@@ -14,6 +14,10 @@ Canonical `tool_choice` MUST be `none`, `auto`, `required`, or one named functio
 
 Assistant tool-call history and tool results MUST retain source order. `previous_response_id` MUST expand the retained previous job into canonical history before the new task is persisted.
 
+Chat Completions and Responses MUST accept public `chat_template_kwargs` as a map. AS MUST copy that map into canonical `template_args` without renaming keys and without selecting keys by model ID.
+
+Chat Completions MUST accept top-level `reasoning_effort`. Responses MUST accept nested `reasoning.effort`. When the corresponding effort value is non-empty and canonical `template_args` does not already contain `enable_thinking`, AS MUST inject `enable_thinking=false` for `"none"` and `enable_thinking=true` for any other non-empty effort value. An explicit `enable_thinking` entry in `chat_template_kwargs` MUST take precedence over that injection. AS MUST NOT translate effort into other template keys such as `thinking`. Templates that do not consume `enable_thinking` MUST receive that injected key unchanged; gpt-task owns whether the selected template accepts, filters, or ignores it. When both public fields are absent or empty, AS MUST omit `template_args`.
+
 ## Raw Task Transport
 
 AS MUST persist the complete canonical request in `llm_jobs.task_args_json`. Its worker MUST submit that exact JSON through Bridge raw-task creation. Bridge and Relay schema validation MUST use the matching gpt-task schema version. Worker MUST deserialize the canonical object and invoke gpt-task without API-specific conversion.

@@ -183,6 +183,9 @@ func normalizeChatResponseFormat(value any) (map[string]interface{}, error) {
 	if !ok {
 		return nil, newValidationError("response_format", "must be an object")
 	}
+	if len(format) == 0 {
+		return nil, nil
+	}
 	formatType, _ := format["type"].(string)
 	switch formatType {
 	case "text":
@@ -219,6 +222,9 @@ func normalizeResponsesTextFormat(value any) (map[string]interface{}, error) {
 	format, ok := value.(map[string]interface{})
 	if !ok {
 		return nil, newValidationError("text.format", "must be an object")
+	}
+	if len(format) == 0 {
+		return nil, nil
 	}
 	formatType, _ := format["type"].(string)
 	switch formatType {

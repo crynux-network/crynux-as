@@ -185,3 +185,47 @@ func TestBuildResponsesHistoryReusesPublishedParsedToolCallID(t *testing.T) {
 		t.Fatalf("call id=%q", history[1].ToolCalls[0].Id)
 	}
 }
+
+func TestBuildResponsesTaskArgsTemplateArgsFromKwargs(t *testing.T) {
+	req, err := ParseResponsesRequest([]byte(`{
+		"model":"qwen/qwen3-8b",
+		"input":"hello",
+		"chat_template_kwargs":{"enable_thinking":false}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskArgsJSON, err := BuildResponsesTaskArgs(req, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args models.GPTTaskArgs
+	if err := json.Unmarshal([]byte(taskArgsJSON), &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.TemplateArgs == nil || args.TemplateArgs["enable_thinking"] != false {
+		t.Fatalf("template_args=%v", args.TemplateArgs)
+	}
+}
+
+func TestBuildResponsesTaskArgsTemplateArgsFromReasoningEffort(t *testing.T) {
+	req, err := ParseResponsesRequest([]byte(`{
+		"model":"qwen/qwen3-8b",
+		"input":"hello",
+		"reasoning":{"effort":"none"}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskArgsJSON, err := BuildResponsesTaskArgs(req, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args models.GPTTaskArgs
+	if err := json.Unmarshal([]byte(taskArgsJSON), &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.TemplateArgs == nil || args.TemplateArgs["enable_thinking"] != false {
+		t.Fatalf("template_args=%v", args.TemplateArgs)
+	}
+}

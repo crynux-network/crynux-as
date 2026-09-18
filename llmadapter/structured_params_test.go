@@ -58,3 +58,98 @@ func TestResponsesTextFormatBecomesCanonicalResponseFormat(t *testing.T) {
 		t.Fatalf("json_schema=%v", definition)
 	}
 }
+
+func TestBuildChatCompletionsTaskArgsTemplateArgsFromKwargs(t *testing.T) {
+	body := []byte(`{
+		"model":"Qwen/Qwen3-8B",
+		"messages":[{"role":"user","content":"hi"}],
+		"chat_template_kwargs":{"enable_thinking":false}
+	}`)
+	taskArgsJSON, _, err := BuildChatCompletionsTaskArgs(body, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args models.GPTTaskArgs
+	if err := json.Unmarshal([]byte(taskArgsJSON), &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.TemplateArgs == nil || args.TemplateArgs["enable_thinking"] != false {
+		t.Fatalf("template_args=%v", args.TemplateArgs)
+	}
+}
+
+func TestBuildChatCompletionsTaskArgsTemplateArgsFromReasoningEffortNone(t *testing.T) {
+	body := []byte(`{
+		"model":"Qwen/Qwen3-8B",
+		"messages":[{"role":"user","content":"hi"}],
+		"reasoning_effort":"none"
+	}`)
+	taskArgsJSON, _, err := BuildChatCompletionsTaskArgs(body, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args models.GPTTaskArgs
+	if err := json.Unmarshal([]byte(taskArgsJSON), &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.TemplateArgs == nil || args.TemplateArgs["enable_thinking"] != false {
+		t.Fatalf("template_args=%v", args.TemplateArgs)
+	}
+}
+
+func TestBuildChatCompletionsTaskArgsTemplateArgsFromReasoningEffortMedium(t *testing.T) {
+	body := []byte(`{
+		"model":"Qwen/Qwen3-8B",
+		"messages":[{"role":"user","content":"hi"}],
+		"reasoning_effort":"medium"
+	}`)
+	taskArgsJSON, _, err := BuildChatCompletionsTaskArgs(body, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args models.GPTTaskArgs
+	if err := json.Unmarshal([]byte(taskArgsJSON), &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.TemplateArgs == nil || args.TemplateArgs["enable_thinking"] != true {
+		t.Fatalf("template_args=%v", args.TemplateArgs)
+	}
+}
+
+func TestBuildChatCompletionsTaskArgsKwargsEnableThinkingOverridesReasoningEffort(t *testing.T) {
+	body := []byte(`{
+		"model":"Qwen/Qwen3-8B",
+		"messages":[{"role":"user","content":"hi"}],
+		"chat_template_kwargs":{"enable_thinking":false},
+		"reasoning_effort":"high"
+	}`)
+	taskArgsJSON, _, err := BuildChatCompletionsTaskArgs(body, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var args models.GPTTaskArgs
+	if err := json.Unmarshal([]byte(taskArgsJSON), &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.TemplateArgs == nil || args.TemplateArgs["enable_thinking"] != false {
+		t.Fatalf("template_args=%v", args.TemplateArgs)
+	}
+}
+
+func TestBuildChatCompletionsTaskArgsOmitsTemplateArgsWhenUnset(t *testing.T) {
+	body := []byte(`{
+		"model":"Qwen/Qwen3-8B",
+		"messages":[{"role":"user","content":"hi"}]
+	}`)
+	taskArgsJSON, _, err := BuildChatCompletionsTaskArgs(body, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["template_args"]; exists {
+		t.Fatalf("expected template_args omitted, got %v", payload["template_args"])
+	}
+}

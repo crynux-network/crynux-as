@@ -108,3 +108,31 @@ type chatGenerationParams struct {
 	RepetitionPenalty   *float64
 	Stop                []string
 }
+
+// buildTemplateArgs maps public chat_template_kwargs and reasoning_effort into
+// canonical GPTTaskArgs.template_args. chat_template_kwargs is copied as-is.
+// When reasoning_effort is set and enable_thinking is absent from the map,
+// "none" injects enable_thinking=false and any other non-empty value injects true.
+func buildTemplateArgs(chatTemplateKwargs map[string]interface{}, reasoningEffort string) map[string]interface{} {
+	var result map[string]interface{}
+	if len(chatTemplateKwargs) > 0 {
+		result = make(map[string]interface{}, len(chatTemplateKwargs)+1)
+		for k, v := range chatTemplateKwargs {
+			result[k] = v
+		}
+	}
+
+	if reasoningEffort != "" {
+		if result == nil {
+			result = make(map[string]interface{}, 1)
+		}
+		if _, exists := result["enable_thinking"]; !exists {
+			result["enable_thinking"] = reasoningEffort != "none"
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}

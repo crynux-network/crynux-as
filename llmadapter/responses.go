@@ -38,7 +38,13 @@ type ResponsesRequest struct {
 	ToolChoice         any                      `json:"tool_choice"`
 	Text               ResponsesText            `json:"text"`
 	ResponseFormat     map[string]interface{}   `json:"-"`
+	ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs"`
+	Reasoning          *ResponsesReasoning      `json:"reasoning"`
 	VramLimit          *uint64                  `json:"vram_limit"`
+}
+
+type ResponsesReasoning struct {
+	Effort string `json:"effort"`
 }
 
 type ResponsesText struct {
@@ -285,6 +291,11 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 		seed = *req.Seed
 	}
 
+	reasoningEffort := ""
+	if req.Reasoning != nil {
+		reasoningEffort = req.Reasoning.Effort
+	}
+
 	taskArgs := models.GPTTaskArgs{
 		Model:            req.Model,
 		Messages:         messages,
@@ -292,6 +303,7 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 		ToolChoice:       req.ToolChoice,
 		ResponseFormat:   req.ResponseFormat,
 		GenerationConfig: generationConfig,
+		TemplateArgs:     buildTemplateArgs(req.ChatTemplateKwargs, reasoningEffort),
 		Seed:             seed,
 		DType:            resolveDType(req.Model),
 	}
