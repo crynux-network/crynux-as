@@ -414,7 +414,7 @@ func extractModelFromBody(body []byte) string {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return ""
 	}
-	return payload.Model
+	return llmadapter.NormalizeModelID(payload.Model)
 }
 
 func loadPreviousResponsesJob(

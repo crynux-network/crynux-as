@@ -213,6 +213,7 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 		return "", ChatCompletionsMeta{}, newValidationError("", "invalid JSON body")
 	}
 	req.setDefaultValues()
+	req.Model = NormalizeModelID(req.Model)
 
 	if req.Model == "" {
 		return "", ChatCompletionsMeta{}, newValidationError("model", "model is required")

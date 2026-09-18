@@ -48,7 +48,7 @@ func resolveMaxNewTokens(maxTokens *int, maxCompletionTokens *int, defaultMaxCom
 }
 
 func resolveDType(model string) models.DType {
-	if strings.HasPrefix(model, "Qwen/Qwen2.5") {
+	if strings.HasPrefix(model, "qwen/qwen2.5") {
 		return models.DTypeBFloat16
 	}
 	return models.DTypeAuto

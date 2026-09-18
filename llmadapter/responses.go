@@ -196,6 +196,7 @@ func ParseResponsesRequest(body []byte) (ResponsesRequest, error) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return ResponsesRequest{}, newValidationError("", "invalid JSON body")
 	}
+	req.Model = NormalizeModelID(req.Model)
 
 	if req.Model == "" {
 		return ResponsesRequest{}, newValidationError("model", "model is required")

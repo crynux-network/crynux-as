@@ -132,6 +132,8 @@ Requests MUST count only finished success and failure calls. Authenticated reque
 
 Credits in usage stats MUST equal processed `credit_events` rows of type LLM charge referenced by call record ID. Token metrics MUST include only calls with `token_usage_applicable = 1`.
 
+Project model Top-10 snapshots MUST use the normalized lowercase `model` stored on call records. Usage stats aggregation MUST NOT apply additional case folding or case-insensitive merging of model names.
+
 Deleting a project MUST set project status to Deleted. Deleted projects MUST NOT appear in list or detail APIs and MUST NOT accept new LLM requests. Existing jobs MUST continue using create-time snapshots. Historical account usage MUST retain Deleted project consumption.
 
 Two background workers MUST run every minute:

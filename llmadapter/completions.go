@@ -93,6 +93,7 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 		return "", CompletionsMeta{}, newValidationError("", "invalid JSON body")
 	}
 	req.setDefaultValues()
+	req.Model = NormalizeModelID(req.Model)
 
 	if req.Model == "" {
 		return "", CompletionsMeta{}, newValidationError("model", "model is required")

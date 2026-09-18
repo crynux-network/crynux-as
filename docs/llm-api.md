@@ -90,7 +90,7 @@ Chat completions, completions, and responses share one `llm_jobs` table and one 
 
 For every LLM request, the service MUST:
 
-1. Parse the public API request into canonical `GPTTaskArgs`, expanding `previous_response_id` history when present.
+1. Parse the public API request into canonical `GPTTaskArgs`, expanding `previous_response_id` history when present. During parsing, the request `model` MUST be normalized to lowercase with surrounding whitespace trimmed. That normalized value MUST be used for fee estimation, VRAM lookup, `llm_jobs.model`, `llm_call_records.model`, canonical `task_args.model`, usage stats, and the public response `model` field.
 2. Create an `llm_jobs` row with status `pending_submit` and the fully expanded `TaskArgsJSON`.
 3. Let the background worker advance unfinished jobs in batches: submit `pending_submit` jobs to Bridge, query ClientTask status for in-flight jobs, download the raw `GPTTaskResponse` for each successful job, format the public API result, and perform one-time Credits settlement before marking the job `completed`.
 4. For chat completions and completions, wait synchronously on the HTTP request until the job reaches a terminal state, then return the formatted JSON body or simulated SSE stream.
