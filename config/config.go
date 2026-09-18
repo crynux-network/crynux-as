@@ -66,6 +66,9 @@ func InitConfig(configPath string) error {
 	if err := checkUsageStatsConfig(); err != nil {
 		return err
 	}
+	if err := checkCreditsConfig(v); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -210,6 +213,13 @@ func checkUsageStatsConfig() error {
 	one := big.NewRat(1, 1)
 	if threshold.Cmp(one) > 0 {
 		return errors.New("usage_stats.recent_failure_rate_threshold must be less than or equal to 1")
+	}
+	return nil
+}
+
+func checkCreditsConfig(v *viper.Viper) error {
+	if !v.IsSet("credits.signup_bonus") {
+		return errors.New("credits.signup_bonus is not set")
 	}
 	return nil
 }

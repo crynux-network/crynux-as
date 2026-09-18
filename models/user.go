@@ -29,8 +29,10 @@ func FindUserByAddress(ctx context.Context, db *gorm.DB, address string) (*User,
 }
 
 // EnsureUserWithCreditAccount returns the user for address, creating the user and a
-// zero-balance credit account in one transaction when the user does not exist.
-func EnsureUserWithCreditAccount(ctx context.Context, db *gorm.DB, address string) (*User, error) {
+// credit account in one transaction when the user does not exist. When signupBonus
+// is greater than zero, the new account balance is set to signupBonus and one
+// processed signup-bonus ledger event is written with RefID equal to the user ID.
+func EnsureUserWithCreditAccount(ctx context.Context, db *gorm.DB, address string, signupBonus uint64) (*User, error) {
 	user, err := FindUserByAddress(ctx, db, address)
 	if err == nil {
 		return user, nil
@@ -52,11 +54,30 @@ func EnsureUserWithCreditAccount(ctx context.Context, db *gorm.DB, address strin
 			return err
 		}
 
+		balance := big.NewInt(0)
+		if signupBonus > 0 {
+			balance = new(big.Int).SetUint64(signupBonus)
+		}
 		account := CreditAccount{
 			UserID:  created.ID,
-			Balance: BigInt{Int: *big.NewInt(0)},
+			Balance: BigInt{Int: *balance},
 		}
-		return tx.Create(&account).Error
+		if err := tx.Create(&account).Error; err != nil {
+			return err
+		}
+
+		if signupBonus == 0 {
+			return nil
+		}
+
+		event := CreditEvent{
+			UserID: created.ID,
+			Amount: BigInt{Int: *new(big.Int).SetUint64(signupBonus)},
+			Type:   CreditEventTypeSignupBonus,
+			RefID:  created.ID,
+			Status: CreditEventStatusProcessed,
+		}
+		return tx.Create(&event).Error
 	})
 	if err != nil {
 		return nil, err

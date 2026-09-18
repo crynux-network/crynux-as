@@ -13,8 +13,9 @@ type CreditAccount struct {
 type CreditEventType int8
 
 const (
-	CreditEventTypeDeposit   CreditEventType = 0
-	CreditEventTypeLLMCharge CreditEventType = 1
+	CreditEventTypeDeposit     CreditEventType = 0
+	CreditEventTypeLLMCharge   CreditEventType = 1
+	CreditEventTypeSignupBonus CreditEventType = 2
 )
 
 type CreditEventStatus int8
@@ -26,9 +27,10 @@ const (
 )
 
 // CreditEvent is the append-only Credits ledger. RefID points to the source
-// record of the event: the deposit ID for deposit events, and the LLM call
-// record ID for LLM charge events. The (Type, RefID) pair is unique so one
-// source record produces at most one ledger event.
+// record of the event: the deposit ID for deposit events, the LLM call record
+// ID for LLM charge events, and the user ID for signup bonus events. The
+// (Type, RefID) pair is unique so one source record produces at most one
+// ledger event.
 type CreditEvent struct {
 	ID        uint              `json:"id" gorm:"primarykey;index:idx_credit_events_user_type_status_id,priority:4"`
 	CreatedAt time.Time         `json:"created_at" gorm:"not null"`

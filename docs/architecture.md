@@ -85,9 +85,11 @@ llm:
 usage_stats:
   recent_failure_window_seconds: 3600
   recent_failure_rate_threshold: "0.2"
+credits:
+  signup_bonus: 1000
 ```
 
-Configuration loading MUST fail with an error when a required item is missing. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. The worker MUST scan only blocks at or below `latest - confirmation_blocks`; `confirmation_blocks` of `0` means scan up to the latest block. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. `relay.base_url` is the public Relay URL for loaded-models, queued-priority, and execution-time fetches. The shared LLM configuration items are specified in [llm-api.md](./llm-api.md). Credits billing and the shared `billable_gwei` / project `priority_gwei` task fee inputs are specified in [credits-billing.md](./credits-billing.md). Job retention and table ownership are specified in [llm-job-processing.md](./llm-job-processing.md). `usage_stats.recent_failure_window_seconds` and `usage_stats.recent_failure_rate_threshold` configure the project recent-failure-window counts and `elevated_recent_failure_rate` flag returned by project list and detail APIs.
+Configuration loading MUST fail with an error when a required item is missing. `credits.signup_bonus` MUST be present and MUST be a non-negative integer; `0` disables the signup bonus. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. The worker MUST scan only blocks at or below `latest - confirmation_blocks`; `confirmation_blocks` of `0` means scan up to the latest block. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. `relay.base_url` is the public Relay URL for loaded-models, queued-priority, and execution-time fetches. The shared LLM configuration items are specified in [llm-api.md](./llm-api.md). Credits billing and the shared `billable_gwei` / project `priority_gwei` task fee inputs are specified in [credits-billing.md](./credits-billing.md). Job retention and table ownership are specified in [llm-job-processing.md](./llm-job-processing.md). `usage_stats.recent_failure_window_seconds` and `usage_stats.recent_failure_rate_threshold` configure the project recent-failure-window counts and `elevated_recent_failure_rate` flag returned by project list and detail APIs.
 
 ## Data Model
 
@@ -135,5 +137,5 @@ The authoritative Credits charging rules are specified in [credits-billing.md](.
 * Every Credits balance change MUST be recorded as a `credit_events` row; the `credit_accounts` balance MUST equal the sum of its processed events.
 * Ledger event creation and the corresponding balance update MUST be committed atomically in one database transaction.
 * Every transaction that updates `credit_accounts.balance` MUST lock that account row with `SELECT ... FOR UPDATE` before reading and writing the balance.
-* Every ledger event references its source record by `ref_id`: the `deposits` row ID for deposit events, and the `llm_call_records` row ID for LLM charge events. The event type + `ref_id` pair is unique; retrying an operation MUST NOT produce a duplicate event.
+* Every ledger event references its source record by `ref_id`: the `deposits` row ID for deposit events, the `llm_call_records` row ID for LLM charge events, and the `users` row ID for signup-bonus events. The event type + `ref_id` pair is unique; retrying an operation MUST NOT produce a duplicate event.
 * Deposit crediting and LLM charging may be delayed, but processed data MUST remain correct and consistent across unexpected exceptions and shutdown.

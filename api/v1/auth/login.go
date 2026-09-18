@@ -47,7 +47,8 @@ func Login(c *gin.Context, in *LoginInput) (*LoginResponse, error) {
 	}
 
 	normalized := common.HexToAddress(in.Address).Hex()
-	if _, err := models.EnsureUserWithCreditAccount(c.Request.Context(), config.GetDB(), normalized); err != nil {
+	signupBonus := config.GetConfig().Credits.SignupBonus
+	if _, err := models.EnsureUserWithCreditAccount(c.Request.Context(), config.GetDB(), normalized, signupBonus); err != nil {
 		log.Errorf("Error ensuring user account for %s: %v", normalized, err)
 		return nil, response.NewExceptionResponse(err)
 	}

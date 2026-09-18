@@ -77,3 +77,5 @@ llm:
 usage_stats:
   recent_failure_window_seconds: 3600
   recent_failure_rate_threshold: "0.2"
+credits:
+  signup_bonus: 1000

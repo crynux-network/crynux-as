@@ -14,6 +14,10 @@ Login MUST use a wallet signature:
 2. `POST /v1/auth/login` receives the address, timestamp, and signature. The server MUST verify that the recovered signer address equals the submitted address and that the timestamp is within the accepted validity window.
 3. On successful verification, the server MUST create the user account if it does not exist, and MUST return a JWT token bound to the wallet address.
 
+When the server creates a new user account, it MUST also create the user's `credit_accounts` row in the same database transaction. When `credits.signup_bonus` is greater than zero, that transaction MUST set the new account balance to `credits.signup_bonus` and MUST write one processed `credit_events` row of type signup bonus with `ref_id` equal to the new user ID and amount equal to `credits.signup_bonus`. When `credits.signup_bonus` is `0`, the new account balance MUST be `0` and the server MUST NOT write a signup-bonus ledger event. An existing user account MUST NOT receive another signup bonus on later logins.
+
+`credits.signup_bonus` MUST be present in configuration. The value MUST be a non-negative integer. The example configuration value is `1000`.
+
 All account and project management APIs MUST require a valid JWT token in the `Authorization: Bearer <token>` header. A request without a valid token MUST be rejected with HTTP 401.
 
 ## Deposits and Credits
@@ -51,7 +55,7 @@ For each detected transfer log, the service MUST:
 3. When the user account exists and the computed Credits is at least `1`, record a deposit row identified by network, transaction hash, and log index. This identity MUST be unique; re-scanning the same log MUST NOT create a second deposit or credit the account twice.
 4. Create a Credits ledger event of type deposit referencing the deposit row ID, and update the account balance.
 
-Deposits and Credits balance changes MUST go through the Credits ledger: every balance change MUST be recorded as a `credit_events` row referencing its source record ID (`ref_id`), and the `credit_accounts` balance MUST equal the sum of its processed events. The event type + `ref_id` pair MUST be unique so one source record produces at most one ledger event.
+Deposits and Credits balance changes MUST go through the Credits ledger: every balance change MUST be recorded as a `credit_events` row referencing its source record ID (`ref_id`), and the `credit_accounts` balance MUST equal the sum of its processed events. The event type + `ref_id` pair MUST be unique so one source record produces at most one ledger event. Signup-bonus events use the user ID as `ref_id`.
 
 ## Projects and Private LLM API Endpoints
 

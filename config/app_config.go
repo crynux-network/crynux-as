@@ -91,4 +91,8 @@ type AppConfig struct {
 		RecentFailureWindowSeconds uint64 `mapstructure:"recent_failure_window_seconds"`
 		RecentFailureRateThreshold string `mapstructure:"recent_failure_rate_threshold"`
 	} `mapstructure:"usage_stats"`
+
+	Credits struct {
+		SignupBonus uint64 `mapstructure:"signup_bonus"`
+	} `mapstructure:"credits"`
 }
