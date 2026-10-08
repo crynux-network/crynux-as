@@ -396,7 +396,11 @@ func taskView(job *models.TaskJob) TaskView {
 	} else if job.Status == models.TaskJobStatusFailed {
 		status = "failed"
 	}
-	return TaskView{ID: job.ID, TaskType: job.TaskType, Status: status, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt}
+	view := TaskView{ID: job.ID, TaskType: job.TaskType, Status: status, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt}
+	if status == "failed" && job.ErrorMessage != nil {
+		view.ErrorMessage = *job.ErrorMessage
+	}
+	return view
 }
 
 func recordFailure(ctx context.Context, project *models.Project, model string, billedVram uint64) {

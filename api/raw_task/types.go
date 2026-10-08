@@ -19,11 +19,12 @@ type CreateTaskRequest struct {
 }
 
 type TaskView struct {
-	ID        uint            `json:"id"`
-	TaskType  models.TaskType `json:"task_type"`
-	Status    string          `json:"status"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID           uint            `json:"id"`
+	TaskType     models.TaskType `json:"task_type"`
+	Status       string          `json:"status"`
+	ErrorMessage string          `json:"error_message,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type BatchCreateRequest struct {

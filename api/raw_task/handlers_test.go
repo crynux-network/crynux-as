@@ -70,4 +70,16 @@ func TestTaskViewMapsInternalStatuses(t *testing.T) {
 	if got := taskView(job).Status; got != "failed" {
 		t.Fatalf("failed status = %q", got)
 	}
+	if got := taskView(job).ErrorMessage; got != "" {
+		t.Fatalf("failed without message error_message = %q", got)
+	}
+	msg := "bridge submit failed: timeout"
+	job.ErrorMessage = &msg
+	if got := taskView(job).ErrorMessage; got != msg {
+		t.Fatalf("failed error_message = %q", got)
+	}
+	job.Status = models.TaskJobStatusCompleted
+	if got := taskView(job).ErrorMessage; got != "" {
+		t.Fatalf("completed error_message = %q", got)
+	}
 }
