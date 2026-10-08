@@ -138,9 +138,11 @@ For streaming chat or completions requests (`stream: true`), the service MUST re
 A request to a private LLM endpoint MUST be authenticated by both:
 
 1. The `endpoint_token` in the URL, which locates the project.
-2. The project API key in the `Authorization: Bearer <api_key>` header, which MUST match the located project's stored key hash.
+2. The `Authorization: Bearer <token>` header, where `<token>` MUST be either:
+   * The project API key, which MUST match the located project's stored key hash, or
+   * A valid JWT issued by Crynux AS for the wallet address that owns the located project.
 
-The project MUST have status active. A request failing any of these checks MUST be rejected with HTTP 401.
+The project MUST have status active. A request failing any of these checks MUST be rejected with HTTP 401. The project API key and an owner JWT MUST grant the same permission to call the project's private endpoints.
 
 ## Model Catalog
 

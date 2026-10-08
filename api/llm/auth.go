@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"crynux_as/api/tools"
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/utils"
@@ -33,8 +34,8 @@ func ProjectAuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		apiKey := strings.TrimSpace(strings.TrimPrefix(authHeader, prefix))
-		if apiKey == "" {
+		token := strings.TrimSpace(strings.TrimPrefix(authHeader, prefix))
+		if token == "" {
 			writeAuthError(c, "missing or invalid authorization header")
 			c.Abort()
 			return
@@ -49,7 +50,7 @@ func ProjectAuthMiddleware() gin.HandlerFunc {
 			Where("endpoint_token = ?", endpointToken).
 			First(&project).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				writeAuthError(c, "invalid endpoint token or api key")
+				writeAuthError(c, "invalid endpoint token or credentials")
 				c.Abort()
 				return
 			}
@@ -69,8 +70,38 @@ func ProjectAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if utils.HashToken(apiKey) != project.APIKeyHash {
-			writeAuthError(c, "invalid endpoint token or api key")
+		if utils.HashToken(token) == project.APIKeyHash {
+			c.Set(projectContextKey, &project)
+			c.Next()
+			return
+		}
+
+		claims, err := tools.ValidateToken(token)
+		if err != nil {
+			writeAuthError(c, "invalid endpoint token or credentials")
+			c.Abort()
+			return
+		}
+
+		user, err := models.FindUserByAddress(dbCtx, db, claims.Address)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				writeAuthError(c, "invalid endpoint token or credentials")
+				c.Abort()
+				return
+			}
+			log.Errorf("Error loading user for project JWT auth: %v", err)
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"error": gin.H{
+					"message": "internal server error",
+					"type":    "server_error",
+				},
+			})
+			return
+		}
+
+		if user.ID != project.UserID {
+			writeAuthError(c, "invalid endpoint token or credentials")
 			c.Abort()
 			return
 		}

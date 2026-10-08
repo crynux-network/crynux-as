@@ -2,7 +2,7 @@
 
 ## Scope and Authentication
 
-Each project MUST expose the Raw Task API under `/api/<endpoint_token>/v1`. Every request MUST use the project API key as `Authorization: Bearer <api_key>`. The endpoint token and API key MUST identify the same active project.
+Each project MUST expose the Raw Task API under `/api/<endpoint_token>/v1`. Every request MUST use `Authorization: Bearer <token>`, where `<token>` MUST be either the project API key or a valid JWT issued by Crynux AS for the wallet address that owns the project. The endpoint token and credentials MUST identify the same active project. The project API key and an owner JWT MUST grant the same permission to call the project's Raw Task endpoints.
 
 The API MUST expose:
 
