@@ -24,9 +24,9 @@ type ProjectRequestData struct {
 	Source           string         `json:"source" description:"job or call_record"`
 	CreatedAt        time.Time      `json:"created_at" description:"When the request was accepted"`
 	Model            string         `json:"model" description:"The model ID used for the call"`
-	PromptTokens     *uint64        `json:"prompt_tokens" description:"Billed prompt token count, null while in progress"`
-	CompletionTokens *uint64        `json:"completion_tokens" description:"Billed completion token count, null while in progress"`
-	TotalTokens      *uint64        `json:"total_tokens" description:"Billed total token count, null while in progress"`
+	PromptTokens     *uint64        `json:"prompt_tokens" description:"Billed prompt token count; null while in progress, for Image tasks, or when token usage does not apply"`
+	CompletionTokens *uint64        `json:"completion_tokens" description:"Billed completion token count; null while in progress, for Image tasks, or when token usage does not apply"`
+	TotalTokens      *uint64        `json:"total_tokens" description:"Billed total token count; null while in progress, for Image tasks, or when token usage does not apply"`
 	PriorityGwei     string         `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
 	Credits          *models.BigInt `json:"credits" description:"Credits charged, null while in progress"`
 	BilledVram       uint64         `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
@@ -44,18 +44,20 @@ type GetProjectRequestsResponse struct {
 }
 
 type projectRequestRow struct {
-	ID               uint
-	Source           string
-	CreatedAt        time.Time
-	Model            string
-	PromptTokens     sql.NullInt64
-	CompletionTokens sql.NullInt64
-	TotalTokens      sql.NullInt64
-	PriorityGwei     string
-	Credits          sql.NullString
-	BilledVram       uint64
-	DurationMs       sql.NullInt64
-	Status           string
+	ID                   uint
+	Source               string
+	CreatedAt            time.Time
+	Model                string
+	PromptTokens         sql.NullInt64
+	CompletionTokens     sql.NullInt64
+	TotalTokens          sql.NullInt64
+	TokenUsageApplicable sql.NullInt64
+	TaskType             sql.NullInt64
+	PriorityGwei         string
+	Credits              sql.NullString
+	BilledVram           uint64
+	DurationMs           sql.NullInt64
+	Status               string
 }
 
 func GetProjectRequests(c *gin.Context, in *GetProjectRequestsInput) (*GetProjectRequestsResponse, error) {
@@ -87,6 +89,8 @@ SELECT
 	prompt_tokens,
 	completion_tokens,
 	total_tokens,
+	token_usage_applicable,
+	task_type,
 	priority_gwei,
 	credits,
 	billed_vram,
@@ -101,6 +105,8 @@ FROM (
 		CAST(NULL AS SIGNED) AS prompt_tokens,
 		CAST(NULL AS SIGNED) AS completion_tokens,
 		CAST(NULL AS SIGNED) AS total_tokens,
+		CAST(NULL AS SIGNED) AS token_usage_applicable,
+		CAST(NULL AS SIGNED) AS task_type,
 		j.priority_gwei AS priority_gwei,
 		CAST(NULL AS CHAR) AS credits,
 		j.billed_vram AS billed_vram,
@@ -128,6 +134,8 @@ FROM (
 		r.prompt_tokens AS prompt_tokens,
 		r.completion_tokens AS completion_tokens,
 		r.total_tokens AS total_tokens,
+		r.token_usage_applicable AS token_usage_applicable,
+		r.task_type AS task_type,
 		r.priority_gwei AS priority_gwei,
 		COALESCE(e.amount, '0') AS credits,
 		r.billed_vram AS billed_vram,
@@ -144,6 +152,8 @@ FROM (
 			prompt_tokens,
 			completion_tokens,
 			total_tokens,
+			token_usage_applicable,
+			task_type,
 			priority_gwei,
 			billed_vram,
 			duration_ms,
@@ -194,13 +204,7 @@ LIMIT ?
 			Status:       row.Status,
 		}
 		if row.Source == "call_record" {
-			promptTokens := uint64(row.PromptTokens.Int64)
-			completionTokens := uint64(row.CompletionTokens.Int64)
-			totalTokens := uint64(row.TotalTokens.Int64)
 			durationMs := uint64(row.DurationMs.Int64)
-			item.PromptTokens = &promptTokens
-			item.CompletionTokens = &completionTokens
-			item.TotalTokens = &totalTokens
 			item.DurationMs = &durationMs
 			creditsValue := big.NewInt(0)
 			if row.Credits.Valid && row.Credits.String != "" {
@@ -210,6 +214,18 @@ LIMIT ?
 			}
 			credits := models.BigInt{Int: *creditsValue}
 			item.Credits = &credits
+			tokenUsageApplicable := row.TokenUsageApplicable.Valid && row.TokenUsageApplicable.Int64 != 0
+			if row.TaskType.Valid && models.TaskType(row.TaskType.Int64) == models.TaskTypeImage {
+				tokenUsageApplicable = false
+			}
+			if tokenUsageApplicable {
+				promptTokens := uint64(row.PromptTokens.Int64)
+				completionTokens := uint64(row.CompletionTokens.Int64)
+				totalTokens := uint64(row.TotalTokens.Int64)
+				item.PromptTokens = &promptTokens
+				item.CompletionTokens = &completionTokens
+				item.TotalTokens = &totalTokens
+			}
 		}
 		requests = append(requests, item)
 	}

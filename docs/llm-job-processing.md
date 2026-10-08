@@ -153,7 +153,7 @@ The handler MUST run one MySQL statement that:
 3. left-joins processed task charge events only to that bounded call-record candidate set
 4. unions the two candidate sets and applies the final limit with deterministic descending order by accepted/created time, source, and id
 
-In-progress items MUST return null for tokens, duration, and credits. Finished items MUST return credits from the processed event amount, or `0` when no event exists.
+In-progress items MUST return null for tokens, duration, and credits. Finished items MUST return credits from the processed event amount, or `0` when no event exists. Finished items MUST return null for `prompt_tokens`, `completion_tokens`, and `total_tokens` when `token_usage_applicable` is unset or the call is an Image task. Image call records MUST store `token_usage_applicable = 0` for both success and failure.
 
 Each item MUST include `source` (`job` or `call_record`) and numeric `id`. Clients MUST treat `(source, id)` as the stable row key.
 
