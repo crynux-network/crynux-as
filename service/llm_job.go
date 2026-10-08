@@ -83,7 +83,6 @@ func CreateTaskJob(ctx context.Context, db *gorm.DB, in CreateTaskJobInput) (*mo
 		Model:        in.Model,
 		BilledVram:   in.BilledVram,
 		MinVram:      &in.BilledVram,
-		RepeatNum:    1,
 		Background:   in.Background,
 		Stream:       in.Stream,
 		RequestBody:  in.RequestBody,
@@ -238,9 +237,6 @@ func CompleteAndSettleTaskJob(
 	)
 	if err != nil {
 		return nil, err
-	}
-	if job.RepeatNum > 1 {
-		credits.Mul(credits, new(big.Int).SetUint64(job.RepeatNum))
 	}
 
 	now := time.Now()

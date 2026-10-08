@@ -11,7 +11,7 @@ This document is the authority for `task_jobs`, `task_call_records`, `credit_eve
 Each row MUST contain:
 
 * project and user ownership
-* task type, API type, model, hardware selection, repeat count, and canonical `TaskArgsJSON`
+* task type, API type, model, hardware selection, and canonical `TaskArgsJSON`
 * Bridge client task ID when submitted
 * execution status and billing status
 * raw result JSON and formatted result JSON when available

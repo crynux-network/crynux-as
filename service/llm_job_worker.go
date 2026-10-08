@@ -134,7 +134,6 @@ func submitPendingTaskJobs(
 		if job.MinVram != nil {
 			minVram = *job.MinVram
 		}
-		repeatNum := int(job.RepeatNum)
 		validJobs = append(validJobs, job)
 		requests = append(requests, bridge.CreateRawTaskRequest{
 			TaskArgs:        job.TaskArgsJSON,
@@ -143,7 +142,6 @@ func submitPendingTaskJobs(
 			MinVram:         minVram,
 			RequiredGPU:     job.RequiredGPU,
 			RequiredGPUVram: job.RequiredGPUVram,
-			RepeatNum:       &repeatNum,
 			TaskFee:         taskFeeWei.String(),
 		})
 	}

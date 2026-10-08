@@ -45,7 +45,6 @@ type CalcImageTaskFeeInput struct {
 	Query         relay.ExecutionTimeQuery
 	PriorityGwei  *big.Int
 	EffectiveVram uint64
-	RepeatNum     uint64
 }
 
 type imageTaskArgs struct {
@@ -108,9 +107,6 @@ func CalcBillableGwei(in CalcBillableInput) (*CalcBillableResult, error) {
 }
 
 func EstimateImageTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcTaskFeeResult, error) {
-	if in.RepeatNum == 0 {
-		return nil, errors.New("repeat_num must be positive")
-	}
 	units, err := imagePixelStepUnits(in.TaskArgs)
 	if err != nil {
 		return nil, err
@@ -149,7 +145,6 @@ func EstimateImageTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcT
 	if err != nil {
 		return nil, err
 	}
-	credits.Mul(credits, new(big.Int).SetUint64(in.RepeatNum))
 	median, err := ResolveQueueMedianHint()
 	if err != nil {
 		return nil, err

@@ -252,13 +252,6 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if !json.Valid([]byte(request.TaskArgs)) {
 		return nil, errors.New("task_args must be valid JSON")
 	}
-	repeatNum := uint64(1)
-	if request.RepeatNum != nil {
-		repeatNum = *request.RepeatNum
-	}
-	if repeatNum == 0 {
-		return nil, errors.New("repeat_num must be greater than 0")
-	}
 	hasGPUName := strings.TrimSpace(request.RequiredGPU) != ""
 	hasGPUVram := request.RequiredGPUVram > 0
 	if request.MinVram != nil && (hasGPUName || hasGPUVram) {
@@ -307,13 +300,12 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if *request.TaskType == models.TaskTypeImage {
 		estimate, err = service.EstimateImageTaskFee(ctx, service.CalcImageTaskFeeInput{
 			TaskArgs: request.TaskArgs, Query: query, PriorityGwei: priority,
-			EffectiveVram: billedVram, RepeatNum: repeatNum,
+			EffectiveVram: billedVram,
 		})
 	} else {
 		promptTokens := uint64((utf8.RuneCountInString(request.TaskArgs) + 3) / 4)
 		estimate, err = service.EstimateLLMTaskFeeWithQuery(ctx, query, billedVram, priority, promptTokens, maxTokens)
 		if err == nil {
-			estimate.Credits.Mul(estimate.Credits, new(big.Int).SetUint64(repeatNum))
 			llmBilling = &models.LLMTaskBillingData{
 				VramWeight: estimate.VramWeight, ConstantSeconds: estimate.ConstantSeconds,
 				SecondsPerInputToken:  estimate.SecondsPerInputToken,
@@ -328,7 +320,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	taskFeeWei := new(big.Int).Mul(estimate.TaskFeeGwei, big.NewInt(weiPerGwei))
 	return &preparedTask{
 		request: request, model: model, taskArgs: request.TaskArgs, minVram: minVram,
-		billedVram: billedVram, repeatNum: repeatNum, priority: priority.String(),
+		billedVram: billedVram, priority: priority.String(),
 		taskFeeWei: taskFeeWei.String(), credits: estimate.Credits.String(), llmBilling: llmBilling,
 	}, nil
 }
@@ -379,7 +371,7 @@ func createPreparedTask(ctx context.Context, project *models.Project, prepared *
 		Project: project, TaskType: *prepared.request.TaskType, Model: prepared.model,
 		TaskArgsJSON: prepared.taskArgs, TaskVersion: prepared.request.TaskVersion,
 		MinVram: prepared.minVram, RequiredGPU: prepared.request.RequiredGPU,
-		RequiredGPUVram: prepared.request.RequiredGPUVram, RepeatNum: prepared.repeatNum,
+		RequiredGPUVram: prepared.request.RequiredGPUVram,
 		PriorityGwei: priority, BilledVram: prepared.billedVram, TaskFeeWei: fee,
 		LLMBilling: prepared.llmBilling, ImageCredits: credits,
 	})

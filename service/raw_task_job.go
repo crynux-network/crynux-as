@@ -20,7 +20,6 @@ type CreateRawTaskJobInput struct {
 	MinVram         *uint64
 	RequiredGPU     string
 	RequiredGPUVram uint64
-	RepeatNum       uint64
 	PriorityGwei    *big.Int
 	BilledVram      uint64
 	TaskFeeWei      *big.Int
@@ -44,8 +43,8 @@ func CreateRawTaskJob(ctx context.Context, db *gorm.DB, in CreateRawTaskJobInput
 	if in.TaskFeeWei == nil || in.TaskFeeWei.Sign() < 0 {
 		return nil, errors.New("task_fee_wei is required")
 	}
-	if in.BilledVram == 0 || in.RepeatNum == 0 {
-		return nil, errors.New("billed_vram and repeat_num must be positive")
+	if in.BilledVram == 0 {
+		return nil, errors.New("billed_vram must be positive")
 	}
 	billing := models.TaskBillingData{
 		Version:      models.TaskBillingDataVersion,
@@ -77,7 +76,6 @@ func CreateRawTaskJob(ctx context.Context, db *gorm.DB, in CreateRawTaskJobInput
 		MinVram:         in.MinVram,
 		RequiredGPU:     in.RequiredGPU,
 		RequiredGPUVram: in.RequiredGPUVram,
-		RepeatNum:       in.RepeatNum,
 		Status:          models.TaskJobStatusPendingSubmit,
 		BillingStatus:   models.TaskJobBillingPending,
 		BillingData:     billingJSON,

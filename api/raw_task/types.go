@@ -13,10 +13,9 @@ type CreateTaskRequest struct {
 	TaskType        *models.TaskType `json:"task_type"`
 	TaskVersion     *string          `json:"task_version,omitempty"`
 	MinVram         *uint64          `json:"min_vram,omitempty"`
-	RequiredGPU     string           `json:"required_gpu,omitempty"`
-	RequiredGPUVram uint64           `json:"required_gpu_vram,omitempty"`
-	RepeatNum       *uint64          `json:"repeat_num,omitempty"`
-	TaskFee         json.RawMessage  `json:"task_fee,omitempty"`
+	RequiredGPU     string          `json:"required_gpu,omitempty"`
+	RequiredGPUVram uint64          `json:"required_gpu_vram,omitempty"`
+	TaskFee         json.RawMessage `json:"task_fee,omitempty"`
 }
 
 type TaskView struct {
@@ -53,7 +52,6 @@ type preparedTask struct {
 	taskArgs   string
 	minVram    *uint64
 	billedVram uint64
-	repeatNum  uint64
 	priority   string
 	taskFeeWei string
 	credits    string

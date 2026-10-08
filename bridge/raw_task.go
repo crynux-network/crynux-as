@@ -33,7 +33,6 @@ type CreateRawTaskRequest struct {
 	MinVram         uint64  `json:"min_vram,omitempty"`
 	RequiredGPU     string  `json:"required_gpu,omitempty"`
 	RequiredGPUVram uint64  `json:"required_gpu_vram,omitempty"`
-	RepeatNum       *int    `json:"repeat_num,omitempty"`
 	TaskFee         string  `json:"task_fee"`
 }
 

@@ -155,7 +155,7 @@ After a successful Bridge response:
 4. When the computed Credits are greater than zero and the account balance is sufficient, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by the same amount in the same database transaction. The event amount is the sole permanent store of the charged Credits. Because Credits for a successful chargeable settle MUST be at least `1`, a sufficient balance MUST produce a ledger event.
 5. The service MUST mark the LLM job `completed` only after steps 1 through 4 succeed.
 
-For a Raw Image task, AS MUST persist the create-time settlement Credits in the versioned job billing data. Successful settle MUST use that persisted amount and MUST NOT fetch coefficients or read current configuration. For both LLM and Image tasks, `repeat_num` MUST multiply final Credits while the submitted `task_fee` remains the per-primary-task Wei fee expected by Bridge.
+For a Raw Image task, AS MUST persist the create-time settlement Credits in the versioned job billing data. Successful settle MUST use that persisted amount and MUST NOT fetch coefficients or read current configuration. The submitted `task_fee` MUST be the Wei fee expected by Bridge for one network task.
 
 Settle MUST NOT re-fetch Relay coefficients for the charge. Settle MUST NOT recompute or replace the already submitted `task_fee_gwei`. The full transaction ownership rules are specified in [llm-job-processing.md](./llm-job-processing.md).
 
