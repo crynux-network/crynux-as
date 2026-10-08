@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"crynux_as/config"
+	"crynux_as/relay"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -36,6 +38,23 @@ type CalcTaskFeeResult struct {
 	ConstantSeconds       float64
 	SecondsPerInputToken  float64
 	SecondsPerOutputToken float64
+}
+
+type CalcImageTaskFeeInput struct {
+	TaskArgs      string
+	Query         relay.ExecutionTimeQuery
+	PriorityGwei  *big.Int
+	EffectiveVram uint64
+	RepeatNum     uint64
+}
+
+type imageTaskArgs struct {
+	TaskConfig struct {
+		NumImages   uint64 `json:"num_images"`
+		ImageWidth  uint64 `json:"image_width"`
+		ImageHeight uint64 `json:"image_height"`
+		Steps       uint64 `json:"steps"`
+	} `json:"task_config"`
 }
 
 // CalcBillableGwei computes shared billable_gwei from project Cost Level
@@ -86,6 +105,81 @@ func CalcBillableGwei(in CalcBillableInput) (*CalcBillableResult, error) {
 		EstimatedNodeSeconds: estimatedNodeSeconds,
 		VramWeight:           vramWeight,
 	}, nil
+}
+
+func EstimateImageTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcTaskFeeResult, error) {
+	if in.RepeatNum == 0 {
+		return nil, errors.New("repeat_num must be positive")
+	}
+	units, err := imagePixelStepUnits(in.TaskArgs)
+	if err != nil {
+		return nil, err
+	}
+	coefficients, err := GetSDExecutionTime(ctx, in.Query)
+	if err != nil {
+		return nil, fmt.Errorf("fetch image execution-time: %w", err)
+	}
+	if math.IsNaN(coefficients.OverheadSeconds) ||
+		math.IsInf(coefficients.OverheadSeconds, 0) ||
+		coefficients.OverheadSeconds < 0 ||
+		math.IsNaN(coefficients.SecondsPerSDPixelStep) ||
+		math.IsInf(coefficients.SecondsPerSDPixelStep, 0) ||
+		coefficients.SecondsPerSDPixelStep < 0 {
+		return nil, errors.New("image execution-time coefficients must be finite and non-negative")
+	}
+	seconds := coefficients.OverheadSeconds + float64(units)*coefficients.SecondsPerSDPixelStep
+	if seconds < 1 {
+		seconds = 1
+	}
+	appCfg := config.GetConfig()
+	billable, err := CalcBillableGwei(CalcBillableInput{
+		PriorityGwei:    in.PriorityGwei,
+		EffectiveVram:   in.EffectiveVram,
+		BaseVram:        appCfg.LLM.BaseVRAM,
+		ConstantSeconds: seconds,
+	})
+	if err != nil {
+		return nil, err
+	}
+	rate, err := appCfg.ParseCreditsPerGwei()
+	if err != nil {
+		return nil, err
+	}
+	credits, err := CalcCreditsFromBillable(billable.BillableGwei, rate)
+	if err != nil {
+		return nil, err
+	}
+	credits.Mul(credits, new(big.Int).SetUint64(in.RepeatNum))
+	median, err := ResolveQueueMedianHint()
+	if err != nil {
+		return nil, err
+	}
+	return &CalcTaskFeeResult{
+		TaskFeeGwei:          billable.TaskFeeGwei,
+		Credits:              credits,
+		MedianPriorityGwei:   median,
+		EstimatedNodeSeconds: seconds,
+		VramWeight:           billable.VramWeight,
+	}, nil
+}
+
+func imagePixelStepUnits(taskArgs string) (uint64, error) {
+	var args imageTaskArgs
+	if err := json.Unmarshal([]byte(taskArgs), &args); err != nil {
+		return 0, fmt.Errorf("parse image task args: %w", err)
+	}
+	cfg := args.TaskConfig
+	if cfg.NumImages == 0 || cfg.ImageWidth == 0 || cfg.ImageHeight == 0 || cfg.Steps == 0 {
+		return 0, errors.New("num_images, image_width, image_height, and steps must be positive")
+	}
+	units := cfg.NumImages
+	for _, factor := range []uint64{cfg.ImageWidth, cfg.ImageHeight, cfg.Steps} {
+		if units > math.MaxUint64/factor {
+			return 0, errors.New("image pixel-step units overflow uint64")
+		}
+		units *= factor
+	}
+	return units, nil
 }
 
 func billableFromParts(
@@ -207,13 +301,32 @@ func EstimateTaskFee(
 	estimatedPromptTokens uint64,
 	maxCompletionTokens uint64,
 ) (*CalcTaskFeeResult, error) {
+	query := relay.ExecutionTimeQuery{Model: model, MinVRAM: &effectiveVram}
+	return EstimateLLMTaskFeeWithQuery(
+		ctx,
+		query,
+		effectiveVram,
+		priorityGwei,
+		estimatedPromptTokens,
+		maxCompletionTokens,
+	)
+}
+
+func EstimateLLMTaskFeeWithQuery(
+	ctx context.Context,
+	query relay.ExecutionTimeQuery,
+	effectiveVram uint64,
+	priorityGwei *big.Int,
+	estimatedPromptTokens uint64,
+	maxCompletionTokens uint64,
+) (*CalcTaskFeeResult, error) {
 	appCfg := config.GetConfig()
 	rate, err := appCfg.ParseCreditsPerGwei()
 	if err != nil {
 		return nil, fmt.Errorf("parse credits_per_gwei: %w", err)
 	}
 
-	coefficients, err := GetLLMExecutionTime(ctx, model, effectiveVram)
+	coefficients, err := GetLLMExecutionTimeForQuery(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("fetch llm execution-time: %w", err)
 	}

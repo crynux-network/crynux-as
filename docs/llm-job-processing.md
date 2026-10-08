@@ -1,68 +1,68 @@
-# LLM Job Processing
+# Task Job Processing
 
-This document is the authority for `llm_jobs`, `llm_call_records`, `credit_events`, and `credit_accounts` ownership during LLM request processing. API field contracts remain in [llm-api.md](./llm-api.md). Credits formulas remain in [credits-billing.md](./credits-billing.md). System structure remains in [architecture.md](./architecture.md).
+This document is the authority for `task_jobs`, `task_call_records`, `credit_events`, and `credit_accounts` ownership during task request processing. API field contracts remain in [llm-api.md](./llm-api.md). Credits formulas remain in [credits-billing.md](./credits-billing.md). System structure remains in [architecture.md](./architecture.md).
 
 ## Table Responsibilities
 
-### `llm_jobs`
+### `task_jobs`
 
-`llm_jobs` MUST store execution state for an accepted LLM request while the job remains within the configured retention window.
+`task_jobs` MUST store execution state for an accepted task request while the job remains within the configured retention window.
 
 Each row MUST contain:
 
 * project and user ownership
-* API type, model, billed effective VRAM, request body, and fully expanded canonical `TaskArgsJSON`
+* task type, API type, model, hardware selection, repeat count, and canonical `TaskArgsJSON`
 * Bridge client task ID when submitted
 * execution status and billing status
 * raw result JSON and formatted result JSON when available
-* pre-submit task-fee fields and execution-time coefficients used for later settle
+* versioned `billing_data` with common `priority_gwei`, billed VRAM, and `task_fee_wei`; LLM token-settlement coefficients or the fixed Image settlement Credits
 * optional Responses public ID
-* `llm_call_record_id` after the terminal settle or failure record transaction commits
+* `task_call_record_id` after the terminal settle or failure record transaction commits
 * `started_at` and `completed_at` when set
 
-`llm_jobs` MUST NOT be the permanent store of billed token counts. Final prompt, completion, and total token counts MUST live only on `llm_call_records`.
+`task_jobs` MUST NOT be the permanent store of billed token counts. Final prompt, completion, and total token counts MUST live only on `task_call_records`.
 
 Retention:
 
-* Terminal jobs with status `completed` and billing status `billed`, or status `failed` and billing status `not_billed`, and with a non-null `llm_call_record_id`, MUST be deleted when `completed_at` is older than `llm.job_retention_days`.
+* Terminal jobs with status `completed` and billing status `billed`, or status `failed` and billing status `not_billed`, and with a non-null `task_call_record_id`, MUST be deleted when `completed_at` is older than `llm.job_retention_days`.
 * Non-terminal jobs, terminal jobs without a call record, and jobs still pending billing MUST NOT be deleted.
 * The retention cleanup worker MUST select a bounded batch of candidate IDs through the terminal cleanup index, delete only that batch in one transaction, and repeat until a batch deletes fewer than the batch size.
 
-### `llm_call_records`
+### `task_call_records`
 
-`llm_call_records` MUST permanently store one finished call for usage stats, Recent Requests finished rows, Charges join targets, and Credits recalculation inputs.
+`task_call_records` MUST permanently store one finished call for usage stats, Recent Requests finished rows, and Charges join targets.
 
 Each row MUST contain:
 
-* account `user_id` snapshot, project, model, and optional unique `llm_job_id`
+* account `user_id` snapshot, project, task type, API type, model, and optional unique `task_job_id`
 * final status (`success` or `failed`)
 * prompt, completion, and total token counts when token usage applies
 * `token_usage_applicable`
 * `priority_gwei`
 * `accepted_at`, `completed_at`, and `duration_ms = completed_at - accepted_at`
 * billed effective VRAM
-* optional pre-submit task-fee fields (`task_fee_gwei`, `median_priority_gwei`, `estimated_node_seconds`, `vram_weight`)
-* for settled success charges, the Credits recalculation snapshot: `constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, and `credits_per_gwei`
 
-`llm_call_records` MUST NOT store request bodies, prompts, completions, result bodies, or the actual Credits amount charged.
+`task_call_records` MUST NOT store request bodies, prompts, completions, result bodies, pricing coefficients, task fee, queue median, estimated seconds, or the actual Credits amount charged.
 
-`llm_job_id` MUST remain as the source identifier and settle dedupe key. It is not a foreign key. After a job is deleted, the call record MUST keep `llm_job_id` unchanged.
+`task_job_id` MUST remain as the source identifier and settle dedupe key. It is not a foreign key. After a job is deleted, the call record MUST keep `task_job_id` unchanged.
 
 ### `credit_events`
 
 `credit_events` MUST permanently store every actual Credits balance change.
 
-For LLM charging:
+For task charging:
 
-* A processed LLM charge event MUST reference the call record ID in `ref_id`.
+* A processed task charge event MUST reference the call record ID in `ref_id`.
 * The event `amount` MUST be the actual Credits debit applied to the account.
-* The `(type, ref_id)` pair MUST be unique so one call record produces at most one LLM charge event.
+* The `(type, ref_id)` pair MUST be unique so one call record produces at most one task charge event.
 
-When settle computes a positive Credits amount but the account balance is insufficient, the service MUST write the success call record, MUST NOT create an LLM charge event, and MUST leave the account balance unchanged.
+When settle computes a positive Credits amount but the account balance is insufficient, the service MUST write the success call record, MUST NOT create an task charge event, and MUST leave the account balance unchanged.
+
+The destructive task-schema migration MUST reject any negative `credit_accounts.balance`, delete prior task, call-record, deposit, usage, and ledger history, and preserve users, projects, account balances, and blockchain cursors. It MUST create one processed opening-balance event for every positive account balance with amount equal to that balance and `ref_id` equal to the user ID. It MUST NOT create an opening event for a zero balance.
 
 ### `credit_accounts`
 
-`credit_accounts.balance` MUST equal the sum of that user's processed `credit_events` amounts after every committed deposit or LLM charge transaction. New writes after this schema MUST make that equality verifiable from processed events alone.
+`credit_accounts.balance` MUST equal the sum of that user's processed `credit_events` amounts after every committed deposit or task charge transaction. New writes after this schema MUST make that equality verifiable from processed events alone.
 
 ## Request Processing Flow
 
@@ -83,11 +83,11 @@ flowchart TD
 
 ### Validation failure before job creation
 
-When authentication succeeds but request validation, VRAM resolution, task-fee estimation, or balance precheck fails before an `llm_jobs` row is created, the API MUST write one failed `llm_call_records` row and MUST NOT create a job, MUST NOT create a Credits event, and MUST NOT change the account balance.
+When authentication succeeds but request validation, VRAM resolution, task-fee estimation, or balance precheck fails before an `task_jobs` row is created, the API MUST write one failed `task_call_records` row and MUST NOT create a job, MUST NOT create a Credits event, and MUST NOT change the account balance.
 
 ### Job creation
 
-When the request is accepted for execution, the API MUST create one `llm_jobs` row with status `pending_submit`, create-time snapshots for user, the resolved effective `priority_gwei`, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`.
+When the request is accepted for execution, the API MUST create one `task_jobs` row with status `pending_submit`, create-time snapshots for user, the resolved effective `priority_gwei`, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`.
 
 For Responses requests with `previous_response_id`, the API MUST resolve the previous job before creating the new job:
 
@@ -100,7 +100,7 @@ For Responses requests with `previous_response_id`, the API MUST resolve the pre
 
 ### Bridge submit, status query, download, and format
 
-The LLM job worker MUST:
+The Task job worker MUST:
 
 1. Submit `pending_submit` jobs to Bridge and store the Bridge client task ID.
 2. Poll in-flight jobs and move them to `in_progress` when Bridge reports progress.
@@ -114,7 +114,7 @@ A `pending_submit` job older than `llm.job_submit_timeout` seconds MUST be marke
 
 The success settle transaction MUST lock the job row and, in one commit, write:
 
-1. one success `llm_call_records` row with final tokens and the Credits recalculation snapshot
+1. one success `task_call_records` row with final tokens and the Credits recalculation snapshot
 2. when charged amount is greater than zero and balance is sufficient, one processed LLM `credit_events` row and the matching `credit_accounts` debit
 3. the job terminal update to status `completed`, billing status `billed`, raw and formatted results, `completed_at`, and `llm_call_record_id`
 
@@ -126,7 +126,7 @@ If the job already has `llm_call_record_id`, or is already `completed` and `bill
 
 The failure record transaction MUST lock the job row and, in one commit, write:
 
-1. one failed `llm_call_records` row
+1. one failed `task_call_records` row
 2. the job terminal update to status `failed`, billing status `not_billed`, error message, `completed_at`, and `llm_call_record_id`
 
 It MUST NOT create a Credits event and MUST NOT change the account balance.
@@ -150,7 +150,7 @@ The handler MUST run one MySQL statement that:
 
 1. selects at most `llm.project_recent_requests_limit` unfinished jobs through the project/status/created index
 2. selects at most `llm.project_recent_requests_limit` call records through the project/created index
-3. left-joins processed LLM charge events only to that bounded call-record candidate set
+3. left-joins processed task charge events only to that bounded call-record candidate set
 4. unions the two candidate sets and applies the final limit with deterministic descending order by accepted/created time, source, and id
 
 In-progress items MUST return null for tokens, duration, and credits. Finished items MUST return credits from the processed event amount, or `0` when no event exists.
@@ -159,11 +159,11 @@ Each item MUST include `source` (`job` or `call_record`) and numeric `id`. Clien
 
 ### Charges
 
-`GET /v1/account/charges` MUST select processed LLM charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then in one SQL statement join only the selected page of event `ref_id` values to `llm_call_records` and those call records to `projects`. The response `credits` field MUST equal the event amount. The response MUST include `project_name` from the current project row.
+`GET /v1/account/charges` MUST select processed task charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then in one SQL statement join only the selected page of event `ref_id` values to `task_call_records` and those call records to `projects`. The response `credits` field MUST equal the event amount. The response MUST include `project_name` from the current project row.
 
 ### Usage stats
 
-Usage stats workers MUST read token counts and success/failure status from `llm_call_records`, and MUST read charged Credits only from processed LLM `credit_events` referenced by call record ID.
+Usage stats workers MUST read token counts and success/failure status from `task_call_records`, and MUST read charged Credits only from processed LLM `credit_events` referenced by call record ID.
 
 ## Status Mapping
 
@@ -175,13 +175,13 @@ Usage stats workers MUST read token counts and success/failure status from `llm_
 | `completed` | represented by call record `success` | `completed` |
 | `failed` | represented by call record `failed` | `failed` |
 
-Finished Recent Requests rows MUST come from `llm_call_records`, not from terminal `llm_jobs` rows.
+Finished Recent Requests rows MUST come from `task_call_records`, not from terminal `task_jobs` rows.
 
 ## Idempotency Rules
 
 Any retry, duplicate worker tick, or repeated settle/failure call MUST satisfy all of the following:
 
-* at most one `llm_call_records` row per `llm_job_id`
-* at most one LLM charge `credit_events` row per call record ID
+* at most one `task_call_records` row per `task_job_id`
+* at most one task charge `credit_events` row per call record ID
 * at most one balance debit for that charge
 * job `llm_call_record_id` set only after the matching call record exists in the same transaction

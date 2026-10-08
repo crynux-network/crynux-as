@@ -40,9 +40,25 @@ func Models(c *gin.Context) {
 	})
 }
 
+func ImageModels(c *gin.Context) {
+	loadedModels := service.ListLoadedSDModels()
+	data := make([]modelObject, 0, len(loadedModels))
+	for _, model := range loadedModels {
+		data = append(data, newModelObject(model))
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"object": "list",
+		"data":   data,
+	})
+}
+
 // RetrieveModel implements the OpenAI-compatible retrieve model endpoint.
 func RetrieveModel(c *gin.Context) {
 	modelID := strings.TrimPrefix(c.Param("model"), "/")
+	if modelID == "image" {
+		ImageModels(c)
+		return
+	}
 	model, ok := service.GetLoadedLLMModel(modelID)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{

@@ -44,6 +44,23 @@ func TestCalcBillableAndCreditsBasic(t *testing.T) {
 	}
 }
 
+func TestImagePixelStepUnits(t *testing.T) {
+	units, err := imagePixelStepUnits(`{"task_config":{"num_images":2,"image_width":512,"image_height":512,"steps":20}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if units != 10_485_760 {
+		t.Fatalf("units = %d, want 10485760", units)
+	}
+}
+
+func TestImagePixelStepUnitsRejectsOverflow(t *testing.T) {
+	taskArgs := `{"task_config":{"num_images":18446744073709551615,"image_width":2,"image_height":1,"steps":1}}`
+	if _, err := imagePixelStepUnits(taskArgs); err == nil {
+		t.Fatal("overflow was accepted")
+	}
+}
+
 func TestCalcBillablePriorityAndVramWeight(t *testing.T) {
 	got, err := CalcBillableGwei(CalcBillableInput{
 		PriorityGwei:          big.NewInt(10),

@@ -27,8 +27,8 @@ func setupUsageStatsTestDB(t *testing.T) *gorm.DB {
 		&models.CreditAccount{},
 		&models.CreditEvent{},
 		&models.Project{},
-		&models.LLMJob{},
-		&models.LLMCallRecord{},
+		&models.TaskJob{},
+		&models.TaskCallRecord{},
 		&models.AccountUsageHourlyStat{},
 		&models.ProjectUsageHourlyStat{},
 		&models.ProjectModelUsage10mStat{},
@@ -70,7 +70,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	success := models.LLMCallRecord{
+	success := models.TaskCallRecord{
 		UserID:               user.ID,
 		ProjectID:            project.ID,
 		Model:                "model-a",
@@ -79,7 +79,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		TotalTokens:          15,
 		PriorityGwei:         models.BigInt{Int: *big.NewInt(10)},
 		TokenUsageApplicable: 1,
-		Status:               models.LLMCallStatusSuccess,
+		Status:               models.TaskCallStatusSuccess,
 		AcceptedAt:           now,
 		CompletedAt:          now.Add(2 * time.Second),
 		DurationMs:           2000,
@@ -90,7 +90,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	event := models.CreditEvent{
 		UserID: user.ID,
 		Amount: models.BigInt{Int: *big.NewInt(42)},
-		Type:   models.CreditEventTypeLLMCharge,
+		Type:   models.CreditEventTypeTaskCharge,
 		RefID:  success.ID,
 		Status: models.CreditEventStatusProcessed,
 	}
@@ -98,12 +98,12 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	failed := models.LLMCallRecord{
+	failed := models.TaskCallRecord{
 		UserID:               user.ID,
 		ProjectID:            project.ID,
 		Model:                "model-a",
 		TokenUsageApplicable: 1,
-		Status:               models.LLMCallStatusFailed,
+		Status:               models.TaskCallStatusFailed,
 		AcceptedAt:           now,
 		CompletedAt:          now.Add(100 * time.Millisecond),
 		DurationMs:           100,
@@ -112,7 +112,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	noToken := models.LLMCallRecord{
+	noToken := models.TaskCallRecord{
 		UserID:               user.ID,
 		ProjectID:            project.ID,
 		Model:                "image-model",
@@ -120,7 +120,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		CompletionTokens:     99,
 		TotalTokens:          198,
 		TokenUsageApplicable: 0,
-		Status:               models.LLMCallStatusSuccess,
+		Status:               models.TaskCallStatusSuccess,
 		AcceptedAt:           now,
 		CompletedAt:          now.Add(time.Second),
 		DurationMs:           1000,
@@ -128,7 +128,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	if err := db.Create(&noToken).Error; err != nil {
 		t.Fatal(err)
 	}
-	var stored models.LLMCallRecord
+	var stored models.TaskCallRecord
 	if err := db.First(&stored, noToken.ID).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -304,15 +304,15 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 	si := 0.0
 	so := 0.0
 	vw := 1.0
-	job := models.LLMJob{
+	job := models.TaskJob{
 		ProjectID:             project.ID,
 		UserID:                user.ID,
 		PriorityGwei:          models.BigInt{Int: *big.NewInt(10)},
 		Model:                 "m",
-		APIType:               models.LLMAPITypeChatCompletions,
+		APIType:               models.TaskAPITypeChatCompletions,
 		TaskArgsJSON:          "{}",
-		Status:                models.LLMJobStatusInProgress,
-		BillingStatus:         models.LLMJobBillingPending,
+		Status:                models.TaskJobStatusInProgress,
+		BillingStatus:         models.TaskJobBillingPending,
 		ConstantSeconds:       &c,
 		SecondsPerInputToken:  &si,
 		SecondsPerOutputToken: &so,
@@ -322,32 +322,29 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	updated, err := CompleteAndSettleLLMJob(ctx, db, &job, `{"model":"m","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, `{"ok":true}`, 1, 1, 2)
+	updated, err := CompleteAndSettleTaskJob(ctx, db, &job, `{"model":"m","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`, `{"ok":true}`, 1, 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Status != models.LLMJobStatusCompleted || updated.BillingStatus != models.LLMJobBillingBilled {
+	if updated.Status != models.TaskJobStatusCompleted || updated.BillingStatus != models.TaskJobBillingBilled {
 		t.Fatalf("job=%+v", updated)
 	}
-	if updated.LLMCallRecordID == nil {
+	if updated.TaskCallRecordID == nil {
 		t.Fatal("missing call record id")
 	}
 
-	var record models.LLMCallRecord
-	if err := db.First(&record, *updated.LLMCallRecordID).Error; err != nil {
+	var record models.TaskCallRecord
+	if err := db.First(&record, *updated.TaskCallRecordID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if record.PromptTokens != 1 || record.CompletionTokens != 1 {
 		t.Fatalf("tokens=%+v", record)
 	}
-	if record.ConstantSeconds == nil || *record.ConstantSeconds != 1 {
-		t.Fatal("constant seconds snapshot missing")
-	}
 	if record.PriorityGwei.Cmp(big.NewInt(10)) != 0 {
 		t.Fatalf("priority_gwei=%s, want 10", record.PriorityGwei.String())
 	}
-	if record.CreditsPerGwei == nil || *record.CreditsPerGwei != "1" {
-		t.Fatal("credits_per_gwei snapshot missing")
+	if record.ConstantSeconds != nil || record.CreditsPerGwei != nil {
+		t.Fatal("call record must not persist billing coefficients")
 	}
 
 	var events []models.CreditEvent
@@ -366,11 +363,11 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 		t.Fatalf("balance=%s", balance.Balance.String())
 	}
 
-	again, err := CompleteAndSettleLLMJob(ctx, db, updated, "{}", "{}", 1, 1, 2)
+	again, err := CompleteAndSettleTaskJob(ctx, db, updated, "{}", "{}", 1, 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.LLMCallRecordID == nil || *again.LLMCallRecordID != *updated.LLMCallRecordID {
+	if again.TaskCallRecordID == nil || *again.TaskCallRecordID != *updated.TaskCallRecordID {
 		t.Fatal("settle must be idempotent")
 	}
 	var eventCount int64
@@ -382,7 +379,7 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 	}
 }
 
-func TestProcessLLMCallSkipsEventWhenCreditsZero(t *testing.T) {
+func TestProcessTaskCallSkipsEventWhenCreditsZero(t *testing.T) {
 	db := setupUsageStatsTestDB(t)
 	ctx := context.Background()
 	user := models.User{Address: "0xzero"}
@@ -405,12 +402,12 @@ func TestProcessLLMCallSkipsEventWhenCreditsZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	_, err := ProcessLLMCall(ctx, db, RecordLLMCallInput{
+	_, err := ProcessTaskCall(ctx, db, RecordTaskCallInput{
 		UserID:               user.ID,
 		ProjectID:            project.ID,
 		Model:                "m",
 		TokenUsageApplicable: true,
-		Status:               models.LLMCallStatusSuccess,
+		Status:               models.TaskCallStatusSuccess,
 		Credits:              big.NewInt(0),
 		AcceptedAt:           now,
 		CompletedAt:          now,
@@ -428,61 +425,61 @@ func TestProcessLLMCallSkipsEventWhenCreditsZero(t *testing.T) {
 	}
 }
 
-func TestDeleteExpiredTerminalLLMJobs(t *testing.T) {
+func TestDeleteExpiredTerminalTaskJobs(t *testing.T) {
 	db := setupUsageStatsTestDB(t)
 	ctx := context.Background()
 	now := time.Now()
 	old := now.Add(-48 * time.Hour)
 	recordID := uint(1)
 
-	keepRecent := models.LLMJob{
-		ProjectID:       1,
-		UserID:          1,
-		Model:           "m",
-		APIType:         models.LLMAPITypeChatCompletions,
-		TaskArgsJSON:    "{}",
-		Status:          models.LLMJobStatusCompleted,
-		BillingStatus:   models.LLMJobBillingBilled,
-		LLMCallRecordID: &recordID,
-		CompletedAt:     &now,
+	keepRecent := models.TaskJob{
+		ProjectID:        1,
+		UserID:           1,
+		Model:            "m",
+		APIType:          models.TaskAPITypeChatCompletions,
+		TaskArgsJSON:     "{}",
+		Status:           models.TaskJobStatusCompleted,
+		BillingStatus:    models.TaskJobBillingBilled,
+		TaskCallRecordID: &recordID,
+		CompletedAt:      &now,
 	}
-	keepRunning := models.LLMJob{
+	keepRunning := models.TaskJob{
 		ProjectID:    1,
 		UserID:       1,
 		Model:        "m",
-		APIType:      models.LLMAPITypeChatCompletions,
+		APIType:      models.TaskAPITypeChatCompletions,
 		TaskArgsJSON: "{}",
-		Status:       models.LLMJobStatusInProgress,
+		Status:       models.TaskJobStatusInProgress,
 	}
-	keepUnsettled := models.LLMJob{
+	keepUnsettled := models.TaskJob{
 		ProjectID:     1,
 		UserID:        1,
 		Model:         "m",
-		APIType:       models.LLMAPITypeChatCompletions,
+		APIType:       models.TaskAPITypeChatCompletions,
 		TaskArgsJSON:  "{}",
-		Status:        models.LLMJobStatusCompleted,
-		BillingStatus: models.LLMJobBillingPending,
+		Status:        models.TaskJobStatusCompleted,
+		BillingStatus: models.TaskJobBillingPending,
 		CompletedAt:   &old,
 	}
-	deleteMe := models.LLMJob{
-		ProjectID:       1,
-		UserID:          1,
-		Model:           "m",
-		APIType:         models.LLMAPITypeChatCompletions,
-		TaskArgsJSON:    "{}",
-		Status:          models.LLMJobStatusCompleted,
-		BillingStatus:   models.LLMJobBillingBilled,
-		LLMCallRecordID: &recordID,
-		CompletedAt:     &old,
+	deleteMe := models.TaskJob{
+		ProjectID:        1,
+		UserID:           1,
+		Model:            "m",
+		APIType:          models.TaskAPITypeChatCompletions,
+		TaskArgsJSON:     "{}",
+		Status:           models.TaskJobStatusCompleted,
+		BillingStatus:    models.TaskJobBillingBilled,
+		TaskCallRecordID: &recordID,
+		CompletedAt:      &old,
 	}
-	for _, job := range []models.LLMJob{keepRecent, keepRunning, keepUnsettled, deleteMe} {
+	for _, job := range []models.TaskJob{keepRecent, keepRunning, keepUnsettled, deleteMe} {
 		j := job
 		if err := db.Create(&j).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	deleted, err := DeleteExpiredTerminalLLMJobs(ctx, db, 1)
+	deleted, err := DeleteExpiredTerminalTaskJobs(ctx, db, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +487,7 @@ func TestDeleteExpiredTerminalLLMJobs(t *testing.T) {
 		t.Fatalf("deleted=%d", deleted)
 	}
 	var count int64
-	if err := db.Model(&models.LLMJob{}).Count(&count).Error; err != nil {
+	if err := db.Model(&models.TaskJob{}).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if count != 3 {
@@ -498,43 +495,43 @@ func TestDeleteExpiredTerminalLLMJobs(t *testing.T) {
 	}
 }
 
-func TestFailAndRecordLLMJobSingleTransaction(t *testing.T) {
+func TestFailAndRecordTaskJobSingleTransaction(t *testing.T) {
 	db := setupUsageStatsTestDB(t)
 	ctx := context.Background()
-	job := models.LLMJob{
+	job := models.TaskJob{
 		ProjectID:    1,
 		UserID:       9,
 		PriorityGwei: models.BigInt{Int: *big.NewInt(10)},
 		Model:        "m",
-		APIType:      models.LLMAPITypeChatCompletions,
+		APIType:      models.TaskAPITypeChatCompletions,
 		TaskArgsJSON: "{}",
-		Status:       models.LLMJobStatusSubmitted,
+		Status:       models.TaskJobStatusSubmitted,
 	}
 	if err := db.Create(&job).Error; err != nil {
 		t.Fatal(err)
 	}
-	updated, err := FailAndRecordLLMJob(ctx, db, &job, "boom")
+	updated, err := FailAndRecordTaskJob(ctx, db, &job, "boom")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Status != models.LLMJobStatusFailed || updated.LLMCallRecordID == nil {
+	if updated.Status != models.TaskJobStatusFailed || updated.TaskCallRecordID == nil {
 		t.Fatalf("job=%+v", updated)
 	}
 	var count int64
-	if err := db.Model(&models.LLMCallRecord{}).Count(&count).Error; err != nil {
+	if err := db.Model(&models.TaskCallRecord{}).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
 		t.Fatalf("count=%d", count)
 	}
-	again, err := FailAndRecordLLMJob(ctx, db, updated, "boom2")
+	again, err := FailAndRecordTaskJob(ctx, db, updated, "boom2")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.LLMCallRecordID == nil || *again.LLMCallRecordID != *updated.LLMCallRecordID {
+	if again.TaskCallRecordID == nil || *again.TaskCallRecordID != *updated.TaskCallRecordID {
 		t.Fatal("idempotent fail record")
 	}
-	if err := db.Model(&models.LLMCallRecord{}).Count(&count).Error; err != nil {
+	if err := db.Model(&models.TaskCallRecord{}).Count(&count).Error; err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {

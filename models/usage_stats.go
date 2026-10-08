@@ -117,18 +117,18 @@ func (ProjectModelUsageSnapshot) TableName() string {
 
 // ProjectDurationHistogramSnapshot stores displayable completion-duration buckets.
 type ProjectDurationHistogramSnapshot struct {
-	ID           uint                `json:"id" gorm:"primarykey"`
-	CreatedAt    time.Time           `json:"created_at" gorm:"not null"`
-	UpdatedAt    time.Time           `json:"updated_at" gorm:"not null"`
-	ProjectID    uint                `json:"project_id" gorm:"not null;uniqueIndex:idx_project_duration_histogram_snapshots_project_range_bucket"`
-	RangeType    UsageStatsRangeType `json:"range_type" gorm:"type:string;size:8;not null;uniqueIndex:idx_project_duration_histogram_snapshots_project_range_bucket"`
-	BucketIndex  uint                `json:"bucket_index" gorm:"not null;uniqueIndex:idx_project_duration_histogram_snapshots_project_range_bucket"`
-	BucketLabel  string              `json:"bucket_label" gorm:"type:string;size:128;not null"`
-	MinDurationMs uint64             `json:"min_duration_ms" gorm:"not null;default:0"`
-	MaxDurationMs *uint64            `json:"max_duration_ms"`
-	RequestCount uint64              `json:"request_count" gorm:"not null;default:0"`
-	WindowStart  int64               `json:"window_start" gorm:"not null"`
-	WindowEnd    int64               `json:"window_end" gorm:"not null"`
+	ID            uint                `json:"id" gorm:"primarykey"`
+	CreatedAt     time.Time           `json:"created_at" gorm:"not null"`
+	UpdatedAt     time.Time           `json:"updated_at" gorm:"not null"`
+	ProjectID     uint                `json:"project_id" gorm:"not null;uniqueIndex:idx_project_duration_histogram_snapshots_project_range_bucket"`
+	RangeType     UsageStatsRangeType `json:"range_type" gorm:"type:string;size:8;not null;uniqueIndex:idx_project_duration_histogram_snapshots_project_range_bucket"`
+	BucketIndex   uint                `json:"bucket_index" gorm:"not null;uniqueIndex:idx_project_duration_histogram_snapshots_project_range_bucket"`
+	BucketLabel   string              `json:"bucket_label" gorm:"type:string;size:128;not null"`
+	MinDurationMs uint64              `json:"min_duration_ms" gorm:"not null;default:0"`
+	MaxDurationMs *uint64             `json:"max_duration_ms"`
+	RequestCount  uint64              `json:"request_count" gorm:"not null;default:0"`
+	WindowStart   int64               `json:"window_start" gorm:"not null"`
+	WindowEnd     int64               `json:"window_end" gorm:"not null"`
 }
 
 func (ProjectDurationHistogramSnapshot) TableName() string {
@@ -138,13 +138,13 @@ func (ProjectDurationHistogramSnapshot) TableName() string {
 // UsageStatsProgress tracks base aggregation cursor and per-project snapshot refresh state.
 // ProjectID == 0 is the singleton base-worker cursor row.
 type UsageStatsProgress struct {
-	ID                uint      `json:"id" gorm:"primarykey"`
-	CreatedAt         time.Time `json:"created_at" gorm:"not null"`
-	UpdatedAt         time.Time `json:"updated_at" gorm:"not null"`
-	ProjectID         uint      `json:"project_id" gorm:"not null;uniqueIndex"`
-	LastCallRecordID  uint      `json:"last_call_record_id" gorm:"not null;default:0"`
-	DirtyGeneration   uint64    `json:"dirty_generation" gorm:"not null;default:0"`
-	ClaimedGeneration uint64    `json:"claimed_generation" gorm:"not null;default:0"`
+	ID                uint       `json:"id" gorm:"primarykey"`
+	CreatedAt         time.Time  `json:"created_at" gorm:"not null"`
+	UpdatedAt         time.Time  `json:"updated_at" gorm:"not null"`
+	ProjectID         uint       `json:"project_id" gorm:"not null;uniqueIndex"`
+	LastCallRecordID  uint       `json:"last_call_record_id" gorm:"not null;default:0"`
+	DirtyGeneration   uint64     `json:"dirty_generation" gorm:"not null;default:0"`
+	ClaimedGeneration uint64     `json:"claimed_generation" gorm:"not null;default:0"`
 	ClaimedAt         *time.Time `json:"claimed_at"`
 }
 

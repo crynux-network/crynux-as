@@ -146,25 +146,43 @@ type LLMExecutionTime struct {
 	SecondsPerMegapixel   float64 `json:"seconds_per_megapixel"`
 }
 
+type SDExecutionTime struct {
+	OverheadSeconds       float64 `json:"overhead_seconds"`
+	SecondsPerSDPixelStep float64 `json:"seconds_per_sd_pixel_step"`
+}
+
+type ExecutionTimeQuery struct {
+	Model        string
+	Dtype        string
+	QuantizeBits *uint64
+	Variant      string
+	MinVRAM      *uint64
+	GPUName      string
+	GPUVRAM      *uint64
+}
+
 type getLLMExecutionTimeResponse struct {
 	Message string           `json:"message"`
 	Data    LLMExecutionTime `json:"data"`
 }
 
+type getSDExecutionTimeResponse struct {
+	Message string          `json:"message"`
+	Data    SDExecutionTime `json:"data"`
+}
+
 // GetLLMExecutionTime fetches LLM execution-time coefficients from
 // GET /v2/models/llm/execution-time with model and min_vram selection.
 func (c *Client) GetLLMExecutionTime(ctx context.Context, model string, minVRAM uint64) (*LLMExecutionTime, error) {
-	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("model is required")
-	}
-	if minVRAM == 0 {
-		return nil, fmt.Errorf("min_vram must be a positive integer")
-	}
+	query := ExecutionTimeQuery{Model: model, MinVRAM: &minVRAM}
+	return c.GetLLMExecutionTimeWithQuery(ctx, query)
+}
 
-	values := url.Values{}
-	values.Set("model", model)
-	values.Set("min_vram", strconv.FormatUint(minVRAM, 10))
-	reqURL := c.baseURL + "/v2/models/llm/execution-time?" + values.Encode()
+func (c *Client) GetLLMExecutionTimeWithQuery(ctx context.Context, query ExecutionTimeQuery) (*LLMExecutionTime, error) {
+	reqURL, err := c.executionTimeURL("/v2/models/llm/execution-time", query)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -191,6 +209,74 @@ func (c *Client) GetLLMExecutionTime(ctx context.Context, model string, minVRAM 
 		return nil, fmt.Errorf("failed to parse relay llm execution-time response: %w", err)
 	}
 	return &parsed.Data, nil
+}
+
+func (c *Client) GetSDExecutionTime(ctx context.Context, query ExecutionTimeQuery) (*SDExecutionTime, error) {
+	reqURL, err := c.executionTimeURL("/v2/models/sd/execution-time", query)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("relay sd execution-time request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	var parsed getSDExecutionTimeResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse relay sd execution-time response: %w", err)
+	}
+	return &parsed.Data, nil
+}
+
+func (c *Client) executionTimeURL(path string, query ExecutionTimeQuery) (string, error) {
+	if strings.TrimSpace(query.Model) == "" {
+		return "", fmt.Errorf("model is required")
+	}
+	hasMinVRAM := query.MinVRAM != nil
+	hasGPUName := strings.TrimSpace(query.GPUName) != ""
+	hasGPUVRAM := query.GPUVRAM != nil
+	if hasMinVRAM == (hasGPUName || hasGPUVRAM) {
+		return "", fmt.Errorf("provide either min_vram or gpu_name and gpu_vram")
+	}
+	if hasGPUName != hasGPUVRAM {
+		return "", fmt.Errorf("gpu_name and gpu_vram must be provided together")
+	}
+	values := url.Values{}
+	values.Set("model", query.Model)
+	if query.Dtype != "" {
+		values.Set("dtype", query.Dtype)
+	}
+	if query.QuantizeBits != nil {
+		values.Set("quantize_bits", strconv.FormatUint(*query.QuantizeBits, 10))
+	}
+	if query.Variant != "" {
+		values.Set("variant", query.Variant)
+	}
+	if hasMinVRAM {
+		if *query.MinVRAM == 0 {
+			return "", fmt.Errorf("min_vram must be a positive integer")
+		}
+		values.Set("min_vram", strconv.FormatUint(*query.MinVRAM, 10))
+	} else {
+		if *query.GPUVRAM == 0 {
+			return "", fmt.Errorf("gpu_vram must be a positive integer")
+		}
+		values.Set("gpu_name", query.GPUName)
+		values.Set("gpu_vram", strconv.FormatUint(*query.GPUVRAM, 10))
+	}
+	return c.baseURL + path + "?" + values.Encode(), nil
 }
 
 func parseOptionalBigIntString(raw *string) (*big.Int, error) {

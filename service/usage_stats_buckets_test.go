@@ -37,18 +37,18 @@ func TestDurationBucketID(t *testing.T) {
 
 func TestMergeDurationDisplayBuckets(t *testing.T) {
 	counts := map[string]uint64{
-		"0_250":      10,
-		"250_500":    10,
-		"500_1000":   10,
-		"1000_2000":  10,
-		"2000_5000":  10,
-		"5000_10000": 10,
-		"10000_30000": 10,
-		"30000_60000": 10,
-		"60000_120000": 10,
+		"0_250":         10,
+		"250_500":       10,
+		"500_1000":      10,
+		"1000_2000":     10,
+		"2000_5000":     10,
+		"5000_10000":    10,
+		"10000_30000":   10,
+		"30000_60000":   10,
+		"60000_120000":  10,
 		"120000_300000": 10,
 		"300000_600000": 10,
-		"600000_inf": 10,
+		"600000_inf":    10,
 	}
 	display := MergeDurationDisplayBuckets(counts)
 	if len(display) == 0 || len(display) > 12 {
@@ -70,7 +70,7 @@ func TestMergeDurationDisplayBuckets(t *testing.T) {
 
 func TestMergeDurationDisplayBucketsDoesNotSplitSmallBuckets(t *testing.T) {
 	counts := map[string]uint64{
-		"0_250": 100,
+		"0_250":   100,
 		"250_500": 1,
 	}
 	display := MergeDurationDisplayBuckets(counts)

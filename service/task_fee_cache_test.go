@@ -20,11 +20,11 @@ func TestRefreshQueuedPriorityKeepsPreviousOnFailure(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"message": "success",
 			"data": map[string]any{
-				"as_of":                  100,
-				"queued_task_count":      1,
-				"highest_priority_gwei":  "50",
-				"median_priority_gwei":   "40",
-				"lowest_priority_gwei":   "30",
+				"as_of":                 100,
+				"queued_task_count":     1,
+				"highest_priority_gwei": "50",
+				"median_priority_gwei":  "40",
+				"lowest_priority_gwei":  "30",
 			},
 		})
 	}))

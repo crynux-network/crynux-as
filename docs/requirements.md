@@ -108,6 +108,12 @@ A request to a private LLM endpoint MUST be authenticated by both:
 
 A request failing either check MUST be rejected with HTTP 401.
 
+### Raw Task API
+
+The same project authentication MUST protect the Raw Task routes specified in [raw-task-api.md](./raw-task-api.md). Raw Task creation MUST support LLM and Image task types through the shared Task job, call-record, Credits, and usage-statistics lifecycle. Raw Task IDs MUST be local AS job IDs scoped to the authenticated project. Raw requests MUST NOT supply `task_fee`; AS MUST calculate and submit it from the project Cost Level.
+
+Raw batch create and status requests MUST contain between 1 and 100 items and MUST preserve request order. Item validation, insufficient Credits, missing IDs, and cross-project IDs MUST be represented as item errors without failing unrelated valid items.
+
 ### Forwarding to the Crynux Bridge
 
 The service executes LLM jobs through the Crynux Bridge raw task APIs. AS parses OpenAI-compatible requests into canonical `GPTTaskArgs`, submits Bridge ClientTasks, queries ClientTask status, downloads raw `GPTTaskResponse` JSON, and formats public API responses locally. See [llm-api.md](./llm-api.md).
@@ -126,7 +132,7 @@ Every LLM call, successful or failed, MUST be recorded as one `llm_call_records`
 
 ## Usage Statistics
 
-Finished task-creating calls MUST be aggregated for account and project usage views.
+Finished task-creating calls from OpenAI-compatible and Raw Task endpoints MUST be aggregated for account and project usage views.
 
 Requests MUST count only finished success and failure calls. Authenticated request validation failures, insufficient balance, estimation failures, and task execution failures MUST count as failures. HTTP 401 responses MUST NOT enter usage stats. `GET /responses/:id` and other non-creating GET requests MUST NOT enter usage stats.
 

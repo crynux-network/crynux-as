@@ -15,13 +15,13 @@ import (
 )
 
 var (
-	ErrLLMJobNotFound    = errors.New("llm job not found")
-	ErrLLMJobWaitTimeout = errors.New("llm job wait timeout")
+	ErrTaskJobNotFound    = errors.New("task job not found")
+	ErrTaskJobWaitTimeout = errors.New("task job wait timeout")
 )
 
-type CreateLLMJobInput struct {
+type CreateTaskJobInput struct {
 	Project               *models.Project
-	APIType               models.LLMAPIType
+	APIType               models.TaskAPIType
 	Model                 string
 	BilledVram            uint64
 	Background            bool
@@ -38,7 +38,7 @@ type CreateLLMJobInput struct {
 	SecondsPerOutputToken *float64
 }
 
-func CreateLLMJob(ctx context.Context, db *gorm.DB, in CreateLLMJobInput) (*models.LLMJob, error) {
+func CreateTaskJob(ctx context.Context, db *gorm.DB, in CreateTaskJobInput) (*models.TaskJob, error) {
 	if in.Project == nil {
 		return nil, errors.New("project is required")
 	}
@@ -51,19 +51,45 @@ func CreateLLMJob(ctx context.Context, db *gorm.DB, in CreateLLMJobInput) (*mode
 	if in.PriorityGwei == nil || in.PriorityGwei.Sign() <= 0 {
 		return nil, errors.New("priority_gwei is required")
 	}
-
-	job := models.LLMJob{
+	if in.TaskFeeGwei == nil || in.TaskFeeGwei.Sign() < 0 {
+		return nil, errors.New("task_fee_gwei is required")
+	}
+	if in.VramWeight == nil || in.ConstantSeconds == nil || in.SecondsPerInputToken == nil || in.SecondsPerOutputToken == nil {
+		return nil, errors.New("llm billing data is required")
+	}
+	taskFeeWei := new(big.Int).Mul(in.TaskFeeGwei, big.NewInt(1_000_000_000))
+	billingData, err := models.EncodeTaskBillingData(models.TaskBillingData{
+		Version:      models.TaskBillingDataVersion,
+		PriorityGwei: in.PriorityGwei.String(),
+		BilledVram:   in.BilledVram,
+		TaskFeeWei:   taskFeeWei.String(),
+		LLM: &models.LLMTaskBillingData{
+			VramWeight:            *in.VramWeight,
+			ConstantSeconds:       *in.ConstantSeconds,
+			SecondsPerInputToken:  *in.SecondsPerInputToken,
+			SecondsPerOutputToken: *in.SecondsPerOutputToken,
+			CreditsPerGwei:        config.GetConfig().LLM.CreditsPerGwei,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	job := models.TaskJob{
 		ProjectID:    in.Project.ID,
 		UserID:       in.Project.UserID,
 		PriorityGwei: models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
+		TaskType:     models.TaskTypeLLM,
 		APIType:      in.APIType,
 		Model:        in.Model,
 		BilledVram:   in.BilledVram,
+		MinVram:      &in.BilledVram,
+		RepeatNum:    1,
 		Background:   in.Background,
 		Stream:       in.Stream,
 		RequestBody:  in.RequestBody,
 		TaskArgsJSON: in.TaskArgsJSON,
-		Status:       models.LLMJobStatusPendingSubmit,
+		Status:       models.TaskJobStatusPendingSubmit,
+		BillingData:  billingData,
 	}
 	if in.TaskFeeGwei != nil {
 		job.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
@@ -77,7 +103,7 @@ func CreateLLMJob(ctx context.Context, db *gorm.DB, in CreateLLMJobInput) (*mode
 	job.SecondsPerInputToken = cloneFloat64Ptr(in.SecondsPerInputToken)
 	job.SecondsPerOutputToken = cloneFloat64Ptr(in.SecondsPerOutputToken)
 
-	if in.APIType == models.LLMAPITypeResponses {
+	if in.APIType == models.TaskAPITypeResponses {
 		token, err := utils.GenerateRandomToken(16)
 		if err != nil {
 			return nil, fmt.Errorf("generate response public id: %w", err)
@@ -94,45 +120,45 @@ func CreateLLMJob(ctx context.Context, db *gorm.DB, in CreateLLMJobInput) (*mode
 	return &job, nil
 }
 
-func GetLLMJobByPublicID(ctx context.Context, db *gorm.DB, projectID uint, publicID string) (*models.LLMJob, error) {
+func GetTaskJobByPublicID(ctx context.Context, db *gorm.DB, projectID uint, publicID string) (*models.TaskJob, error) {
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var job models.LLMJob
+	var job models.TaskJob
 	err := db.WithContext(dbCtx).
 		Where("project_id = ? AND public_id = ?", projectID, publicID).
 		First(&job).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrLLMJobNotFound
+			return nil, ErrTaskJobNotFound
 		}
 		return nil, err
 	}
 	return &job, nil
 }
 
-func GetLLMJobByID(ctx context.Context, db *gorm.DB, jobID uint) (*models.LLMJob, error) {
+func GetTaskJobByID(ctx context.Context, db *gorm.DB, jobID uint) (*models.TaskJob, error) {
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var job models.LLMJob
+	var job models.TaskJob
 	err := db.WithContext(dbCtx).First(&job, jobID).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrLLMJobNotFound
+			return nil, ErrTaskJobNotFound
 		}
 		return nil, err
 	}
 	return &job, nil
 }
 
-func WaitForLLMJob(ctx context.Context, db *gorm.DB, jobID uint, timeout time.Duration) (*models.LLMJob, error) {
+func WaitForTaskJob(ctx context.Context, db *gorm.DB, jobID uint, timeout time.Duration) (*models.TaskJob, error) {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
-		job, err := GetLLMJobByID(ctx, db, jobID)
+		job, err := GetTaskJobByID(ctx, db, jobID)
 		if err != nil {
 			return nil, err
 		}
@@ -140,7 +166,7 @@ func WaitForLLMJob(ctx context.Context, db *gorm.DB, jobID uint, timeout time.Du
 			return job, nil
 		}
 		if time.Now().After(deadline) {
-			return job, ErrLLMJobWaitTimeout
+			return job, ErrTaskJobWaitTimeout
 		}
 
 		select {
@@ -151,7 +177,7 @@ func WaitForLLMJob(ctx context.Context, db *gorm.DB, jobID uint, timeout time.Du
 	}
 }
 
-func fillJobUserAndPriority(ctx context.Context, db *gorm.DB, job *models.LLMJob) error {
+func fillJobUserAndPriority(ctx context.Context, db *gorm.DB, job *models.TaskJob) error {
 	if job.UserID != 0 && job.PriorityGwei.Sign() != 0 {
 		return nil
 	}
@@ -172,18 +198,18 @@ func fillJobUserAndPriority(ctx context.Context, db *gorm.DB, job *models.LLMJob
 	return nil
 }
 
-func CompleteAndSettleLLMJob(
+func CompleteAndSettleTaskJob(
 	ctx context.Context,
 	db *gorm.DB,
-	job *models.LLMJob,
+	job *models.TaskJob,
 	rawResultJSON string,
 	formattedResultJSON string,
 	promptTokens, completionTokens, totalTokens uint64,
-) (*models.LLMJob, error) {
+) (*models.TaskJob, error) {
 	if job == nil {
 		return nil, errors.New("job is required")
 	}
-	if job.Status == models.LLMJobStatusCompleted && job.BillingStatus == models.LLMJobBillingBilled {
+	if job.Status == models.TaskJobStatusCompleted && job.BillingStatus == models.TaskJobBillingBilled {
 		return job, nil
 	}
 	if err := fillJobUserAndPriority(ctx, db, job); err != nil {
@@ -192,100 +218,93 @@ func CompleteAndSettleLLMJob(
 	if job.UserID == 0 {
 		return nil, errors.New("job user_id is required")
 	}
-	if job.ConstantSeconds == nil || job.SecondsPerInputToken == nil || job.SecondsPerOutputToken == nil {
-		return nil, errors.New("job execution-time coefficients are required")
+	billing, err := job.DecodeBillingData()
+	if err != nil {
+		return nil, fmt.Errorf("decode billing data: %w", err)
 	}
-	if job.VramWeight == nil {
-		return nil, errors.New("job vram_weight is required")
+	if billing.LLM == nil {
+		return nil, errors.New("job llm billing data is required")
 	}
-
-	appCfg := config.GetConfig()
+	priorityGwei, _ := new(big.Int).SetString(billing.PriorityGwei, 10)
 	credits, err := CalcCredits(
 		promptTokens,
 		completionTokens,
-		&job.PriorityGwei.Int,
-		*job.VramWeight,
-		*job.ConstantSeconds,
-		*job.SecondsPerInputToken,
-		*job.SecondsPerOutputToken,
-		appCfg.LLM.CreditsPerGwei,
+		priorityGwei,
+		billing.LLM.VramWeight,
+		billing.LLM.ConstantSeconds,
+		billing.LLM.SecondsPerInputToken,
+		billing.LLM.SecondsPerOutputToken,
+		billing.LLM.CreditsPerGwei,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if job.RepeatNum > 1 {
+		credits.Mul(credits, new(big.Int).SetUint64(job.RepeatNum))
 	}
 
 	now := time.Now()
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	creditsPerGwei := appCfg.LLM.CreditsPerGwei
 	err = db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
-		var locked models.LLMJob
+		var locked models.TaskJob
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&locked, job.ID).Error; err != nil {
 			return err
 		}
-		if locked.Status == models.LLMJobStatusCompleted && locked.BillingStatus == models.LLMJobBillingBilled {
+		if locked.Status == models.TaskJobStatusCompleted && locked.BillingStatus == models.TaskJobBillingBilled {
 			*job = locked
 			return nil
 		}
-		if locked.LLMCallRecordID != nil {
-			return fmt.Errorf("llm job %d already has call record %d", locked.ID, *locked.LLMCallRecordID)
+		if locked.TaskCallRecordID != nil {
+			return fmt.Errorf("task job %d already has call record %d", locked.ID, *locked.TaskCallRecordID)
 		}
 
+		lockedBilling, err := locked.DecodeBillingData()
+		if err != nil {
+			return err
+		}
+		lockedPriority, _ := new(big.Int).SetString(lockedBilling.PriorityGwei, 10)
 		jobID := locked.ID
 		userID := locked.UserID
-		priorityGwei := locked.PriorityGwei
 		if userID == 0 {
 			userID = job.UserID
 		}
-		if priorityGwei.Sign() == 0 {
-			priorityGwei = job.PriorityGwei
+		in := RecordTaskCallInput{
+			UserID:               userID,
+			ProjectID:            locked.ProjectID,
+			TaskJobID:            &jobID,
+			TaskType:             locked.TaskType,
+			APIType:              locked.APIType,
+			Model:                locked.Model,
+			PromptTokens:         promptTokens,
+			CompletionTokens:     completionTokens,
+			TotalTokens:          totalTokens,
+			PriorityGwei:         lockedPriority,
+			TokenUsageApplicable: true,
+			Status:               models.TaskCallStatusSuccess,
+			Credits:              credits,
+			AcceptedAt:           locked.CreatedAt,
+			CompletedAt:          now,
+			BilledVram:           lockedBilling.BilledVram,
+			Charge:               true,
 		}
-		in := RecordLLMCallInput{
-			UserID:                userID,
-			ProjectID:             locked.ProjectID,
-			LLMJobID:              &jobID,
-			Model:                 locked.Model,
-			PromptTokens:          promptTokens,
-			CompletionTokens:      completionTokens,
-			TotalTokens:           totalTokens,
-			PriorityGwei:          &priorityGwei.Int,
-			TokenUsageApplicable:  true,
-			Status:                models.LLMCallStatusSuccess,
-			Credits:               credits,
-			AcceptedAt:            locked.CreatedAt,
-			CompletedAt:           now,
-			BilledVram:            locked.BilledVram,
-			ConstantSeconds:       cloneFloat64Ptr(locked.ConstantSeconds),
-			SecondsPerInputToken:  cloneFloat64Ptr(locked.SecondsPerInputToken),
-			SecondsPerOutputToken: cloneFloat64Ptr(locked.SecondsPerOutputToken),
-			CreditsPerGwei:        &creditsPerGwei,
-			Charge:                true,
-		}
-		if locked.TaskFeeGwei != nil {
-			in.TaskFeeGwei = &locked.TaskFeeGwei.Int
-		}
-		if locked.MedianPriorityGwei != nil {
-			in.MedianPriorityGwei = &locked.MedianPriorityGwei.Int
-		}
-		in.EstimatedNodeSeconds = cloneFloat64Ptr(locked.EstimatedNodeSeconds)
-		in.VramWeight = cloneFloat64Ptr(locked.VramWeight)
 
-		recordID, err := processLLMCallTx(tx, in)
+		recordID, err := processTaskCallTx(tx, in)
 		if err != nil {
 			return err
 		}
 
 		updates := map[string]interface{}{
-			"status":                models.LLMJobStatusCompleted,
+			"status":                models.TaskJobStatusCompleted,
 			"raw_result_json":       rawResultJSON,
 			"formatted_result_json": formattedResultJSON,
 			"completed_at":          now,
-			"billing_status":        models.LLMJobBillingBilled,
-			"llm_call_record_id":    recordID,
+			"billing_status":        models.TaskJobBillingBilled,
+			"task_call_record_id":   recordID,
 		}
-		if err := tx.Model(&models.LLMJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
+		if err := tx.Model(&models.TaskJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
 			return err
 		}
 		return tx.First(job, locked.ID).Error
@@ -296,7 +315,7 @@ func CompleteAndSettleLLMJob(
 	return job, nil
 }
 
-func FailAndRecordLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob, errorMessage string) (*models.LLMJob, error) {
+func FailAndRecordTaskJob(ctx context.Context, db *gorm.DB, job *models.TaskJob, errorMessage string) (*models.TaskJob, error) {
 	if job == nil {
 		return nil, errors.New("job is required")
 	}
@@ -312,64 +331,56 @@ func FailAndRecordLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob, e
 	defer cancel()
 
 	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
-		var locked models.LLMJob
+		var locked models.TaskJob
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			First(&locked, job.ID).Error; err != nil {
 			return err
 		}
-		if locked.IsTerminal() && locked.LLMCallRecordID != nil {
+		if locked.IsTerminal() && locked.TaskCallRecordID != nil {
 			*job = locked
 			return nil
 		}
 
+		lockedBilling, err := locked.DecodeBillingData()
+		if err != nil {
+			return err
+		}
+		lockedPriority, _ := new(big.Int).SetString(lockedBilling.PriorityGwei, 10)
 		jobID := locked.ID
 		userID := locked.UserID
-		priorityGwei := locked.PriorityGwei
 		if userID == 0 {
 			userID = job.UserID
 		}
-		if priorityGwei.Sign() == 0 {
-			priorityGwei = job.PriorityGwei
+		in := RecordTaskCallInput{
+			UserID:               userID,
+			ProjectID:            locked.ProjectID,
+			TaskJobID:            &jobID,
+			TaskType:             locked.TaskType,
+			APIType:              locked.APIType,
+			Model:                locked.Model,
+			PriorityGwei:         lockedPriority,
+			TokenUsageApplicable: true,
+			Status:               models.TaskCallStatusFailed,
+			Credits:              big.NewInt(0),
+			AcceptedAt:           locked.CreatedAt,
+			CompletedAt:          now,
+			BilledVram:           lockedBilling.BilledVram,
+			Charge:               false,
 		}
-		in := RecordLLMCallInput{
-			UserID:                userID,
-			ProjectID:             locked.ProjectID,
-			LLMJobID:              &jobID,
-			Model:                 locked.Model,
-			PriorityGwei:          &priorityGwei.Int,
-			TokenUsageApplicable:  true,
-			Status:                models.LLMCallStatusFailed,
-			Credits:               big.NewInt(0),
-			AcceptedAt:            locked.CreatedAt,
-			CompletedAt:           now,
-			BilledVram:            locked.BilledVram,
-			ConstantSeconds:       cloneFloat64Ptr(locked.ConstantSeconds),
-			SecondsPerInputToken:  cloneFloat64Ptr(locked.SecondsPerInputToken),
-			SecondsPerOutputToken: cloneFloat64Ptr(locked.SecondsPerOutputToken),
-			Charge:                false,
-		}
-		if locked.TaskFeeGwei != nil {
-			in.TaskFeeGwei = &locked.TaskFeeGwei.Int
-		}
-		if locked.MedianPriorityGwei != nil {
-			in.MedianPriorityGwei = &locked.MedianPriorityGwei.Int
-		}
-		in.EstimatedNodeSeconds = cloneFloat64Ptr(locked.EstimatedNodeSeconds)
-		in.VramWeight = cloneFloat64Ptr(locked.VramWeight)
 
-		recordID, err := processLLMCallTx(tx, in)
+		recordID, err := processTaskCallTx(tx, in)
 		if err != nil {
 			return err
 		}
 
 		updates := map[string]interface{}{
-			"status":             models.LLMJobStatusFailed,
-			"error_message":      errorMessage,
-			"billing_status":     models.LLMJobBillingNotBilled,
-			"completed_at":       now,
-			"llm_call_record_id": recordID,
+			"status":              models.TaskJobStatusFailed,
+			"error_message":       errorMessage,
+			"billing_status":      models.TaskJobBillingNotBilled,
+			"completed_at":        now,
+			"task_call_record_id": recordID,
 		}
-		if err := tx.Model(&models.LLMJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
+		if err := tx.Model(&models.TaskJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
 			return err
 		}
 		return tx.First(job, locked.ID).Error
@@ -380,38 +391,38 @@ func FailAndRecordLLMJob(ctx context.Context, db *gorm.DB, job *models.LLMJob, e
 	return job, nil
 }
 
-// FailLLMJob marks a job failed without writing a call record.
-// Prefer FailAndRecordLLMJob for terminal failures that must enter usage stats.
-func FailLLMJob(ctx context.Context, db *gorm.DB, jobID uint, errorMessage string) (*models.LLMJob, error) {
+// FailTaskJob marks a job failed without writing a call record.
+// Prefer FailAndRecordTaskJob for terminal failures that must enter usage stats.
+func FailTaskJob(ctx context.Context, db *gorm.DB, jobID uint, errorMessage string) (*models.TaskJob, error) {
 	now := time.Now()
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	updates := map[string]interface{}{
-		"status":         models.LLMJobStatusFailed,
+		"status":         models.TaskJobStatusFailed,
 		"error_message":  errorMessage,
-		"billing_status": models.LLMJobBillingNotBilled,
+		"billing_status": models.TaskJobBillingNotBilled,
 		"completed_at":   now,
 	}
-	if err := db.WithContext(dbCtx).Model(&models.LLMJob{}).Where("id = ?", jobID).Updates(updates).Error; err != nil {
+	if err := db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(updates).Error; err != nil {
 		return nil, err
 	}
-	return GetLLMJobByID(ctx, db, jobID)
+	return GetTaskJobByID(ctx, db, jobID)
 }
 
-func ListUnfinishedLLMJobs(ctx context.Context, db *gorm.DB, limit int) ([]models.LLMJob, error) {
+func ListUnfinishedTaskJobs(ctx context.Context, db *gorm.DB, limit int) ([]models.TaskJob, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var jobs []models.LLMJob
+	var jobs []models.TaskJob
 	err := db.WithContext(dbCtx).
-		Where("status IN ?", []models.LLMJobStatus{
-			models.LLMJobStatusPendingSubmit,
-			models.LLMJobStatusSubmitted,
-			models.LLMJobStatusInProgress,
+		Where("status IN ?", []models.TaskJobStatus{
+			models.TaskJobStatusPendingSubmit,
+			models.TaskJobStatusSubmitted,
+			models.TaskJobStatusInProgress,
 		}).
 		Order("created_at ASC").
 		Limit(limit).
@@ -422,42 +433,42 @@ func ListUnfinishedLLMJobs(ctx context.Context, db *gorm.DB, limit int) ([]model
 	return jobs, nil
 }
 
-func UpdateLLMJobBridgeTask(ctx context.Context, db *gorm.DB, jobID uint, bridgeClientTaskID uint) error {
+func UpdateTaskJobBridgeTask(ctx context.Context, db *gorm.DB, jobID uint, bridgeClientTaskID uint) error {
 	now := time.Now()
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return db.WithContext(dbCtx).Model(&models.LLMJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
 		"bridge_client_task_id": bridgeClientTaskID,
-		"status":                models.LLMJobStatusSubmitted,
+		"status":                models.TaskJobStatusSubmitted,
 		"started_at":            now,
 	}).Error
 }
 
-func UpdateLLMJobStatus(ctx context.Context, db *gorm.DB, jobID uint, status models.LLMJobStatus) error {
+func UpdateTaskJobStatus(ctx context.Context, db *gorm.DB, jobID uint, status models.TaskJobStatus) error {
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return db.WithContext(dbCtx).Model(&models.LLMJob{}).Where("id = ?", jobID).Update("status", status).Error
+	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Update("status", status).Error
 }
 
-func ResetLLMJobToPending(ctx context.Context, db *gorm.DB, jobID uint) error {
+func ResetTaskJobToPending(ctx context.Context, db *gorm.DB, jobID uint) error {
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return db.WithContext(dbCtx).Model(&models.LLMJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"status":                models.LLMJobStatusPendingSubmit,
+	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+		"status":                models.TaskJobStatusPendingSubmit,
 		"bridge_client_task_id": nil,
 		"started_at":            nil,
 	}).Error
 }
 
-const llmJobCleanupBatchSize = 200
+const taskJobCleanupBatchSize = 200
 
-// DeleteExpiredTerminalLLMJobs deletes one bounded batch of terminal jobs whose
+// DeleteExpiredTerminalTaskJobs deletes one bounded batch of terminal jobs whose
 // completed_at is older than retentionDays and that already have a call record.
 // Only completed+billed and failed+not_billed jobs are selected.
-func DeleteExpiredTerminalLLMJobs(ctx context.Context, db *gorm.DB, retentionDays uint64) (int, error) {
+func DeleteExpiredTerminalTaskJobs(ctx context.Context, db *gorm.DB, retentionDays uint64) (int, error) {
 	if retentionDays == 0 {
 		return 0, errors.New("retention days must be positive")
 	}
@@ -469,35 +480,35 @@ func DeleteExpiredTerminalLLMJobs(ctx context.Context, db *gorm.DB, retentionDay
 	var deleted int
 	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
-		selectBatch := func(status models.LLMJobStatus, billing models.LLMJobBillingStatus) error {
+		selectBatch := func(status models.TaskJobStatus, billing models.TaskJobBillingStatus) error {
 			var batch []uint
-			if err := tx.Model(&models.LLMJob{}).
+			if err := tx.Model(&models.TaskJob{}).
 				Select("id").
 				Where("status = ? AND billing_status = ?", status, billing).
-				Where("llm_call_record_id IS NOT NULL").
+				Where("task_call_record_id IS NOT NULL").
 				Where("completed_at IS NOT NULL").
 				Where("completed_at < ?", cutoff).
 				Order("completed_at ASC, id ASC").
-				Limit(llmJobCleanupBatchSize).
+				Limit(taskJobCleanupBatchSize).
 				Pluck("id", &batch).Error; err != nil {
 				return err
 			}
 			ids = append(ids, batch...)
 			return nil
 		}
-		if err := selectBatch(models.LLMJobStatusCompleted, models.LLMJobBillingBilled); err != nil {
+		if err := selectBatch(models.TaskJobStatusCompleted, models.TaskJobBillingBilled); err != nil {
 			return err
 		}
-		if err := selectBatch(models.LLMJobStatusFailed, models.LLMJobBillingNotBilled); err != nil {
+		if err := selectBatch(models.TaskJobStatusFailed, models.TaskJobBillingNotBilled); err != nil {
 			return err
 		}
 		if len(ids) == 0 {
 			return nil
 		}
-		if len(ids) > llmJobCleanupBatchSize {
-			ids = ids[:llmJobCleanupBatchSize]
+		if len(ids) > taskJobCleanupBatchSize {
+			ids = ids[:taskJobCleanupBatchSize]
 		}
-		result := tx.Where("id IN ?", ids).Delete(&models.LLMJob{})
+		result := tx.Where("id IN ?", ids).Delete(&models.TaskJob{})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -507,17 +518,17 @@ func DeleteExpiredTerminalLLMJobs(ctx context.Context, db *gorm.DB, retentionDay
 	return deleted, err
 }
 
-// RunLLMJobRetentionCleanup repeatedly deletes expired terminal jobs until a
+// RunTaskJobRetentionCleanup repeatedly deletes expired terminal jobs until a
 // batch deletes fewer than the batch size or an error occurs.
-func RunLLMJobRetentionCleanup(ctx context.Context, db *gorm.DB, retentionDays uint64) (int, error) {
+func RunTaskJobRetentionCleanup(ctx context.Context, db *gorm.DB, retentionDays uint64) (int, error) {
 	total := 0
 	for {
-		deleted, err := DeleteExpiredTerminalLLMJobs(ctx, db, retentionDays)
+		deleted, err := DeleteExpiredTerminalTaskJobs(ctx, db, retentionDays)
 		if err != nil {
 			return total, err
 		}
 		total += deleted
-		if deleted < llmJobCleanupBatchSize {
+		if deleted < taskJobCleanupBatchSize {
 			return total, nil
 		}
 		select {
@@ -528,9 +539,8 @@ func RunLLMJobRetentionCleanup(ctx context.Context, db *gorm.DB, retentionDays u
 	}
 }
 
-// LLMJobRetentionCutoff returns the earliest completed_at that remains readable
+// TaskJobRetentionCutoff returns the earliest completed_at that remains readable
 // under the configured retention window.
-func LLMJobRetentionCutoff(retentionDays uint64) time.Time {
+func TaskJobRetentionCutoff(retentionDays uint64) time.Time {
 	return time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
 }
-

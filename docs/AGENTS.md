@@ -9,6 +9,7 @@
 | [llm-job-processing.md](./llm-job-processing.md) | LLM execution and ledger ownership: `llm_jobs`, `llm_call_records`, `credit_events`, and `credit_accounts` responsibilities, request processing order, settle and failure transactions, Responses retention, Recent Requests merge, and retention cleanup |
 | [model-compatibility/](./model-compatibility/) | OpenAI-compatible request conversion, canonical task persistence and raw-task transport, raw assistant-text parsing, and public response construction |
 | [credits-billing.md](./credits-billing.md) | Credits billing and shared `billable_gwei` task-fee inputs: project Cost Level `priority_gwei`, Relay execution-time coefficients, VRAM weight, settle rules, and pricing-examples API |
+| [raw-task-api.md](./raw-task-api.md) | Project-authenticated Raw Task routes, local ID isolation, batch behavior, LLM and Image results, model catalogs, pricing, and settlement |
 
 ## Doc Update Requirements
 

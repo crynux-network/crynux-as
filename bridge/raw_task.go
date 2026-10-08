@@ -27,10 +27,14 @@ func NewRawTaskClient(baseURL, apiKey string) *RawTaskClient {
 }
 
 type CreateRawTaskRequest struct {
-	TaskArgs string `json:"task_args"`
-	TaskType int    `json:"task_type"`
-	MinVram  uint64 `json:"min_vram,omitempty"`
-	TaskFee  string `json:"task_fee"`
+	TaskArgs        string  `json:"task_args"`
+	TaskType        int     `json:"task_type"`
+	TaskVersion     *string `json:"task_version,omitempty"`
+	MinVram         uint64  `json:"min_vram,omitempty"`
+	RequiredGPU     string  `json:"required_gpu,omitempty"`
+	RequiredGPUVram uint64  `json:"required_gpu_vram,omitempty"`
+	RepeatNum       *int    `json:"repeat_num,omitempty"`
+	TaskFee         string  `json:"task_fee"`
 }
 
 type RawClientTask struct {
@@ -62,8 +66,8 @@ type BatchCreateRawTaskItemResult struct {
 }
 
 type batchCreateRawTaskEnvelope struct {
-	Message string                          `json:"message"`
-	Data    []BatchCreateRawTaskItemResult  `json:"data"`
+	Message string                         `json:"message"`
+	Data    []BatchCreateRawTaskItemResult `json:"data"`
 }
 
 type BatchGetRawTaskStatusRequest struct {
@@ -77,8 +81,8 @@ type BatchGetRawTaskStatusItemResult struct {
 }
 
 type batchGetRawTaskStatusEnvelope struct {
-	Message string                             `json:"message"`
-	Data    []BatchGetRawTaskStatusItemResult  `json:"data"`
+	Message string                            `json:"message"`
+	Data    []BatchGetRawTaskStatusItemResult `json:"data"`
 }
 
 func (c *RawTaskClient) CreateLLMTask(ctx context.Context, taskArgs string, minVram uint64, taskFeeWei *big.Int) (*RawClientTask, error) {
@@ -90,7 +94,7 @@ func (c *RawTaskClient) CreateLLMTask(ctx context.Context, taskArgs string, minV
 	}
 	body, err := json.Marshal(CreateRawTaskRequest{
 		TaskArgs: taskArgs,
-		TaskType: llmTaskType,
+		TaskType: 1,
 		MinVram:  minVram,
 		TaskFee:  taskFeeWei.String(),
 	})
@@ -122,7 +126,7 @@ func (c *RawTaskClient) CreateLLMTask(ctx context.Context, taskArgs string, minV
 	return envelope.Data, nil
 }
 
-func (c *RawTaskClient) CreateLLMTasks(ctx context.Context, tasks []CreateRawTaskRequest) ([]BatchCreateRawTaskItemResult, error) {
+func (c *RawTaskClient) CreateTasks(ctx context.Context, tasks []CreateRawTaskRequest) ([]BatchCreateRawTaskItemResult, error) {
 	body, err := json.Marshal(BatchCreateRawTaskRequest{Tasks: tasks})
 	if err != nil {
 		return nil, err
@@ -150,6 +154,10 @@ func (c *RawTaskClient) CreateLLMTasks(ctx context.Context, tasks []CreateRawTas
 		return nil, fmt.Errorf("bridge batch create task returned empty data")
 	}
 	return envelope.Data, nil
+}
+
+func (c *RawTaskClient) CreateLLMTasks(ctx context.Context, tasks []CreateRawTaskRequest) ([]BatchCreateRawTaskItemResult, error) {
+	return c.CreateTasks(ctx, tasks)
 }
 
 func (c *RawTaskClient) GetTaskStatus(ctx context.Context, clientTaskID uint) (*RawClientTask, error) {
@@ -247,6 +255,39 @@ func (c *RawTaskClient) DownloadLLMResult(ctx context.Context, clientTaskID uint
 		return nil, fmt.Errorf("bridge download result failed: %s", string(respBody))
 	}
 	return respBody, nil
+}
+
+type DownloadedResult struct {
+	Body               []byte
+	ContentType        string
+	ContentDisposition string
+}
+
+func (c *RawTaskClient) DownloadImageResult(ctx context.Context, clientTaskID uint, index uint64) (*DownloadedResult, error) {
+	url := fmt.Sprintf("%s/v1/inference_tasks/%d/images/%d", c.baseURL, clientTaskID, index)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Accept", "image/png")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("bridge download image failed: %s", string(body))
+	}
+	return &DownloadedResult{
+		Body:               body,
+		ContentType:        resp.Header.Get("Content-Type"),
+		ContentDisposition: resp.Header.Get("Content-Disposition"),
+	}, nil
 }
 
 func IsBridgeTaskTerminal(status string) bool {

@@ -110,17 +110,19 @@ func promptRuneCount(raw json.RawMessage) int {
 	return utf8.RuneCount(raw)
 }
 
-type RecordLLMCallInput struct {
+type RecordTaskCallInput struct {
 	UserID                uint
 	ProjectID             uint
-	LLMJobID              *uint
+	TaskJobID             *uint
+	TaskType              models.TaskType
+	APIType               models.TaskAPIType
 	Model                 string
 	PromptTokens          uint64
 	CompletionTokens      uint64
 	TotalTokens           uint64
 	PriorityGwei          *big.Int
 	TokenUsageApplicable  bool
-	Status                models.LLMCallStatus
+	Status                models.TaskCallStatus
 	Credits               *big.Int
 	AcceptedAt            time.Time
 	CompletedAt           time.Time
@@ -136,17 +138,17 @@ type RecordLLMCallInput struct {
 	Charge                bool
 }
 
-// ProcessLLMCall writes an llm_call_records row and, for a successful chargeable call,
+// ProcessTaskCall writes an task_call_records row and, for a successful chargeable call,
 // applies the Credits ledger debit in the same transaction. When the balance is
 // insufficient at settle time, the record is stored as success and no ledger event
 // is created. The created record ID is returned.
-func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) (uint, error) {
+func ProcessTaskCall(ctx context.Context, db *gorm.DB, in RecordTaskCallInput) (uint, error) {
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	var recordID uint
 	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
-		id, err := processLLMCallTx(tx, in)
+		id, err := processTaskCallTx(tx, in)
 		if err != nil {
 			return err
 		}
@@ -156,7 +158,7 @@ func ProcessLLMCall(ctx context.Context, db *gorm.DB, in RecordLLMCallInput) (ui
 	return recordID, err
 }
 
-func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
+func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 	if in.UserID == 0 {
 		return 0, errors.New("user id is required")
 	}
@@ -182,7 +184,7 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 	}
 
 	chargeCredits := new(big.Int).Set(credits)
-	shouldCharge := in.Charge && in.Status == models.LLMCallStatusSuccess && chargeCredits.Sign() > 0
+	shouldCharge := in.Charge && in.Status == models.TaskCallStatusSuccess && chargeCredits.Sign() > 0
 
 	if shouldCharge {
 		var account models.CreditAccount
@@ -217,43 +219,32 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 		tokenUsageApplicable = 1
 	}
 
-	record := models.LLMCallRecord{
-		UserID:                in.UserID,
-		ProjectID:             in.ProjectID,
-		LLMJobID:              in.LLMJobID,
-		Model:                 in.Model,
-		PromptTokens:          in.PromptTokens,
-		CompletionTokens:      in.CompletionTokens,
-		TotalTokens:           in.TotalTokens,
-		TokenUsageApplicable:  tokenUsageApplicable,
-		Status:                in.Status,
-		AcceptedAt:            in.AcceptedAt,
-		CompletedAt:           in.CompletedAt,
-		DurationMs:            durationMs,
-		BilledVram:            in.BilledVram,
-		EstimatedNodeSeconds:  cloneFloat64Ptr(in.EstimatedNodeSeconds),
-		VramWeight:            cloneFloat64Ptr(in.VramWeight),
-		ConstantSeconds:       cloneFloat64Ptr(in.ConstantSeconds),
-		SecondsPerInputToken:  cloneFloat64Ptr(in.SecondsPerInputToken),
-		SecondsPerOutputToken: cloneFloat64Ptr(in.SecondsPerOutputToken),
+	record := models.TaskCallRecord{
+		UserID:               in.UserID,
+		ProjectID:            in.ProjectID,
+		TaskJobID:            in.TaskJobID,
+		TaskType:             in.TaskType,
+		APIType:              in.APIType,
+		Model:                in.Model,
+		PromptTokens:         in.PromptTokens,
+		CompletionTokens:     in.CompletionTokens,
+		TotalTokens:          in.TotalTokens,
+		TokenUsageApplicable: tokenUsageApplicable,
+		Status:               in.Status,
+		AcceptedAt:           in.AcceptedAt,
+		CompletedAt:          in.CompletedAt,
+		DurationMs:           durationMs,
+		BilledVram:           in.BilledVram,
 	}
 	if in.PriorityGwei != nil {
 		record.PriorityGwei = models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)}
 	}
-	if in.TaskFeeGwei != nil {
-		record.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
-	}
-	if in.MedianPriorityGwei != nil {
-		record.MedianPriorityGwei = &models.BigInt{Int: *new(big.Int).Set(in.MedianPriorityGwei)}
-	}
-	if in.CreditsPerGwei != nil {
-		copied := *in.CreditsPerGwei
-		record.CreditsPerGwei = &copied
-	}
 	if err := tx.Select(
 		"UserID",
 		"ProjectID",
-		"LLMJobID",
+		"TaskJobID",
+		"TaskType",
+		"APIType",
 		"Model",
 		"PromptTokens",
 		"CompletionTokens",
@@ -265,14 +256,6 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 		"CompletedAt",
 		"DurationMs",
 		"BilledVram",
-		"TaskFeeGwei",
-		"MedianPriorityGwei",
-		"EstimatedNodeSeconds",
-		"VramWeight",
-		"ConstantSeconds",
-		"SecondsPerInputToken",
-		"SecondsPerOutputToken",
-		"CreditsPerGwei",
 	).Create(&record).Error; err != nil {
 		return 0, err
 	}
@@ -284,13 +267,13 @@ func processLLMCallTx(tx *gorm.DB, in RecordLLMCallInput) (uint, error) {
 	event := models.CreditEvent{
 		UserID: in.UserID,
 		Amount: models.BigInt{Int: *new(big.Int).Set(chargeCredits)},
-		Type:   models.CreditEventTypeLLMCharge,
+		Type:   models.CreditEventTypeTaskCharge,
 		RefID:  record.ID,
 		Status: models.CreditEventStatusProcessed,
 	}
 	if err := tx.Create(&event).Error; err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			return 0, fmt.Errorf("credit event already exists for llm call %d", record.ID)
+			return 0, fmt.Errorf("credit event already exists for task call %d", record.ID)
 		}
 		return 0, err
 	}

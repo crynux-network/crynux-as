@@ -7,9 +7,9 @@ import (
 )
 
 func ChatCompletions(c *gin.Context) {
-	handleLLMJobRequest(c, models.LLMAPITypeChatCompletions)
+	handleTaskJobRequest(c, models.TaskAPITypeChatCompletions)
 }
 
 func Completions(c *gin.Context) {
-	handleLLMJobRequest(c, models.LLMAPITypeCompletions)
+	handleTaskJobRequest(c, models.TaskAPITypeCompletions)
 }

@@ -65,10 +65,10 @@ type AccountUsageStats struct {
 }
 
 type ProjectUsageStats struct {
-	Range          ProjectStatsRange
-	RequestSeries  []UsageStackedCountPoint
-	CreditsSeries  []UsageSeriesPoint
-	TokenSeries    []UsageStackedTokenPoint
+	Range         ProjectStatsRange
+	RequestSeries []UsageStackedCountPoint
+	CreditsSeries []UsageSeriesPoint
+	TokenSeries   []UsageStackedTokenPoint
 }
 
 func GetAccountUsageStats(ctx context.Context, db *gorm.DB, userID uint, rangeType AccountStatsRange, now time.Time) (*AccountUsageStats, error) {
@@ -95,8 +95,8 @@ func GetAccountUsageStats(ctx context.Context, db *gorm.DB, userID uint, rangeTy
 	}
 
 	out := &AccountUsageStats{
-		Range:         rangeType,
-		Credits:       big.NewInt(0),
+		Range:          rangeType,
+		Credits:        big.NewInt(0),
 		RequestsSeries: make([]UsageCountSeriesPoint, 0, len(starts)),
 		CreditsSeries:  make([]UsageSeriesPoint, 0, len(starts)),
 	}

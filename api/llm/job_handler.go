@@ -17,9 +17,9 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const llmJobWaitTimeout = 10 * time.Minute
+const taskJobWaitTimeout = 10 * time.Minute
 
-type parsedLLMJobRequest struct {
+type parsedTaskJobRequest struct {
 	model               string
 	stream              bool
 	background          bool
@@ -30,7 +30,7 @@ type parsedLLMJobRequest struct {
 	streamIncludeUsage  bool
 }
 
-func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
+func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	project := GetProject(c)
 	if project == nil {
 		writeAuthError(c, "unauthorized")
@@ -40,23 +40,23 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, "", 0, acceptedAt, time.Now(), nil, nil)
+		_ = recordFailedCall(c.Request.Context(), project, apiType, "", 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "failed to read request body")
 		return
 	}
 
 	appCfg := config.GetConfig()
-	parsed, err := parseLLMJobRequest(body, apiType, int(appCfg.LLM.DefaultMaxTokens))
+	parsed, err := parseTaskJobRequest(body, apiType, int(appCfg.LLM.DefaultMaxTokens))
 	if err != nil {
 		model := extractModelFromBody(body)
-		_ = recordFailedCall(c.Request.Context(), project, model, 0, acceptedAt, time.Now(), nil, nil)
+		_ = recordFailedCall(c.Request.Context(), project, apiType, model, 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
 
 	userVram, err := vramlimit.ResolveUserVramLimit(parsed.vramLimit, c.Param("vram_limit"))
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -75,7 +75,7 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 	priorityGwei, err := service.ResolveEffectivePriorityGwei(project)
 	if err != nil {
 		log.Errorf("Resolve effective priority failed for project %d: %v", project.ID, err)
-		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), nil, nil)
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	}
@@ -89,17 +89,17 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 	)
 	if err != nil {
 		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, parsed.model, err)
-		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
 		writeServerError(c)
 		return
 	}
 	if err := service.EnsureSufficientBalance(&account.Balance.Int, taskFee.Credits); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
 		writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
 		return
 	}
 
-	jobInput := service.CreateLLMJobInput{
+	jobInput := service.CreateTaskJobInput{
 		Project:               project,
 		APIType:               apiType,
 		Model:                 parsed.model,
@@ -118,16 +118,16 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		SecondsPerOutputToken: float64Ptr(taskFee.SecondsPerOutputToken),
 	}
 
-	job, err := service.CreateLLMJob(c.Request.Context(), db, jobInput)
+	job, err := service.CreateTaskJob(c.Request.Context(), db, jobInput)
 	if err != nil {
 		log.Errorf("Create LLM job failed for project %d: %v", project.ID, err)
 		writeServerError(c)
 		return
 	}
 
-	finalJob, err := service.WaitForLLMJob(c.Request.Context(), db, job.ID, llmJobWaitTimeout)
+	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, taskJobWaitTimeout)
 	if err != nil {
-		if errors.Is(err, service.ErrLLMJobWaitTimeout) {
+		if errors.Is(err, service.ErrTaskJobWaitTimeout) {
 			writeClientError(c, http.StatusGatewayTimeout, "request timed out waiting for task completion")
 			return
 		}
@@ -139,7 +139,7 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		return
 	}
 
-	if finalJob.Status == models.LLMJobStatusFailed {
+	if finalJob.Status == models.TaskJobStatusFailed {
 		msg := "task failed"
 		if finalJob.ErrorMessage != nil {
 			msg = *finalJob.ErrorMessage
@@ -148,21 +148,21 @@ func handleLLMJobRequest(c *gin.Context, apiType models.LLMAPIType) {
 		return
 	}
 
-	writeCompletedLLMJobResponse(c, finalJob, parsed.streamIncludeUsage)
+	writeCompletedTaskJobResponse(c, finalJob, parsed.streamIncludeUsage)
 }
 
-func parseLLMJobRequest(body []byte, apiType models.LLMAPIType, defaultMaxTokens int) (parsedLLMJobRequest, error) {
+func parseTaskJobRequest(body []byte, apiType models.TaskAPIType, defaultMaxTokens int) (parsedTaskJobRequest, error) {
 	switch apiType {
-	case models.LLMAPITypeChatCompletions:
+	case models.TaskAPITypeChatCompletions:
 		taskArgsJSON, meta, err := llmadapter.BuildChatCompletionsTaskArgs(body, defaultMaxTokens)
 		if err != nil {
-			return parsedLLMJobRequest{}, err
+			return parsedTaskJobRequest{}, err
 		}
 		includeUsage := false
 		if meta.StreamOptions != nil {
 			includeUsage = meta.StreamOptions.IncludeUsage
 		}
-		return parsedLLMJobRequest{
+		return parsedTaskJobRequest{
 			model:               meta.Model,
 			stream:              meta.Stream,
 			vramLimit:           meta.VramLimit,
@@ -171,16 +171,16 @@ func parseLLMJobRequest(body []byte, apiType models.LLMAPIType, defaultMaxTokens
 			taskArgsJSON:        taskArgsJSON,
 			streamIncludeUsage:  includeUsage,
 		}, nil
-	case models.LLMAPITypeCompletions:
+	case models.TaskAPITypeCompletions:
 		taskArgsJSON, meta, err := llmadapter.BuildCompletionsTaskArgs(body, defaultMaxTokens)
 		if err != nil {
-			return parsedLLMJobRequest{}, err
+			return parsedTaskJobRequest{}, err
 		}
 		includeUsage := false
 		if meta.StreamOptions != nil {
 			includeUsage = meta.StreamOptions.IncludeUsage
 		}
-		return parsedLLMJobRequest{
+		return parsedTaskJobRequest{
 			model:               meta.Model,
 			stream:              meta.Stream,
 			vramLimit:           meta.VramLimit,
@@ -190,22 +190,22 @@ func parseLLMJobRequest(body []byte, apiType models.LLMAPIType, defaultMaxTokens
 			streamIncludeUsage:  includeUsage,
 		}, nil
 	default:
-		return parsedLLMJobRequest{}, errors.New("unsupported api type")
+		return parsedTaskJobRequest{}, errors.New("unsupported api type")
 	}
 }
 
-func estimatePromptTokens(body []byte, apiType models.LLMAPIType) uint64 {
+func estimatePromptTokens(body []byte, apiType models.TaskAPIType) uint64 {
 	switch apiType {
-	case models.LLMAPITypeChatCompletions:
+	case models.TaskAPITypeChatCompletions:
 		return service.EstimatePromptTokensFromChatBody(body)
-	case models.LLMAPITypeCompletions:
+	case models.TaskAPITypeCompletions:
 		return service.EstimatePromptTokensFromCompletionsBody(body)
 	default:
 		return 1
 	}
 }
 
-func writeCompletedLLMJobResponse(c *gin.Context, job *models.LLMJob, streamIncludeUsage bool) {
+func writeCompletedTaskJobResponse(c *gin.Context, job *models.TaskJob, streamIncludeUsage bool) {
 	if job.FormattedResultJSON == nil {
 		writeServerError(c)
 		return
@@ -213,14 +213,14 @@ func writeCompletedLLMJobResponse(c *gin.Context, job *models.LLMJob, streamIncl
 	responseBytes := []byte(*job.FormattedResultJSON)
 
 	switch job.APIType {
-	case models.LLMAPITypeChatCompletions:
+	case models.TaskAPITypeChatCompletions:
 		if job.Stream {
 			if err := llmadapter.StreamChatCompletions(c, responseBytes, streamIncludeUsage); err != nil {
 				log.Errorf("stream chat completion for job %d failed: %v", job.ID, err)
 			}
 			return
 		}
-	case models.LLMAPITypeCompletions:
+	case models.TaskAPITypeCompletions:
 		if job.Stream {
 			if err := llmadapter.StreamCompletions(c, responseBytes, streamIncludeUsage); err != nil {
 				log.Errorf("stream completion for job %d failed: %v", job.ID, err)

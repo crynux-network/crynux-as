@@ -22,19 +22,19 @@ type GetChargesInput struct {
 }
 
 type ChargeData struct {
-	ID               uint                 `json:"id" description:"The LLM call record ID"`
-	CreatedAt        time.Time            `json:"created_at" description:"When the call was recorded"`
-	ProjectID        uint                 `json:"project_id" description:"The project that made the call"`
-	ProjectName      string               `json:"project_name" description:"The current project name"`
-	Model            string               `json:"model" description:"The model ID used for the call"`
-	PromptTokens     uint64               `json:"prompt_tokens" description:"Billed prompt token count"`
-	CompletionTokens uint64               `json:"completion_tokens" description:"Billed completion token count"`
-	TotalTokens      uint64               `json:"total_tokens" description:"Billed total token count"`
-	PriorityGwei     string               `json:"priority_gwei" description:"Project Cost Level priority in Gwei used for the charge"`
-	Credits          models.BigInt        `json:"credits" description:"Credits charged for the call"`
-	BilledVram       uint64               `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
-	DurationMs       uint64               `json:"duration_ms" description:"Call duration in milliseconds"`
-	Status           models.LLMCallStatus `json:"status" description:"Call status (success or failed)"`
+	ID               uint                  `json:"id" description:"The LLM call record ID"`
+	CreatedAt        time.Time             `json:"created_at" description:"When the call was recorded"`
+	ProjectID        uint                  `json:"project_id" description:"The project that made the call"`
+	ProjectName      string                `json:"project_name" description:"The current project name"`
+	Model            string                `json:"model" description:"The model ID used for the call"`
+	PromptTokens     uint64                `json:"prompt_tokens" description:"Billed prompt token count"`
+	CompletionTokens uint64                `json:"completion_tokens" description:"Billed completion token count"`
+	TotalTokens      uint64                `json:"total_tokens" description:"Billed total token count"`
+	PriorityGwei     string                `json:"priority_gwei" description:"Project Cost Level priority in Gwei used for the charge"`
+	Credits          models.BigInt         `json:"credits" description:"Credits charged for the call"`
+	BilledVram       uint64                `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
+	DurationMs       uint64                `json:"duration_ms" description:"Call duration in milliseconds"`
+	Status           models.TaskCallStatus `json:"status" description:"Call status (success or failed)"`
 }
 
 type GetChargesData struct {
@@ -60,7 +60,7 @@ type chargeRow struct {
 	Credits          models.BigInt
 	BilledVram       uint64
 	DurationMs       uint64
-	Status           models.LLMCallStatus
+	Status           models.TaskCallStatus
 }
 
 func GetCharges(c *gin.Context, in *GetChargesInput) (*GetChargesResponse, error) {
@@ -99,7 +99,7 @@ func GetCharges(c *gin.Context, in *GetChargesInput) (*GetChargesResponse, error
 	baseEvents := db.WithContext(dbCtx).
 		Table("credit_events").
 		Where("user_id = ?", user.ID).
-		Where("type = ?", models.CreditEventTypeLLMCharge).
+		Where("type = ?", models.CreditEventTypeTaskCharge).
 		Where("status = ?", models.CreditEventStatusProcessed)
 
 	var total int64
@@ -141,7 +141,7 @@ FROM (
 	ORDER BY id DESC
 	LIMIT ? OFFSET ?
 ) AS e
-JOIN llm_call_records AS r ON r.id = e.ref_id
+JOIN task_call_records AS r ON r.id = e.ref_id
 LEFT JOIN projects AS p ON p.id = r.project_id
 ORDER BY e.id DESC
 `
@@ -150,7 +150,7 @@ ORDER BY e.id DESC
 	if err := db.WithContext(dbCtx).Raw(
 		query,
 		user.ID,
-		models.CreditEventTypeLLMCharge,
+		models.CreditEventTypeTaskCharge,
 		models.CreditEventStatusProcessed,
 		limit,
 		offset,

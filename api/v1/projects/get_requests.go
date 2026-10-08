@@ -20,18 +20,18 @@ type GetProjectRequestsInput struct {
 }
 
 type ProjectRequestData struct {
-	ID               uint            `json:"id" description:"Numeric ID from the source table"`
-	Source           string          `json:"source" description:"job or call_record"`
-	CreatedAt        time.Time       `json:"created_at" description:"When the request was accepted"`
-	Model            string          `json:"model" description:"The model ID used for the call"`
-	PromptTokens     *uint64         `json:"prompt_tokens" description:"Billed prompt token count, null while in progress"`
-	CompletionTokens *uint64         `json:"completion_tokens" description:"Billed completion token count, null while in progress"`
-	TotalTokens      *uint64         `json:"total_tokens" description:"Billed total token count, null while in progress"`
-	PriorityGwei     string          `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
-	Credits          *models.BigInt  `json:"credits" description:"Credits charged, null while in progress"`
-	BilledVram       uint64          `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
-	DurationMs       *uint64         `json:"duration_ms" description:"Call duration in milliseconds, null while in progress"`
-	Status           string          `json:"status" description:"queued, in_progress, success, or failed"`
+	ID               uint           `json:"id" description:"Numeric ID from the source table"`
+	Source           string         `json:"source" description:"job or call_record"`
+	CreatedAt        time.Time      `json:"created_at" description:"When the request was accepted"`
+	Model            string         `json:"model" description:"The model ID used for the call"`
+	PromptTokens     *uint64        `json:"prompt_tokens" description:"Billed prompt token count, null while in progress"`
+	CompletionTokens *uint64        `json:"completion_tokens" description:"Billed completion token count, null while in progress"`
+	TotalTokens      *uint64        `json:"total_tokens" description:"Billed total token count, null while in progress"`
+	PriorityGwei     string         `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
+	Credits          *models.BigInt `json:"credits" description:"Credits charged, null while in progress"`
+	BilledVram       uint64         `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
+	DurationMs       *uint64        `json:"duration_ms" description:"Call duration in milliseconds, null while in progress"`
+	Status           string         `json:"status" description:"queued, in_progress, success, or failed"`
 }
 
 type GetProjectRequestsData struct {
@@ -111,7 +111,7 @@ FROM (
 		END AS status
 	FROM (
 		SELECT id, created_at, model, priority_gwei, billed_vram, status
-		FROM llm_jobs
+		FROM task_jobs
 		WHERE project_id = ?
 			AND status IN (?, ?, ?)
 		ORDER BY created_at DESC, id DESC
@@ -148,7 +148,7 @@ FROM (
 			billed_vram,
 			duration_ms,
 			status
-		FROM llm_call_records
+		FROM task_call_records
 		WHERE project_id = ?
 		ORDER BY created_at DESC, id DESC
 		LIMIT ?
@@ -165,16 +165,16 @@ LIMIT ?
 	var rows []projectRequestRow
 	if err := db.WithContext(dbCtx).Raw(
 		query,
-		models.LLMJobStatusPendingSubmit,
+		models.TaskJobStatusPendingSubmit,
 		in.ProjectID,
-		models.LLMJobStatusPendingSubmit,
-		models.LLMJobStatusSubmitted,
-		models.LLMJobStatusInProgress,
+		models.TaskJobStatusPendingSubmit,
+		models.TaskJobStatusSubmitted,
+		models.TaskJobStatusInProgress,
 		limit,
-		models.LLMCallStatusSuccess,
+		models.TaskCallStatusSuccess,
 		in.ProjectID,
 		limit,
-		models.CreditEventTypeLLMCharge,
+		models.CreditEventTypeTaskCharge,
 		models.CreditEventStatusProcessed,
 		limit,
 	).Scan(&rows).Error; err != nil {
@@ -185,9 +185,9 @@ LIMIT ?
 	requests := make([]ProjectRequestData, 0, len(rows))
 	for _, row := range rows {
 		item := ProjectRequestData{
-			ID:         row.ID,
-			Source:     row.Source,
-			CreatedAt:  row.CreatedAt,
+			ID:           row.ID,
+			Source:       row.Source,
+			CreatedAt:    row.CreatedAt,
 			Model:        row.Model,
 			PriorityGwei: row.PriorityGwei,
 			BilledVram:   row.BilledVram,

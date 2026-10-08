@@ -13,9 +13,10 @@ type CreditAccount struct {
 type CreditEventType int8
 
 const (
-	CreditEventTypeDeposit     CreditEventType = 0
-	CreditEventTypeLLMCharge   CreditEventType = 1
-	CreditEventTypeSignupBonus CreditEventType = 2
+	CreditEventTypeDeposit        CreditEventType = 0
+	CreditEventTypeTaskCharge     CreditEventType = 1
+	CreditEventTypeSignupBonus    CreditEventType = 2
+	CreditEventTypeOpeningBalance CreditEventType = 3
 )
 
 type CreditEventStatus int8

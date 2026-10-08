@@ -12,6 +12,7 @@ import (
 )
 
 const loadedModelTypeLLM = "llm"
+const loadedModelTypeSD = "sd"
 
 type LoadedLLMModel struct {
 	ModelID   string
@@ -29,12 +30,19 @@ var llmModelsCache = &loadedModelsCache{
 	models: map[string]LoadedLLMModel{},
 }
 
+var sdModelsCache = &loadedModelsCache{
+	models: map[string]LoadedLLMModel{},
+}
+
 // InitLoadedModelsCache sets the Relay client used by cache refreshes. It must
 // be called once at startup before RefreshLoadedModels.
 func InitLoadedModelsCache(client *relay.Client) {
 	llmModelsCache.mu.Lock()
 	defer llmModelsCache.mu.Unlock()
 	llmModelsCache.client = client
+	sdModelsCache.mu.Lock()
+	sdModelsCache.client = client
+	sdModelsCache.mu.Unlock()
 }
 
 // RefreshLoadedModels fetches the loaded models from the Relay and replaces the
@@ -52,9 +60,16 @@ func RefreshLoadedModels(ctx context.Context) error {
 		return err
 	}
 
-	snapshot := make(map[string]LoadedLLMModel)
+	llmSnapshot := make(map[string]LoadedLLMModel)
+	sdSnapshot := make(map[string]LoadedLLMModel)
 	for _, loadedModel := range loadedModels {
-		if loadedModel.ModelType != loadedModelTypeLLM {
+		var snapshot map[string]LoadedLLMModel
+		switch loadedModel.ModelType {
+		case loadedModelTypeLLM:
+			snapshot = llmSnapshot
+		case loadedModelTypeSD:
+			snapshot = sdSnapshot
+		default:
 			continue
 		}
 		modelID := strings.ToLower(loadedModel.ModelID)
@@ -66,11 +81,34 @@ func RefreshLoadedModels(ctx context.Context) error {
 	}
 
 	llmModelsCache.mu.Lock()
-	llmModelsCache.models = snapshot
+	llmModelsCache.models = llmSnapshot
 	llmModelsCache.mu.Unlock()
+	sdModelsCache.mu.Lock()
+	sdModelsCache.models = sdSnapshot
+	sdModelsCache.mu.Unlock()
 
-	log.Infof("loaded models cache refreshed: %d LLM models", len(snapshot))
+	log.Infof("loaded models cache refreshed: %d LLM models, %d image models", len(llmSnapshot), len(sdSnapshot))
 	return nil
+}
+
+func GetLoadedSDModel(modelID string) (LoadedLLMModel, bool) {
+	sdModelsCache.mu.RLock()
+	defer sdModelsCache.mu.RUnlock()
+	model, ok := sdModelsCache.models[strings.ToLower(modelID)]
+	return model, ok
+}
+
+func ListLoadedSDModels() []LoadedLLMModel {
+	sdModelsCache.mu.RLock()
+	models := make([]LoadedLLMModel, 0, len(sdModelsCache.models))
+	for _, model := range sdModelsCache.models {
+		models = append(models, model)
+	}
+	sdModelsCache.mu.RUnlock()
+	sort.Slice(models, func(i, j int) bool {
+		return models[i].ModelID < models[j].ModelID
+	})
+	return models
 }
 
 // GetLoadedLLMModel looks up a cached LLM model by model ID (case-insensitive).

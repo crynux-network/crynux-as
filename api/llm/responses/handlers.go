@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	projectContextKey = "llm_project"
-	llmJobWaitTimeout = 10 * time.Minute
+	projectContextKey  = "llm_project"
+	taskJobWaitTimeout = 10 * time.Minute
 )
 
 var estimateTaskFeeFn = service.EstimateTaskFee
@@ -130,9 +130,9 @@ func CreateResponse(c *gin.Context) {
 		return
 	}
 
-	jobInput := service.CreateLLMJobInput{
+	jobInput := service.CreateTaskJobInput{
 		Project:               project,
-		APIType:               models.LLMAPITypeResponses,
+		APIType:               models.TaskAPITypeResponses,
 		Model:                 req.Model,
 		BilledVram:            effectiveVram,
 		Background:            req.Background,
@@ -148,7 +148,7 @@ func CreateResponse(c *gin.Context) {
 		SecondsPerOutputToken: float64Ptr(taskFee.SecondsPerOutputToken),
 	}
 
-	job, err := service.CreateLLMJob(c.Request.Context(), db, jobInput)
+	job, err := service.CreateTaskJob(c.Request.Context(), db, jobInput)
 	if err != nil {
 		log.Errorf("Create LLM job failed for project %d: %v", project.ID, err)
 		writeServerError(c)
@@ -160,9 +160,9 @@ func CreateResponse(c *gin.Context) {
 		return
 	}
 
-	finalJob, err := service.WaitForLLMJob(c.Request.Context(), db, job.ID, llmJobWaitTimeout)
+	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, taskJobWaitTimeout)
 	if err != nil {
-		if errors.Is(err, service.ErrLLMJobWaitTimeout) {
+		if errors.Is(err, service.ErrTaskJobWaitTimeout) {
 			writeClientError(c, http.StatusGatewayTimeout, "request timed out waiting for task completion")
 			return
 		}
@@ -174,7 +174,7 @@ func CreateResponse(c *gin.Context) {
 		return
 	}
 
-	if finalJob.Status == models.LLMJobStatusFailed {
+	if finalJob.Status == models.TaskJobStatusFailed {
 		payload, err := loadResponsesPayload(finalJob)
 		if err != nil {
 			log.Errorf("format failed response job %d: %v", finalJob.ID, err)
@@ -206,9 +206,9 @@ func GetResponse(c *gin.Context) {
 	}
 
 	db := config.GetDB()
-	job, err := service.GetLLMJobByPublicID(c.Request.Context(), db, project.ID, publicID)
+	job, err := service.GetTaskJobByPublicID(c.Request.Context(), db, project.ID, publicID)
 	if err != nil {
-		if errors.Is(err, service.ErrLLMJobNotFound) {
+		if errors.Is(err, service.ErrTaskJobNotFound) {
 			writeClientError(c, http.StatusNotFound, "response not found")
 			return
 		}
@@ -216,7 +216,7 @@ func GetResponse(c *gin.Context) {
 		writeServerError(c)
 		return
 	}
-	if job.APIType != models.LLMAPITypeResponses {
+	if job.APIType != models.TaskAPITypeResponses {
 		writeClientError(c, http.StatusNotFound, "response not found")
 		return
 	}
@@ -284,7 +284,7 @@ func writeLLMAdapterError(c *gin.Context, err error) {
 	writeClientError(c, http.StatusBadRequest, err.Error())
 }
 
-func writeResponsesJob(c *gin.Context, job *models.LLMJob, status string) {
+func writeResponsesJob(c *gin.Context, job *models.TaskJob, status string) {
 	payload, err := llmadapter.FormatResponsesPendingObject(llmadapter.ResponsesObjectParams{
 		ID:         job.PublicID,
 		Model:      job.Model,
@@ -300,25 +300,25 @@ func writeResponsesJob(c *gin.Context, job *models.LLMJob, status string) {
 	c.Data(http.StatusOK, "application/json", payload)
 }
 
-func loadResponsesPayload(job *models.LLMJob) ([]byte, error) {
-	if job.Status == models.LLMJobStatusCompleted && job.FormattedResultJSON != nil {
+func loadResponsesPayload(job *models.TaskJob) ([]byte, error) {
+	if job.Status == models.TaskJobStatusCompleted && job.FormattedResultJSON != nil {
 		return []byte(*job.FormattedResultJSON), nil
 	}
 	params := responsesObjectParamsFromJob(job)
-	if job.Status == models.LLMJobStatusFailed {
+	if job.Status == models.TaskJobStatusFailed {
 		return llmadapter.FormatResponsesObject(params, nil)
 	}
 	return llmadapter.FormatResponsesPendingObject(params)
 }
 
-func responsesObjectParamsFromJob(job *models.LLMJob) llmadapter.ResponsesObjectParams {
+func responsesObjectParamsFromJob(job *models.TaskJob) llmadapter.ResponsesObjectParams {
 	status := llmadapter.ResponsesStatusQueued
 	switch job.Status {
-	case models.LLMJobStatusSubmitted, models.LLMJobStatusInProgress:
+	case models.TaskJobStatusSubmitted, models.TaskJobStatusInProgress:
 		status = llmadapter.ResponsesStatusInProgress
-	case models.LLMJobStatusCompleted:
+	case models.TaskJobStatusCompleted:
 		status = llmadapter.ResponsesStatusCompleted
-	case models.LLMJobStatusFailed:
+	case models.TaskJobStatusFailed:
 		status = llmadapter.ResponsesStatusFailed
 	}
 
@@ -329,7 +329,7 @@ func responsesObjectParamsFromJob(job *models.LLMJob) llmadapter.ResponsesObject
 		Status:     status,
 		Background: job.Background,
 	}
-	if job.Status == models.LLMJobStatusFailed && job.ErrorMessage != nil {
+	if job.Status == models.TaskJobStatusFailed && job.ErrorMessage != nil {
 		params.Error = &llmadapter.ResponsesAPIError{
 			Message: *job.ErrorMessage,
 			Type:    "server_error",
@@ -382,13 +382,15 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 	if priorityGwei == nil {
 		priorityGwei = &project.PriorityGwei.Int
 	}
-	in := service.RecordLLMCallInput{
+	in := service.RecordTaskCallInput{
 		UserID:               project.UserID,
 		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeLLM,
+		APIType:              models.TaskAPITypeResponses,
 		Model:                model,
 		PriorityGwei:         priorityGwei,
 		TokenUsageApplicable: true,
-		Status:               models.LLMCallStatusFailed,
+		Status:               models.TaskCallStatusFailed,
 		Credits:              big.NewInt(0),
 		AcceptedAt:           acceptedAt,
 		CompletedAt:          completedAt,
@@ -403,7 +405,7 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 		in.EstimatedNodeSeconds = &estimated
 		in.VramWeight = &weight
 	}
-	_, err := service.ProcessLLMCall(ctx, config.GetDB(), in)
+	_, err := service.ProcessTaskCall(ctx, config.GetDB(), in)
 	return err
 }
 
@@ -423,18 +425,18 @@ func loadPreviousResponsesJob(
 	projectID uint,
 	publicID string,
 	retentionDays uint64,
-) (*models.LLMJob, error) {
-	job, err := service.GetLLMJobByPublicID(ctx, db, projectID, strings.TrimSpace(publicID))
+) (*models.TaskJob, error) {
+	job, err := service.GetTaskJobByPublicID(ctx, db, projectID, strings.TrimSpace(publicID))
 	if err != nil {
-		if errors.Is(err, service.ErrLLMJobNotFound) {
+		if errors.Is(err, service.ErrTaskJobNotFound) {
 			return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
 		}
 		return nil, err
 	}
-	if job.APIType != models.LLMAPITypeResponses {
+	if job.APIType != models.TaskAPITypeResponses {
 		return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
 	}
-	if job.Status != models.LLMJobStatusCompleted {
+	if job.Status != models.TaskJobStatusCompleted {
 		return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
 	}
 	if isResponsesJobExpired(job, retentionDays) {
@@ -443,12 +445,12 @@ func loadPreviousResponsesJob(
 	return job, nil
 }
 
-func isResponsesJobExpired(job *models.LLMJob, retentionDays uint64) bool {
+func isResponsesJobExpired(job *models.TaskJob, retentionDays uint64) bool {
 	if job == nil || retentionDays == 0 {
 		return true
 	}
 	if job.CompletedAt == nil {
 		return false
 	}
-	return job.CompletedAt.Before(service.LLMJobRetentionCutoff(retentionDays))
+	return job.CompletedAt.Before(service.TaskJobRetentionCutoff(retentionDays))
 }

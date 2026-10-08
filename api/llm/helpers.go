@@ -26,7 +26,7 @@ func loadCreditAccount(ctx context.Context, db *gorm.DB, userID uint) (*models.C
 	return &account, nil
 }
 
-func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, acceptedAt, completedAt time.Time, priorityGwei *big.Int, taskFee *service.CalcTaskFeeResult) error {
+func recordFailedCall(ctx context.Context, project *models.Project, apiType models.TaskAPIType, model string, billedVram uint64, acceptedAt, completedAt time.Time, priorityGwei *big.Int, taskFee *service.CalcTaskFeeResult) error {
 	if acceptedAt.IsZero() {
 		acceptedAt = completedAt
 	}
@@ -39,13 +39,15 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 	if priorityGwei == nil {
 		priorityGwei = &project.PriorityGwei.Int
 	}
-	in := service.RecordLLMCallInput{
+	in := service.RecordTaskCallInput{
 		UserID:               project.UserID,
 		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeLLM,
+		APIType:              apiType,
 		Model:                model,
 		PriorityGwei:         priorityGwei,
 		TokenUsageApplicable: true,
-		Status:               models.LLMCallStatusFailed,
+		Status:               models.TaskCallStatusFailed,
 		Credits:              big.NewInt(0),
 		AcceptedAt:           acceptedAt,
 		CompletedAt:          completedAt,
@@ -60,7 +62,7 @@ func recordFailedCall(ctx context.Context, project *models.Project, model string
 		in.EstimatedNodeSeconds = &estimated
 		in.VramWeight = &weight
 	}
-	_, err := service.ProcessLLMCall(ctx, config.GetDB(), in)
+	_, err := service.ProcessTaskCall(ctx, config.GetDB(), in)
 	return err
 }
 

@@ -8,11 +8,11 @@ import (
 	"crynux_as/models"
 )
 
-func TestLLMJobTaskFeeWei(t *testing.T) {
-	job := &models.LLMJob{
+func TestTaskJobTaskFeeWei(t *testing.T) {
+	job := &models.TaskJob{
 		TaskFeeGwei: &models.BigInt{Int: *big.NewInt(321)},
 	}
-	got, err := llmJobTaskFeeWei(job)
+	got, err := taskJobTaskFeeWei(job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,15 +21,15 @@ func TestLLMJobTaskFeeWei(t *testing.T) {
 	}
 }
 
-func TestLLMJobTaskFeeWeiSupportsFeeAboveUint64(t *testing.T) {
+func TestTaskJobTaskFeeWeiSupportsFeeAboveUint64(t *testing.T) {
 	taskFeeGwei, ok := new(big.Int).SetString("20000000000", 10)
 	if !ok {
 		t.Fatal("parse task fee")
 	}
-	job := &models.LLMJob{
+	job := &models.TaskJob{
 		TaskFeeGwei: &models.BigInt{Int: *taskFeeGwei},
 	}
-	got, err := llmJobTaskFeeWei(job)
+	got, err := taskJobTaskFeeWei(job)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,30 +38,30 @@ func TestLLMJobTaskFeeWeiSupportsFeeAboveUint64(t *testing.T) {
 	}
 }
 
-func TestLLMJobTaskFeeWeiRejectsMissingAndNegative(t *testing.T) {
-	if _, err := llmJobTaskFeeWei(&models.LLMJob{}); err == nil {
+func TestTaskJobTaskFeeWeiRejectsMissingAndNegative(t *testing.T) {
+	if _, err := taskJobTaskFeeWei(&models.TaskJob{}); err == nil {
 		t.Fatal("missing task fee was accepted")
 	}
 
-	job := &models.LLMJob{
+	job := &models.TaskJob{
 		TaskFeeGwei: &models.BigInt{Int: *big.NewInt(-1)},
 	}
-	if _, err := llmJobTaskFeeWei(job); err == nil {
+	if _, err := taskJobTaskFeeWei(job); err == nil {
 		t.Fatal("negative task fee was accepted")
 	}
 }
 
-func TestIsLLMJobSubmitTimedOut(t *testing.T) {
+func TestIsTaskJobSubmitTimedOut(t *testing.T) {
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	timeout := 10 * time.Minute
 
-	if isLLMJobSubmitTimedOut(&models.LLMJob{CreatedAt: now.Add(-9 * time.Minute)}, timeout, now) {
+	if isTaskJobSubmitTimedOut(&models.TaskJob{CreatedAt: now.Add(-9 * time.Minute)}, timeout, now) {
 		t.Fatal("job younger than timeout was treated as timed out")
 	}
-	if !isLLMJobSubmitTimedOut(&models.LLMJob{CreatedAt: now.Add(-10 * time.Minute)}, timeout, now) {
+	if !isTaskJobSubmitTimedOut(&models.TaskJob{CreatedAt: now.Add(-10 * time.Minute)}, timeout, now) {
 		t.Fatal("job at timeout was not treated as timed out")
 	}
-	if !isLLMJobSubmitTimedOut(&models.LLMJob{CreatedAt: now.Add(-11 * time.Minute)}, timeout, now) {
+	if !isTaskJobSubmitTimedOut(&models.TaskJob{CreatedAt: now.Add(-11 * time.Minute)}, timeout, now) {
 		t.Fatal("job older than timeout was not treated as timed out")
 	}
 }

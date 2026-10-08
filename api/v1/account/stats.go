@@ -31,13 +31,13 @@ type AccountStatsCountPoint struct {
 }
 
 type GetAccountStatsData struct {
-	Range            string                   `json:"range"`
-	RequestCount     uint64                   `json:"request_count"`
-	PromptTokens     uint64                   `json:"prompt_tokens"`
-	CompletionTokens uint64                   `json:"completion_tokens"`
-	Credits          string                   `json:"credits"`
-	SuccessRate      float64                  `json:"success_rate"`
-	RequestsSeries   []AccountStatsCountPoint `json:"requests_series"`
+	Range            string                    `json:"range"`
+	RequestCount     uint64                    `json:"request_count"`
+	PromptTokens     uint64                    `json:"prompt_tokens"`
+	CompletionTokens uint64                    `json:"completion_tokens"`
+	Credits          string                    `json:"credits"`
+	SuccessRate      float64                   `json:"success_rate"`
+	RequestsSeries   []AccountStatsCountPoint  `json:"requests_series"`
 	CreditsSeries    []AccountStatsSeriesPoint `json:"credits_series"`
 }
 

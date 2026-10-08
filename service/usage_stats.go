@@ -31,7 +31,7 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 			First(&progress).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			var maxID uint
-			if err := tx.Model(&models.LLMCallRecord{}).
+			if err := tx.Model(&models.TaskCallRecord{}).
 				Select("COALESCE(MAX(id), 0)").
 				Scan(&maxID).Error; err != nil {
 				return err
@@ -52,7 +52,7 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 			return err
 		}
 
-		var records []models.LLMCallRecord
+		var records []models.TaskCallRecord
 		if err := tx.Where("id > ?", progress.LastCallRecordID).
 			Order("id ASC").
 			Limit(usageStatsBatchSize).
@@ -73,7 +73,7 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 		var events []models.CreditEvent
 		if err := tx.Where(
 			"type = ? AND status = ? AND ref_id IN ?",
-			models.CreditEventTypeLLMCharge,
+			models.CreditEventTypeTaskCharge,
 			models.CreditEventStatusProcessed,
 			recordIDs,
 		).Find(&events).Error; err != nil {
@@ -115,7 +115,7 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 	return processed, err
 }
 
-func applyCallRecordToBaseStats(tx *gorm.DB, record models.LLMCallRecord, credits *big.Int) error {
+func applyCallRecordToBaseStats(tx *gorm.DB, record models.TaskCallRecord, credits *big.Int) error {
 	if record.UserID == 0 || record.ProjectID == 0 {
 		return fmt.Errorf("call record %d missing user_id or project_id", record.ID)
 	}
@@ -123,7 +123,7 @@ func applyCallRecordToBaseStats(tx *gorm.DB, record models.LLMCallRecord, credit
 	tenMinStart := TenMinuteStartUnix(record.AcceptedAt.Unix())
 
 	var successInc, failureInc uint64
-	if record.Status == models.LLMCallStatusSuccess {
+	if record.Status == models.TaskCallStatusSuccess {
 		successInc = 1
 	} else {
 		failureInc = 1

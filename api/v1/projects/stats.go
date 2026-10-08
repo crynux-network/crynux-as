@@ -129,10 +129,10 @@ type CompletionDurationBucketData struct {
 }
 
 type GetProjectCompletionDurationStatsData struct {
-	Range       string                          `json:"range"`
-	WindowStart int64                           `json:"window_start"`
-	WindowEnd   int64                           `json:"window_end"`
-	Buckets     []CompletionDurationBucketData  `json:"buckets"`
+	Range       string                         `json:"range"`
+	WindowStart int64                          `json:"window_start"`
+	WindowEnd   int64                          `json:"window_end"`
+	Buckets     []CompletionDurationBucketData `json:"buckets"`
 }
 
 type GetProjectCompletionDurationStatsResponse struct {
@@ -212,10 +212,10 @@ type ProjectModelStatsItem struct {
 }
 
 type GetProjectModelStatsData struct {
-	Range       string                   `json:"range"`
-	WindowStart int64                    `json:"window_start"`
-	WindowEnd   int64                    `json:"window_end"`
-	Models      []ProjectModelStatsItem  `json:"models"`
+	Range       string                  `json:"range"`
+	WindowStart int64                   `json:"window_start"`
+	WindowEnd   int64                   `json:"window_end"`
+	Models      []ProjectModelStatsItem `json:"models"`
 }
 
 type GetProjectModelStatsResponse struct {
