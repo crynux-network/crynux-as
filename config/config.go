@@ -170,6 +170,9 @@ func checkLLMConfig() error {
 	if appConfig.LLM.ExecutionTimeCacheTTL == 0 {
 		return errors.New("llm.execution_time_cache_ttl is not set")
 	}
+	if appConfig.LLM.MinCatalogOnDiskNodeCount == 0 {
+		return errors.New("llm.min_catalog_on_disk_node_count is not set")
+	}
 	if appConfig.LLM.BaseVRAM == 0 {
 		return errors.New("llm.base_vram is not set")
 	}

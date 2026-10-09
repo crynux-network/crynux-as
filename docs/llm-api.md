@@ -146,11 +146,13 @@ The project MUST have status active. A request failing any of these checks MUST 
 
 ## Model Catalog
 
-The model catalog is the in-memory LLM loaded-models cache refreshed from the Relay `GET /v2/loaded-models` API (see [architecture.md](./architecture.md)). All projects share the same catalog. A cached model's `min_vram` is the minimum VRAM in GB observed across historical successful executions of the model on the Crynux Network. The LLM catalog MUST be keyed only by `model_id`. SD rows and multi-variant Image catalog entries MUST NOT appear in this catalog. The list and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT include a `variant` field.
+The model catalog is the in-memory LLM catalog snapshot built during each successful loaded-models refresh from the Relay `GET /v2/loaded-models` API (see [architecture.md](./architecture.md)). All projects share the same catalog. A cached model's `min_vram` is the minimum VRAM in GB observed across historical successful executions of the model on the Crynux Network. The LLM catalog MUST be keyed only by `model_id`. SD rows and multi-variant Image catalog entries MUST NOT appear in this catalog. The list and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT include a `variant` field.
+
+The catalog snapshot MUST include only models whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. The full loaded-models cache MUST retain every Relay LLM row for default `min_vram` lookup. Catalog list and retrieve MUST read the catalog snapshot and MUST NOT re-filter the full cache on each request.
 
 ### `GET /api/<endpoint_token>/v1/models`
 
-Returns the OpenAI list-models response built from the cache:
+Returns the OpenAI list-models response built from the catalog snapshot:
 
 ```json
 {
@@ -181,7 +183,7 @@ Requirements:
 
 ### `GET /api/<endpoint_token>/v1/models/<model>`
 
-Returns the single model object described above for a known model ID. The lookup MUST be case-insensitive. An unknown model MUST return HTTP 404 with the OpenAI error shape:
+Returns the single model object described above for a model ID present in the catalog snapshot. The lookup MUST be case-insensitive. A model ID absent from the catalog snapshot, including a model present only in the full loaded-models cache because its `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, MUST return HTTP 404 with the OpenAI error shape:
 
 ```json
 {
@@ -275,6 +277,7 @@ llm:
   loaded_models_refresh_interval: 1800
   queued_priority_refresh_interval: 300
   execution_time_cache_ttl: 300
+  min_catalog_on_disk_node_count: 3
   base_vram: 8
   empty_queue_median_priority_gwei: "34"
   min_priority_gwei: "1"
@@ -290,6 +293,7 @@ llm:
 * `loaded_models_refresh_interval` is the loaded-models cache refresh interval in seconds. Every YAML configuration template MUST set it to `1800`.
 * `queued_priority_refresh_interval` is the queued-task priority snapshot refresh interval in seconds. Every YAML configuration template MUST set it to `300`.
 * `execution_time_cache_ttl` is the per-key TTL in seconds for LLM execution-time coefficients cached from Relay. Every YAML configuration template MUST set it to `300`.
+* `min_catalog_on_disk_node_count` is the minimum Relay `on_disk_node_count` required for a model to enter the public LLM and Image catalog snapshots used by `GET /models`, `GET /models/<model>`, and `GET /models/image`. Every YAML configuration template MUST set it to `3`. Configuration loading MUST fail when the value is zero or missing. A changed value MUST take effect on the next successful loaded-models refresh.
 * `base_vram` is the VRAM weight base in GB used by Task Fee Estimation and Credits. Operators MUST keep it aligned with Relay `task_pricing.base_vram`. Every YAML configuration template MUST set it to `8`.
 * `empty_queue_median_priority_gwei` is the median priority hint used when the queued-priority cache has never observed a non-empty queue, and when creating a project with no usable live or remembered median. It MUST NOT enter `billable_gwei` except when it becomes the project's stored `priority_gwei` at project creation through the Queue Median Hint rules. Every YAML configuration template MUST set it to a positive decimal integer string. Every Gwei-denominated LLM configuration and response field whose name ends in `_gwei` MUST use a decimal integer string.
 * `min_priority_gwei` and `max_priority_gwei` are the hard bounds for project Cost Level values. They MUST be positive decimal integer strings. Configuration loading MUST fail when `min_priority_gwei` is greater than `max_priority_gwei`.

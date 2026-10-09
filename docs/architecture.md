@@ -34,8 +34,8 @@ flowchart LR
 * **Bridge client** (`bridge/`): submits persisted LLM jobs to the Crynux Bridge raw task APIs using the platform-level Bridge API key from the configuration. AS parses public OpenAI requests into canonical `GPTTaskArgs`, including `response_format`, function tools, and `tool_choice`; queries Bridge ClientTask status; downloads raw `GPTTaskResponse` JSON; parses declared tool formats by generated syntax; and formats chat completions, completions, and responses output locally. Structured JSON content remains ordinary assistant content. The resolved effective VRAM is sent as `min_vram` on raw task creation. See [llm-api.md](./llm-api.md).
 * **Task job worker** (`service/`, `tasks/`): one background loop that each tick loads a bounded batch of unfinished `task_jobs`, batch-submits LLM and Image jobs to Bridge, batch-queries ClientTask status for in-flight jobs, handles the result by task type and API type, and performs one-time Credits settlement before marking the job `completed`. The loop MUST NOT block on a single job until that job reaches a terminal Bridge status. Worker startup MUST recover incomplete jobs from the database. A separate hourly retention loop MUST delete eligible terminal jobs older than `llm.job_retention_days`. A separate Credits-lock reconciler MUST run at startup and periodically to keep `credit_accounts.locked` aligned with held job locks. Job, call-record, and Credits ownership during this flow is specified in [llm-job-processing.md](./llm-job-processing.md).
 * **Relay client** (`relay/`): calls the public Relay APIs without authentication: `GET {relay.base_url}/v2/loaded-models`, `GET {relay.base_url}/v2/tasks/queued/priority`, and `GET {relay.base_url}/v2/models/llm/execution-time`.
-* **Loaded-models cache** (`service/`): one in-memory snapshot of the Relay loaded models with `model_type == "llm"`, keyed by lowercase `model_id`. Relay LLM rows MUST use an empty `variant`; a non-empty LLM `variant` MUST be ignored and MUST NOT enter this cache. The cache MUST be refreshed once at startup before the HTTP server starts and then every `llm.loaded_models_refresh_interval` seconds by a background task in `tasks/`. A failed startup refresh MUST be logged, MUST leave the cache empty, and MUST NOT prevent startup. A failed periodic refresh MUST retain the last successful snapshot and retry at the next interval. A successful refresh MUST replace the whole snapshot. The cache is not persisted to the database.
-* **Image loaded-models cache** (`service/`): an independent in-memory snapshot of Relay loaded models with `model_type == "sd"`, keyed by the pair `(lowercase model_id, lowercase variant)`. The same `model_id` MAY appear in multiple rows with different `variant` values. It MUST refresh from the same Relay response without adding Image models to the LLM cache. `GET /models/image` and Raw Image default `min_vram` lookup MUST read this cache by that pair.
+* **Loaded-models cache** (`service/`): one in-memory snapshot of the Relay loaded models with `model_type == "llm"`, keyed by lowercase `model_id`. Each cached row MUST store `min_vram`, `in_memory_node_count`, and `on_disk_node_count` from Relay. Relay LLM rows MUST use an empty `variant`; a non-empty LLM `variant` MUST be ignored and MUST NOT enter this cache. The cache MUST be refreshed once at startup before the HTTP server starts and then every `llm.loaded_models_refresh_interval` seconds by a background task in `tasks/`. A failed startup refresh MUST be logged, MUST leave the cache empty, and MUST NOT prevent startup. A failed periodic refresh MUST retain the last successful snapshot and retry at the next interval. A successful refresh MUST replace the whole snapshot and MUST also replace an in-memory LLM catalog snapshot containing only rows whose `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. `GET /models`, `GET /models/<model>`, and pricing-example selection MUST read that catalog snapshot. Default `min_vram` lookup MUST read the full snapshot. The cache is not persisted to the database.
+* **Image loaded-models cache** (`service/`): an independent in-memory snapshot of Relay loaded models with `model_type == "sd"`, keyed by the pair `(lowercase model_id, lowercase variant)`. The same `model_id` MAY appear in multiple rows with different `variant` values. It MUST refresh from the same Relay response without adding Image models to the LLM cache. Each cached row MUST store `min_vram`, `in_memory_node_count`, and `on_disk_node_count`. A successful refresh MUST also replace an in-memory Image catalog snapshot filtered by the same `llm.min_catalog_on_disk_node_count` threshold. `GET /models/image` MUST read the Image catalog snapshot. Raw Image default `min_vram` lookup MUST read the full Image snapshot by `(model_id, variant)`.
 * **Queued-priority cache** (`service/`): one in-memory snapshot of the Relay queued-task priority range from `GET /v2/tasks/queued/priority`. The cache MUST be refreshed once at startup before the HTTP server starts and then every `llm.queued_priority_refresh_interval` seconds by a background task in `tasks/`. A failed startup refresh MUST be logged and MUST NOT prevent startup. A failed periodic refresh MUST retain the last successful snapshot and retry at the next interval. A successful refresh MUST replace the snapshot. When a successful refresh returns an empty queue, the cache MUST retain the most recent non-empty `median_priority_gwei` for management UI cost-level hints. The live median MUST NOT enter Credits or task fee. The cache is not persisted to the database.
 * **Execution-time cache** (`service/`): independent in-memory TTL entries for LLM and Image execution-time coefficients keyed by model, variant, dtype, quantization, and the selected minimum-VRAM or exact-GPU hardware tuple. Entries MUST be fetched on demand from Relay `GET /v2/models/llm/execution-time` or `GET /v2/models/sd/execution-time`. The TTL MUST be `llm.execution_time_cache_ttl` seconds. The cache MUST NOT run a full-catalog refresh timer. The cache is not persisted to the database.
 * **Usage stats workers** (`service/`, `tasks/`): one base aggregation worker that advances a call-record cursor into account/project hourly and project 10-minute stats tables and updates each project's `last_request_at`, and one snapshot worker that rebuilds model Top-10 and completion-duration histogram snapshots from the 10-minute tables, refreshes each claimed project's current-Unix-day summary fields on `projects` from `project_usage_hourly_stats`, refreshes each claimed project's recent-failure-window success and failure counts on `projects` from `project_model_usage_10m_stats` using `usage_stats.recent_failure_window_seconds`, refreshes a bounded batch of projects whose recent-window counts still need sliding-window aging, and clears stale day summary fields after the Unix day boundary.
@@ -47,48 +47,7 @@ flowchart LR
 
 ## Multi-Chain Multi-Token Configuration Model
 
-The configuration defines a map of blockchain networks, and each network defines a map of supported ERC20 tokens:
-
-```yaml
-blockchains:
-  <network-name>:
-    chain_id: 1
-    rpc_endpoint: ""
-    rps: 20
-    start_block_num: 0
-    log_block_range: 1000
-    scan_interval: 5
-    confirmation_blocks: 12
-    receiving_address: "0x..."
-    tokens:
-      <token-name>:
-        address: "0x..."
-        decimals: 6
-        credits_per_token: 1
-bridge:
-  base_url: ""
-  api_key_file: "config/secrets/bridge_api_key.txt"
-relay:
-  base_url: ""
-llm:
-  default_max_tokens: 2048
-  default_vram_limit: 24
-  loaded_models_refresh_interval: 1800
-  queued_priority_refresh_interval: 300
-  execution_time_cache_ttl: 300
-  base_vram: 8
-  empty_queue_median_priority_gwei: "34"
-  min_priority_gwei: "1"
-  max_priority_gwei: "1000000000"
-  credits_per_gwei: "1"
-  job_submit_timeout: 600
-  job_retention_days: 30
-usage_stats:
-  recent_failure_window_seconds: 3600
-  recent_failure_rate_threshold: "0.2"
-credits:
-  signup_bonus: 1000
-```
+The complete configuration template is [config/config.example.yml](../config/config.example.yml). The configuration defines a map of blockchain networks, and each network defines a map of supported ERC20 tokens under `blockchains.<network-name>.tokens`.
 
 Configuration loading MUST fail with an error when a required item is missing. `credits.signup_bonus` MUST be present and MUST be a non-negative integer; `0` disables the signup bonus. Each network gets exactly one blockchain client, one scanning worker, and one `blockchain_cursors` row keyed by the network name. The worker polls on `scan_interval` seconds. The worker MUST scan only blocks at or below `latest - confirmation_blocks`; `confirmation_blocks` of `0` means scan up to the latest block. Credits for a deposit are computed as `amount * credits_per_token / 10^decimals` using integer arithmetic. `relay.base_url` is the public Relay URL for loaded-models, queued-priority, and execution-time fetches. The shared LLM configuration items are specified in [llm-api.md](./llm-api.md). Credits billing and the shared `billable_gwei` / project `priority_gwei` task fee inputs are specified in [credits-billing.md](./credits-billing.md). Job retention and table ownership are specified in [llm-job-processing.md](./llm-job-processing.md). `usage_stats.recent_failure_window_seconds` and `usage_stats.recent_failure_rate_threshold` configure the project recent-failure-window counts and `elevated_recent_failure_rate` flag returned by project list and detail APIs.
 

@@ -66,6 +66,7 @@ llm:
   loaded_models_refresh_interval: 1800
   queued_priority_refresh_interval: 300
   execution_time_cache_ttl: 300
+  min_catalog_on_disk_node_count: 3
   base_vram: 8
   empty_queue_median_priority_gwei: "34"
   min_priority_gwei: "1"

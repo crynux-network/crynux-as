@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crynux_as/config"
 	"crynux_as/relay"
 	"errors"
 	"sort"
@@ -15,28 +16,49 @@ const loadedModelTypeLLM = "llm"
 const loadedModelTypeSD = "sd"
 
 type LoadedLLMModel struct {
-	ModelID   string
-	Variant   string
-	MinVRAM   uint64
-	NodeCount int64
+	ModelID         string
+	Variant         string
+	MinVRAM         uint64
+	NodeCount       int64
+	OnDiskNodeCount int64
 }
 
 type loadedModelsCache struct {
-	mu     sync.RWMutex
-	client *relay.Client
-	models map[string]LoadedLLMModel
+	mu            sync.RWMutex
+	client        *relay.Client
+	models        map[string]LoadedLLMModel
+	catalogModels map[string]LoadedLLMModel
 }
 
 var llmModelsCache = &loadedModelsCache{
-	models: map[string]LoadedLLMModel{},
+	models:        map[string]LoadedLLMModel{},
+	catalogModels: map[string]LoadedLLMModel{},
 }
 
 var sdModelsCache = &loadedModelsCache{
-	models: map[string]LoadedLLMModel{},
+	models:        map[string]LoadedLLMModel{},
+	catalogModels: map[string]LoadedLLMModel{},
 }
 
 func sdCacheKey(modelID, variant string) string {
 	return strings.ToLower(modelID) + "\x00" + strings.ToLower(variant)
+}
+
+func catalogVisible(model LoadedLLMModel, minOnDiskNodeCount uint64) bool {
+	if model.OnDiskNodeCount < 0 {
+		return false
+	}
+	return uint64(model.OnDiskNodeCount) >= minOnDiskNodeCount
+}
+
+func filterCatalogModels(models map[string]LoadedLLMModel, minOnDiskNodeCount uint64) map[string]LoadedLLMModel {
+	catalog := make(map[string]LoadedLLMModel, len(models))
+	for key, model := range models {
+		if catalogVisible(model, minOnDiskNodeCount) {
+			catalog[key] = model
+		}
+	}
+	return catalog
 }
 
 // InitLoadedModelsCache sets the Relay client used by cache refreshes. It must
@@ -74,10 +96,11 @@ func RefreshLoadedModels(ctx context.Context) error {
 		}
 		variant := strings.ToLower(strings.TrimSpace(loadedModel.Variant))
 		entry := LoadedLLMModel{
-			ModelID:   modelID,
-			Variant:   variant,
-			MinVRAM:   loadedModel.MinVRAM,
-			NodeCount: loadedModel.InMemoryNodeCount,
+			ModelID:         modelID,
+			Variant:         variant,
+			MinVRAM:         loadedModel.MinVRAM,
+			NodeCount:       loadedModel.InMemoryNodeCount,
+			OnDiskNodeCount: loadedModel.OnDiskNodeCount,
 		}
 		switch loadedModel.ModelType {
 		case loadedModelTypeLLM:
@@ -90,14 +113,26 @@ func RefreshLoadedModels(ctx context.Context) error {
 		}
 	}
 
+	minOnDiskNodeCount := config.GetConfig().LLM.MinCatalogOnDiskNodeCount
+	llmCatalog := filterCatalogModels(llmSnapshot, minOnDiskNodeCount)
+	sdCatalog := filterCatalogModels(sdSnapshot, minOnDiskNodeCount)
+
 	llmModelsCache.mu.Lock()
 	llmModelsCache.models = llmSnapshot
+	llmModelsCache.catalogModels = llmCatalog
 	llmModelsCache.mu.Unlock()
 	sdModelsCache.mu.Lock()
 	sdModelsCache.models = sdSnapshot
+	sdModelsCache.catalogModels = sdCatalog
 	sdModelsCache.mu.Unlock()
 
-	log.Infof("loaded models cache refreshed: %d LLM models, %d image models", len(llmSnapshot), len(sdSnapshot))
+	log.Infof(
+		"loaded models cache refreshed: %d LLM models (%d catalog), %d image models (%d catalog)",
+		len(llmSnapshot),
+		len(llmCatalog),
+		len(sdSnapshot),
+		len(sdCatalog),
+	)
 	return nil
 }
 
@@ -110,8 +145,8 @@ func GetLoadedSDModel(modelID, variant string) (LoadedLLMModel, bool) {
 
 func ListLoadedSDModels() []LoadedLLMModel {
 	sdModelsCache.mu.RLock()
-	models := make([]LoadedLLMModel, 0, len(sdModelsCache.models))
-	for _, model := range sdModelsCache.models {
+	models := make([]LoadedLLMModel, 0, len(sdModelsCache.catalogModels))
+	for _, model := range sdModelsCache.catalogModels {
 		models = append(models, model)
 	}
 	sdModelsCache.mu.RUnlock()
@@ -132,11 +167,20 @@ func GetLoadedLLMModel(modelID string) (LoadedLLMModel, bool) {
 	return model, ok
 }
 
-// ListLoadedLLMModels returns the cached LLM models sorted by model ID.
+// GetCatalogLLMModel looks up an LLM model in the catalog snapshot by model ID
+// (case-insensitive). Models below the configured on-disk node threshold are absent.
+func GetCatalogLLMModel(modelID string) (LoadedLLMModel, bool) {
+	llmModelsCache.mu.RLock()
+	defer llmModelsCache.mu.RUnlock()
+	model, ok := llmModelsCache.catalogModels[strings.ToLower(modelID)]
+	return model, ok
+}
+
+// ListLoadedLLMModels returns the catalog LLM models sorted by model ID.
 func ListLoadedLLMModels() []LoadedLLMModel {
 	llmModelsCache.mu.RLock()
-	models := make([]LoadedLLMModel, 0, len(llmModelsCache.models))
-	for _, model := range llmModelsCache.models {
+	models := make([]LoadedLLMModel, 0, len(llmModelsCache.catalogModels))
+	for _, model := range llmModelsCache.catalogModels {
 		models = append(models, model)
 	}
 	llmModelsCache.mu.RUnlock()

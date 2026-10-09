@@ -39,6 +39,7 @@ llm:
   loaded_models_refresh_interval: 1800
   queued_priority_refresh_interval: 300
   execution_time_cache_ttl: 300
+  min_catalog_on_disk_node_count: 3
   base_vram: 8
   empty_queue_median_priority_gwei: "34"
   min_priority_gwei: "1"
@@ -331,7 +332,7 @@ Response shape:
 }
 ```
 
-Example selection MUST use the in-memory loaded-models LLM catalog only. It MUST NOT read the Image loaded-models cache and MUST NOT select by SD `variant`.
+Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude models whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public LLM catalog visibility of `GET /models`. It MUST NOT read the Image loaded-models cache and MUST NOT select by SD `variant`.
 
 1. Collect models with a positive `min_vram`.
 2. Group by exact `min_vram`.

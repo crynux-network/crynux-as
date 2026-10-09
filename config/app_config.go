@@ -77,6 +77,7 @@ type AppConfig struct {
 		LoadedModelsRefreshInterval   uint64 `mapstructure:"loaded_models_refresh_interval"`
 		QueuedPriorityRefreshInterval uint64 `mapstructure:"queued_priority_refresh_interval"`
 		ExecutionTimeCacheTTL         uint64 `mapstructure:"execution_time_cache_ttl"`
+		MinCatalogOnDiskNodeCount     uint64 `mapstructure:"min_catalog_on_disk_node_count"`
 		BaseVRAM                      uint64 `mapstructure:"base_vram"`
 		EmptyQueueMedianPriorityGwei  string `mapstructure:"empty_queue_median_priority_gwei"`
 		MinPriorityGwei               string `mapstructure:"min_priority_gwei"`

@@ -95,7 +95,7 @@ Each project exposes the following endpoints under its private base URL:
 
 The request and response formats are OpenAI-compatible.
 
-The models endpoints return the shared LLM model catalog built from the in-memory loaded-models cache refreshed from the Relay. Each model object includes the extra field `min_vram`. See [llm-api.md](./llm-api.md).
+The models endpoints return the shared LLM model catalog snapshot built during loaded-models refresh from the Relay. The catalog MUST include only models whose Relay `on_disk_node_count` is at least `llm.min_catalog_on_disk_node_count`. Each model object includes the extra field `min_vram`. See [llm-api.md](./llm-api.md).
 
 A request MAY specify a VRAM limit in GB through the `<vram_limit>` URL path segment or the `vram_limit` body field; the path value overrides the body value. The resolved effective VRAM selects `vram_weight` for Credits and task fee and is sent to Bridge as raw task `min_vram`. See [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md).
 

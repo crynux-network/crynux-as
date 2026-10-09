@@ -79,7 +79,7 @@ func RetrieveModel(c *gin.Context) {
 		ImageModels(c)
 		return
 	}
-	model, ok := service.GetLoadedLLMModel(modelID)
+	model, ok := service.GetCatalogLLMModel(modelID)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": gin.H{

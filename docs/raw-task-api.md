@@ -72,7 +72,7 @@ Image bytes MUST NOT be stored in MySQL. OpenAI-formatted results MAY remain on 
 
 ## Models
 
-`GET /models` and `GET /models/<model>` MUST continue to use only the LLM loaded-model cache and MUST keep the OpenAI-compatible model object fields without a `variant` field. `GET /models/image` MUST use the independent Image loaded-model cache and MUST return one list entry per `(model_id, variant)` pair, sorted by `id` ascending then `variant` ascending. Each Image list entry MUST include `id`, `object`, `created`, `owned_by`, `min_vram`, and `variant`. `id` MUST be the lowercase HuggingFace model ID. `variant` MUST be the cached lowercase variant string, which MAY be empty. Both list endpoints MUST use the `{"object":"list","data":[...]}` envelope.
+`GET /models` and `GET /models/<model>` MUST continue to use only the LLM catalog snapshot and MUST keep the OpenAI-compatible model object fields without a `variant` field. `GET /models/image` MUST use the independent Image catalog snapshot and MUST return one list entry per `(model_id, variant)` pair, sorted by `id` ascending then `variant` ascending. Each Image list entry MUST include `id`, `object`, `created`, `owned_by`, `min_vram`, and `variant`. `id` MUST be the lowercase HuggingFace model ID. `variant` MUST be the cached lowercase variant string, which MAY be empty. Both catalog snapshots MUST include only models whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`, and both list endpoints MUST use the `{"object":"list","data":[...]}` envelope.
 
 ## Pricing and Settlement
 
