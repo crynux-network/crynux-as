@@ -163,7 +163,8 @@ Returns the OpenAI list-models response built from the catalog snapshot:
       "object": "model",
       "created": 0,
       "owned_by": "crynux",
-      "min_vram": 24
+      "min_vram": 24,
+      "on_disk_node_count": 3
     }
   ]
 }
@@ -177,7 +178,9 @@ Requirements:
 * `created` MUST be `0`; the Relay provides no creation time.
 * `owned_by` MUST be `"crynux"`.
 * Each item MUST include the extra field `min_vram` with the cached minimum VRAM in GB.
+* Each item MUST include the extra field `on_disk_node_count` with the cached Relay count of nodes that have the model files on disk.
 * Each item MUST NOT include a `variant` field.
+* Each item MUST NOT include `in_memory_node_count`.
 * The response MUST be the OpenAI JSON body directly, without the management-API `{"message": ...}` envelope.
 * The legacy OpenAI fields `permission`, `root`, and `parent` MUST NOT be required.
 

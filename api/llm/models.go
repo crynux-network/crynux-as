@@ -9,40 +9,44 @@ import (
 )
 
 type modelObject struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
-	MinVram uint64 `json:"min_vram"`
+	ID              string `json:"id"`
+	Object          string `json:"object"`
+	Created         int64  `json:"created"`
+	OwnedBy         string `json:"owned_by"`
+	MinVram         uint64 `json:"min_vram"`
+	OnDiskNodeCount int64  `json:"on_disk_node_count"`
 }
 
 type imageModelObject struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
-	MinVram uint64 `json:"min_vram"`
-	Variant string `json:"variant"`
+	ID              string `json:"id"`
+	Object          string `json:"object"`
+	Created         int64  `json:"created"`
+	OwnedBy         string `json:"owned_by"`
+	MinVram         uint64 `json:"min_vram"`
+	Variant         string `json:"variant"`
+	OnDiskNodeCount int64  `json:"on_disk_node_count"`
 }
 
 func newModelObject(model service.LoadedLLMModel) modelObject {
 	return modelObject{
-		ID:      model.ModelID,
-		Object:  "model",
-		Created: 0,
-		OwnedBy: "crynux",
-		MinVram: model.MinVRAM,
+		ID:              model.ModelID,
+		Object:          "model",
+		Created:         0,
+		OwnedBy:         "crynux",
+		MinVram:         model.MinVRAM,
+		OnDiskNodeCount: model.OnDiskNodeCount,
 	}
 }
 
 func newImageModelObject(model service.LoadedLLMModel) imageModelObject {
 	return imageModelObject{
-		ID:      model.ModelID,
-		Object:  "model",
-		Created: 0,
-		OwnedBy: "crynux",
-		MinVram: model.MinVRAM,
-		Variant: model.Variant,
+		ID:              model.ModelID,
+		Object:          "model",
+		Created:         0,
+		OwnedBy:         "crynux",
+		MinVram:         model.MinVRAM,
+		Variant:         model.Variant,
+		OnDiskNodeCount: model.OnDiskNodeCount,
 	}
 }
 
