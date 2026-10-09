@@ -272,7 +272,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if minVram == nil && !hasGPUName {
 		resolved := config.GetConfig().LLM.DefaultVramLimit
 		if *request.TaskType == models.TaskTypeImage {
-			if loaded, ok := service.GetLoadedSDModel(model); ok && loaded.MinVRAM > 0 {
+			if loaded, ok := service.GetLoadedSDModel(model, variant); ok && loaded.MinVRAM > 0 {
 				resolved = loaded.MinVRAM
 			}
 		} else if loaded, ok := service.GetLoadedLLMModel(model); ok && loaded.MinVRAM > 0 {

@@ -33,6 +33,8 @@ The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge Clien
 
 The request MAY select hardware with `min_vram`, or with both `required_gpu` and `required_gpu_vram`. It MUST NOT combine `min_vram` with either required-GPU field. It MUST provide both required-GPU fields together.
 
+When `min_vram` is omitted and the request does not select an exact GPU, AS MUST resolve the default `min_vram` as follows: for an Image task, look up the Image loaded-models cache by `task_args.base_model` name and `variant` (missing or empty `variant` is the empty string); for an LLM task, look up the LLM loaded-models cache by model id. When the lookup misses or the cached `min_vram` is zero, AS MUST use `llm.default_vram_limit`. AS MUST NOT rewrite a missing Image `variant` to `fp16` or any other default string.
+
 `task_fee` is owned by Crynux AS. A request containing `task_fee`, including a null value, MUST be rejected. AS MUST resolve the project Cost Level, fetch the applicable Relay execution-time coefficients, perform the Credits precheck, calculate the task fee in Wei, persist the create-time billing snapshot, and create a `task_jobs` row without waiting for Bridge.
 
 The response MUST use the local task view:
@@ -70,7 +72,7 @@ Image bytes MUST NOT be stored in MySQL. OpenAI-formatted results MAY remain on 
 
 ## Models
 
-`GET /models` and `GET /models/<model>` MUST continue to use only the LLM loaded-model cache. `GET /models/image` MUST use the independent Image loaded-model cache and MUST return all Image models sorted by model ID. Both list endpoints MUST use the OpenAI-compatible `{"object":"list","data":[...]}` envelope and the existing model object fields.
+`GET /models` and `GET /models/<model>` MUST continue to use only the LLM loaded-model cache and MUST keep the OpenAI-compatible model object fields without a `variant` field. `GET /models/image` MUST use the independent Image loaded-model cache and MUST return one list entry per `(model_id, variant)` pair, sorted by `id` ascending then `variant` ascending. Each Image list entry MUST include `id`, `object`, `created`, `owned_by`, `min_vram`, and `variant`. `id` MUST be the lowercase HuggingFace model ID. `variant` MUST be the cached lowercase variant string, which MAY be empty. Both list endpoints MUST use the `{"object":"list","data":[...]}` envelope.
 
 ## Pricing and Settlement
 

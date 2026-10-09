@@ -330,7 +330,7 @@ Response shape:
 }
 ```
 
-Example selection MUST use the in-memory loaded-models LLM catalog:
+Example selection MUST use the in-memory loaded-models LLM catalog only. It MUST NOT read the Image loaded-models cache and MUST NOT select by SD `variant`.
 
 1. Collect models with a positive `min_vram`.
 2. Group by exact `min_vram`.

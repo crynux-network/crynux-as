@@ -16,6 +16,7 @@ const loadedModelTypeSD = "sd"
 
 type LoadedLLMModel struct {
 	ModelID   string
+	Variant   string
 	MinVRAM   uint64
 	NodeCount int64
 }
@@ -34,6 +35,10 @@ var sdModelsCache = &loadedModelsCache{
 	models: map[string]LoadedLLMModel{},
 }
 
+func sdCacheKey(modelID, variant string) string {
+	return strings.ToLower(modelID) + "\x00" + strings.ToLower(variant)
+}
+
 // InitLoadedModelsCache sets the Relay client used by cache refreshes. It must
 // be called once at startup before RefreshLoadedModels.
 func InitLoadedModelsCache(client *relay.Client) {
@@ -46,7 +51,7 @@ func InitLoadedModelsCache(client *relay.Client) {
 }
 
 // RefreshLoadedModels fetches the loaded models from the Relay and replaces the
-// in-memory LLM model snapshot. On failure the previous snapshot is kept.
+// in-memory LLM and SD model snapshots. On failure the previous snapshots are kept.
 func RefreshLoadedModels(ctx context.Context) error {
 	llmModelsCache.mu.RLock()
 	client := llmModelsCache.client
@@ -63,20 +68,25 @@ func RefreshLoadedModels(ctx context.Context) error {
 	llmSnapshot := make(map[string]LoadedLLMModel)
 	sdSnapshot := make(map[string]LoadedLLMModel)
 	for _, loadedModel := range loadedModels {
-		var snapshot map[string]LoadedLLMModel
-		switch loadedModel.ModelType {
-		case loadedModelTypeLLM:
-			snapshot = llmSnapshot
-		case loadedModelTypeSD:
-			snapshot = sdSnapshot
-		default:
+		modelID := strings.ToLower(strings.TrimSpace(loadedModel.ModelID))
+		if modelID == "" {
 			continue
 		}
-		modelID := strings.ToLower(loadedModel.ModelID)
-		snapshot[modelID] = LoadedLLMModel{
+		variant := strings.ToLower(strings.TrimSpace(loadedModel.Variant))
+		entry := LoadedLLMModel{
 			ModelID:   modelID,
+			Variant:   variant,
 			MinVRAM:   loadedModel.MinVRAM,
 			NodeCount: loadedModel.InMemoryNodeCount,
+		}
+		switch loadedModel.ModelType {
+		case loadedModelTypeLLM:
+			if variant != "" {
+				continue
+			}
+			llmSnapshot[modelID] = entry
+		case loadedModelTypeSD:
+			sdSnapshot[sdCacheKey(modelID, variant)] = entry
 		}
 	}
 
@@ -91,10 +101,10 @@ func RefreshLoadedModels(ctx context.Context) error {
 	return nil
 }
 
-func GetLoadedSDModel(modelID string) (LoadedLLMModel, bool) {
+func GetLoadedSDModel(modelID, variant string) (LoadedLLMModel, bool) {
 	sdModelsCache.mu.RLock()
 	defer sdModelsCache.mu.RUnlock()
-	model, ok := sdModelsCache.models[strings.ToLower(modelID)]
+	model, ok := sdModelsCache.models[sdCacheKey(modelID, variant)]
 	return model, ok
 }
 
@@ -106,7 +116,10 @@ func ListLoadedSDModels() []LoadedLLMModel {
 	}
 	sdModelsCache.mu.RUnlock()
 	sort.Slice(models, func(i, j int) bool {
-		return models[i].ModelID < models[j].ModelID
+		if models[i].ModelID != models[j].ModelID {
+			return models[i].ModelID < models[j].ModelID
+		}
+		return models[i].Variant < models[j].Variant
 	})
 	return models
 }

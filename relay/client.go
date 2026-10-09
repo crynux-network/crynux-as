@@ -30,6 +30,7 @@ func NewClient(baseURL string) *Client {
 type LoadedModel struct {
 	ModelID           string `json:"model_id"`
 	ModelType         string `json:"model_type"`
+	Variant           string `json:"variant"`
 	MinVRAM           uint64 `json:"min_vram"`
 	InMemoryNodeCount int64  `json:"in_memory_node_count"`
 	OnDiskNodeCount   int64  `json:"on_disk_node_count"`

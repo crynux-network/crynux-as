@@ -146,7 +146,7 @@ The project MUST have status active. A request failing any of these checks MUST 
 
 ## Model Catalog
 
-The model catalog is the in-memory LLM loaded-models cache refreshed from the Relay `GET /v2/loaded-models` API (see [architecture.md](./architecture.md)). All projects share the same catalog. A cached model's `min_vram` is the minimum VRAM in GB observed across historical successful executions of the model on the Crynux Network.
+The model catalog is the in-memory LLM loaded-models cache refreshed from the Relay `GET /v2/loaded-models` API (see [architecture.md](./architecture.md)). All projects share the same catalog. A cached model's `min_vram` is the minimum VRAM in GB observed across historical successful executions of the model on the Crynux Network. The LLM catalog MUST be keyed only by `model_id`. SD rows and multi-variant Image catalog entries MUST NOT appear in this catalog. The list and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT include a `variant` field.
 
 ### `GET /api/<endpoint_token>/v1/models`
 
@@ -175,6 +175,7 @@ Requirements:
 * `created` MUST be `0`; the Relay provides no creation time.
 * `owned_by` MUST be `"crynux"`.
 * Each item MUST include the extra field `min_vram` with the cached minimum VRAM in GB.
+* Each item MUST NOT include a `variant` field.
 * The response MUST be the OpenAI JSON body directly, without the management-API `{"message": ...}` envelope.
 * The legacy OpenAI fields `permission`, `root`, and `parent` MUST NOT be required.
 

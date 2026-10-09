@@ -16,6 +16,15 @@ type modelObject struct {
 	MinVram uint64 `json:"min_vram"`
 }
 
+type imageModelObject struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+	MinVram uint64 `json:"min_vram"`
+	Variant string `json:"variant"`
+}
+
 func newModelObject(model service.LoadedLLMModel) modelObject {
 	return modelObject{
 		ID:      model.ModelID,
@@ -23,6 +32,17 @@ func newModelObject(model service.LoadedLLMModel) modelObject {
 		Created: 0,
 		OwnedBy: "crynux",
 		MinVram: model.MinVRAM,
+	}
+}
+
+func newImageModelObject(model service.LoadedLLMModel) imageModelObject {
+	return imageModelObject{
+		ID:      model.ModelID,
+		Object:  "model",
+		Created: 0,
+		OwnedBy: "crynux",
+		MinVram: model.MinVRAM,
+		Variant: model.Variant,
 	}
 }
 
@@ -42,9 +62,9 @@ func Models(c *gin.Context) {
 
 func ImageModels(c *gin.Context) {
 	loadedModels := service.ListLoadedSDModels()
-	data := make([]modelObject, 0, len(loadedModels))
+	data := make([]imageModelObject, 0, len(loadedModels))
 	for _, model := range loadedModels {
-		data = append(data, newModelObject(model))
+		data = append(data, newImageModelObject(model))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
