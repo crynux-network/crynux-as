@@ -214,9 +214,8 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 	}
 	req.setDefaultValues()
 	req.Model = NormalizeModelID(req.Model)
-
-	if req.Model == "" {
-		return "", ChatCompletionsMeta{}, newValidationError("model", "model is required")
+	if err := ValidateHuggingFaceModelID(req.Model); err != nil {
+		return "", ChatCompletionsMeta{}, err
 	}
 	if len(req.Messages) == 0 {
 		return "", ChatCompletionsMeta{}, newValidationError("messages", "messages is required")

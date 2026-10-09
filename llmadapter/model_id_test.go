@@ -15,6 +15,27 @@ func TestNormalizeModelID(t *testing.T) {
 	}
 }
 
+func TestValidateHuggingFaceModelID(t *testing.T) {
+	if err := ValidateHuggingFaceModelID("Qwen/Qwen2.5-7B"); err != nil {
+		t.Fatalf("expected valid id: %v", err)
+	}
+	if err := ValidateHuggingFaceModelID("bert-base-uncased"); err != nil {
+		t.Fatalf("expected single-segment id: %v", err)
+	}
+	if err := ValidateHuggingFaceModelID("https://huggingface.co/org/model"); err == nil {
+		t.Fatal("expected URL rejection")
+	}
+	if err := ValidateHuggingFaceModelID("http://example.com/model.safetensors"); err == nil {
+		t.Fatal("expected URL rejection")
+	}
+	if err := ValidateHuggingFaceModelID("org/model with space"); err == nil {
+		t.Fatal("expected whitespace rejection")
+	}
+	if err := ValidateHuggingFaceModelID(""); err == nil {
+		t.Fatal("expected empty rejection")
+	}
+}
+
 func TestBuildChatCompletionsTaskArgsNormalizesModel(t *testing.T) {
 	body := []byte(`{
 		"model":"Qwen/Qwen2.5-7B",

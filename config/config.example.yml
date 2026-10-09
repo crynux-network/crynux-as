@@ -60,6 +60,10 @@ bridge:
   api_key_file: "config/secrets/bridge_api_key.txt"
 relay:
   base_url: ""
+huggingface:
+  api_base_url: "https://huggingface.co"
+  timeout_seconds: 5
+  cache_ttl_seconds: 300
 llm:
   default_max_tokens: 2048
   default_vram_limit: 24

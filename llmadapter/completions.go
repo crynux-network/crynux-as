@@ -94,9 +94,8 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 	}
 	req.setDefaultValues()
 	req.Model = NormalizeModelID(req.Model)
-
-	if req.Model == "" {
-		return "", CompletionsMeta{}, newValidationError("model", "model is required")
+	if err := ValidateHuggingFaceModelID(req.Model); err != nil {
+		return "", CompletionsMeta{}, err
 	}
 	if req.Prompt == "" {
 		return "", CompletionsMeta{}, newValidationError("prompt", "prompt is required")

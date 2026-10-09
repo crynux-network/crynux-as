@@ -60,6 +60,9 @@ func InitConfig(configPath string) error {
 	if err := checkRelayConfig(); err != nil {
 		return err
 	}
+	if err := checkHuggingFaceConfig(); err != nil {
+		return err
+	}
 	if err := checkLLMConfig(); err != nil {
 		return err
 	}
@@ -150,6 +153,20 @@ func checkBridgeConfig() error {
 func checkRelayConfig() error {
 	if strings.TrimSpace(appConfig.Relay.BaseURL) == "" {
 		return errors.New("relay.base_url is not set")
+	}
+	return nil
+}
+
+func checkHuggingFaceConfig() error {
+	hf := appConfig.HuggingFace
+	if strings.TrimSpace(hf.APIBaseURL) == "" {
+		return errors.New("huggingface.api_base_url is not set")
+	}
+	if hf.TimeoutSeconds <= 0 {
+		return errors.New("huggingface.timeout_seconds is not set")
+	}
+	if hf.CacheTTLSeconds <= 0 {
+		return errors.New("huggingface.cache_ttl_seconds is not set")
 	}
 	return nil
 }

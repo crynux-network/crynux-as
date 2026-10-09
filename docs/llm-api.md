@@ -198,6 +198,17 @@ Returns the single model object described above for a model ID present in the ca
 }
 ```
 
+## Model ID Validation
+
+Chat Completions, Completions, and Responses create requests MUST validate the request `model` before Credits reservation and job creation.
+
+1. AS MUST normalize `model` with trim and lowercase.
+2. `model` MUST be a Hugging Face model id. Absolute URLs and any value containing `://` MUST be rejected with HTTP 400. Values with whitespace or characters outside the Hugging Face repo-id pattern MUST be rejected with HTTP 400.
+3. When the normalized model is present in the full LLM loaded-models cache, AS MUST skip the Hub lookup.
+4. When the model is absent from that cache, AS MUST query Hugging Face Hub `GET {huggingface.api_base_url}/api/models/{model}`. A missing model MUST return HTTP 400. Hub timeouts and HTTP 5xx MUST return HTTP 500 and MUST NOT reserve Credits or create a job.
+
+The catalog snapshot used by `GET /models` MUST NOT be used as a create-time allowlist.
+
 ## VRAM Limit and Effective VRAM
 
 ### User-specified `vram_limit`
@@ -274,6 +285,10 @@ Credits charging, available-Credits precheck and soft lock, settle, Credits conf
 The LLM-related service configuration items that remain shared with Task Fee Estimation and request handling are:
 
 ```yaml
+huggingface:
+  api_base_url: "https://huggingface.co"
+  timeout_seconds: 5
+  cache_ttl_seconds: 300
 llm:
   default_max_tokens: 2048
   default_vram_limit: 24
@@ -291,6 +306,7 @@ llm:
   project_recent_requests_limit: 50
 ```
 
+* `huggingface.api_base_url`, `huggingface.timeout_seconds`, and `huggingface.cache_ttl_seconds` configure create-time Hub model validation. Configuration loading MUST fail when any of these values is missing or non-positive where required. Hub not-found results MAY be cached for `cache_ttl_seconds`; Hub unavailable results MUST NOT be cached.
 * `default_max_tokens` is used in the pre-forward balance estimate and Task Fee Estimation when the request omits both `max_tokens` and `max_completion_tokens`.
 * `default_vram_limit` is the effective VRAM in GB for an unknown model when the user did not specify a `vram_limit`.
 * `loaded_models_refresh_interval` is the loaded-models cache refresh interval in seconds. Every YAML configuration template MUST set it to `1800`.

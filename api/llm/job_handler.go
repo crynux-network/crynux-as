@@ -7,6 +7,7 @@ import (
 	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"crynux_as/service"
+	"crynux_as/service/huggingface"
 	"encoding/json"
 	"errors"
 	"io"
@@ -61,6 +62,17 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 	effectiveVram := vramlimit.ResolveEffectiveVram(parsed.model, userVram)
+
+	if err := service.ValidateTaskModel(
+		c.Request.Context(),
+		huggingface.ModelKindLLM,
+		parsed.model,
+		"",
+	); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), nil, nil)
+		writeTaskModelValidationError(c, err)
+		return
+	}
 
 	db := config.GetDB()
 
@@ -238,6 +250,18 @@ func writeLLMAdapterError(c *gin.Context, err error) {
 		return
 	}
 	writeClientError(c, http.StatusBadRequest, err.Error())
+}
+
+func writeTaskModelValidationError(c *gin.Context, err error) {
+	if errors.Is(err, service.ErrBaseModelCheckUnavailable) {
+		writeServerError(c)
+		return
+	}
+	if errors.Is(err, service.ErrInvalidBaseModel) {
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeServerError(c)
 }
 
 func float64Ptr(v float64) *float64 {

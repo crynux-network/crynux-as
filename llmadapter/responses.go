@@ -197,9 +197,8 @@ func ParseResponsesRequest(body []byte) (ResponsesRequest, error) {
 		return ResponsesRequest{}, newValidationError("", "invalid JSON body")
 	}
 	req.Model = NormalizeModelID(req.Model)
-
-	if req.Model == "" {
-		return ResponsesRequest{}, newValidationError("model", "model is required")
+	if err := ValidateHuggingFaceModelID(req.Model); err != nil {
+		return ResponsesRequest{}, err
 	}
 	if req.Input.Text == nil && len(req.Input.Items) == 0 {
 		return ResponsesRequest{}, newValidationError("input", "input is required")

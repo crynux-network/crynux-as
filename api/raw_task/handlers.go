@@ -8,6 +8,7 @@ import (
 	"crynux_as/models"
 	"crynux_as/relay"
 	"crynux_as/service"
+	"crynux_as/service/huggingface"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,7 +54,7 @@ func CreateTask(c *gin.Context) {
 	prepared, err := prepareTask(c.Request.Context(), project, request)
 	if err != nil {
 		recordFailure(c.Request.Context(), project, "", 0)
-		writeError(c, http.StatusBadRequest, err.Error())
+		writePrepareTaskError(c, err)
 		return
 	}
 	job, err := createPreparedTask(c.Request.Context(), project, prepared)
@@ -251,6 +252,13 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if err != nil {
 		return nil, err
 	}
+	kind := huggingface.ModelKindLLM
+	if *request.TaskType == models.TaskTypeImage {
+		kind = huggingface.ModelKindSD
+	}
+	if err := service.ValidateTaskModel(ctx, kind, model, variant); err != nil {
+		return nil, err
+	}
 	minVram := request.MinVram
 	if minVram != nil && *minVram == 0 {
 		return nil, errors.New("min_vram must be a positive integer")
@@ -405,6 +413,14 @@ func recordFailure(ctx context.Context, project *models.Project, model string, b
 
 func writeError(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{"error": gin.H{"message": message, "type": "invalid_request_error"}})
+}
+
+func writePrepareTaskError(c *gin.Context, err error) {
+	if errors.Is(err, service.ErrBaseModelCheckUnavailable) {
+		writeInternalError(c, err)
+		return
+	}
+	writeError(c, http.StatusBadRequest, err.Error())
 }
 
 func writeInternalError(c *gin.Context, err error) {

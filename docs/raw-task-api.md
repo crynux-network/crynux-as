@@ -31,6 +31,13 @@ The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge Clien
 
 `task_type` MUST be `0` for an Image task or `1` for an LLM task. `task_args` MUST be a JSON string valid for the selected task type.
 
+Before Credits reservation, AS MUST validate the task model:
+
+1. For an LLM task, the `task_args.model` value MUST be a Hugging Face model id. For an Image task, `task_args.base_model.name` MUST be a Hugging Face model id and `variant` MAY be empty.
+2. Absolute URLs and any model id containing `://` MUST be rejected with HTTP 400.
+3. When the model is present in the corresponding full loaded-models cache (LLM by model id, Image by `(model_id, variant)`), AS MUST skip the Hub lookup.
+4. When the model is absent from that cache, AS MUST query Hugging Face Hub. LLM validation MUST require the repo to exist. Image validation MUST require `model_index.json` and either a matching variant weight file when `variant` is non-empty or a default non-variant weight file when `variant` is empty. A permanent Hub rejection MUST return HTTP 400. Hub timeouts and HTTP 5xx MUST return HTTP 500 and MUST NOT reserve Credits or create a job.
+
 The request MAY select hardware with `min_vram`, or with both `required_gpu` and `required_gpu_vram`. It MUST NOT combine `min_vram` with either required-GPU field. It MUST provide both required-GPU fields together.
 
 When `min_vram` is omitted and the request does not select an exact GPU, AS MUST resolve the default `min_vram` as follows: for an Image task, look up the Image loaded-models cache by `task_args.base_model` name and `variant` (missing or empty `variant` is the empty string); for an LLM task, look up the LLM loaded-models cache by model id. When the lookup misses or the cached `min_vram` is zero, AS MUST use `llm.default_vram_limit`. AS MUST NOT rewrite a missing Image `variant` to `fp16` or any other default string.

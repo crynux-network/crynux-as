@@ -7,6 +7,7 @@ import (
 	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"crynux_as/service"
+	"crynux_as/service/huggingface"
 	"encoding/json"
 	"errors"
 	"io"
@@ -93,6 +94,25 @@ func CreateResponse(c *gin.Context) {
 		return
 	}
 	effectiveVram := vramlimit.ResolveEffectiveVram(req.Model, userVram)
+
+	if err := service.ValidateTaskModel(
+		c.Request.Context(),
+		huggingface.ModelKindLLM,
+		req.Model,
+		"",
+	); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), nil, nil)
+		if errors.Is(err, service.ErrBaseModelCheckUnavailable) {
+			writeServerError(c)
+			return
+		}
+		if errors.Is(err, service.ErrInvalidBaseModel) {
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeServerError(c)
+		return
+	}
 
 	estPrompt := estimatePromptTokensFromResponsesBody(body)
 	maxCompletion := service.ResolveMaxCompletionTokens(nil, req.MaxOutputTokens, appCfg.LLM.DefaultMaxTokens)

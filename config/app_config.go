@@ -71,6 +71,12 @@ type AppConfig struct {
 		BaseURL string `mapstructure:"base_url"`
 	} `mapstructure:"relay"`
 
+	HuggingFace struct {
+		APIBaseURL      string  `mapstructure:"api_base_url"`
+		TimeoutSeconds  float64 `mapstructure:"timeout_seconds"`
+		CacheTTLSeconds float64 `mapstructure:"cache_ttl_seconds"`
+	} `mapstructure:"huggingface"`
+
 	LLM struct {
 		DefaultMaxTokens              uint64 `mapstructure:"default_max_tokens"`
 		DefaultVramLimit              uint64 `mapstructure:"default_vram_limit"`
