@@ -35,7 +35,7 @@ The request MAY select hardware with `min_vram`, or with both `required_gpu` and
 
 When `min_vram` is omitted and the request does not select an exact GPU, AS MUST resolve the default `min_vram` as follows: for an Image task, look up the Image loaded-models cache by `task_args.base_model` name and `variant` (missing or empty `variant` is the empty string); for an LLM task, look up the LLM loaded-models cache by model id. When the lookup misses or the cached `min_vram` is zero, AS MUST use `llm.default_vram_limit`. AS MUST NOT rewrite a missing Image `variant` to `fp16` or any other default string.
 
-`task_fee` is owned by Crynux AS. A request containing `task_fee`, including a null value, MUST be rejected. AS MUST resolve the project Cost Level, fetch the applicable Relay execution-time coefficients, perform the Credits precheck, calculate the task fee in Wei, persist the create-time billing snapshot, and create a `task_jobs` row without waiting for Bridge.
+`task_fee` is owned by Crynux AS. A request containing `task_fee`, including a null value, MUST be rejected. AS MUST resolve the project Cost Level, fetch the applicable Relay execution-time coefficients, calculate the task fee in Wei and the Credits estimate, then in one transaction reserve that estimate against available Credits (`balance - locked`) and create a `task_jobs` row with a `held` Credits lock, without waiting for Bridge. Insufficient available Credits MUST return HTTP 402.
 
 The response MUST use the local task view:
 
@@ -58,7 +58,7 @@ Public status MUST be `running`, `success`, or `failed`. Pending submission, sub
 
 `POST /inference_tasks/batch` MUST accept `{"tasks":[...]}` with between 1 and 100 items. AS MUST validate and price items in request order. The response MUST contain one item result per input index in the same order. One invalid item MUST NOT prevent valid items from being accepted. Each item MUST contain `index` and either `client_task` or `error`.
 
-The batch Credits precheck MUST reserve each accepted item's estimated Credits against the account balance in request order. An item whose estimate exceeds the remaining precheck balance MUST return an item error.
+The batch path MUST reserve each accepted item's estimated Credits in request order through the same per-item reserve-and-create transaction used by single create. An item whose estimate exceeds available Credits at its turn MUST return an item error and MUST NOT create a job.
 
 `POST /inference_tasks/batch/status` MUST accept `{"client_task_ids":[...]}` with between 1 and 100 IDs. AS MUST deduplicate IDs for the database query and MUST restore the original order and duplicates in the response. A missing or cross-project ID MUST return an item error without revealing whether another project owns it.
 
@@ -88,4 +88,4 @@ estimated_node_seconds =
 
 The multiplication MUST reject unsigned 64-bit overflow. Image task fee and Credits MUST use the shared `priority_gwei * estimated_node_seconds * vram_weight` amount. The submitted fee MUST be the task fee in Wei expected by Bridge. The create-time Image settlement Credits MUST remain unchanged by later configuration or Relay coefficient changes.
 
-Only successful tasks MUST debit Credits. A terminal failure MUST create a failed `task_call_records` row and MUST NOT create a charge event. Settlement retries MUST create at most one call record, one charge event, and one balance debit.
+Successful settle MUST release the Credits hold, then debit `min(computed_or_fixed_credits, balance)`. A terminal failure MUST release the Credits hold, create a failed `task_call_records` row, and MUST NOT create a charge event or change `balance`. Settlement and failure retries MUST create at most one call record, one charge event, one balance debit, and one hold release.

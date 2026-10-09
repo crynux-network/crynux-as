@@ -58,6 +58,7 @@ func main() {
 	go tasks.StartQueuedPriorityRefresh(context.Background())
 	tasks.StartTaskJobWorker(context.Background())
 	tasks.StartTaskJobRetentionCleanup(context.Background())
+	tasks.StartCreditsLockedReconciler(context.Background())
 
 	startServer()
 }

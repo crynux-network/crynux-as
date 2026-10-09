@@ -8,6 +8,7 @@ type CreditAccount struct {
 	UpdatedAt time.Time `json:"updated_at" gorm:"not null"`
 	UserID    uint      `json:"user_id" gorm:"not null;uniqueIndex"`
 	Balance   BigInt    `json:"balance" gorm:"type:string;size:255;not null"`
+	Locked    BigInt    `json:"locked" gorm:"type:string;size:255;not null;default:0"`
 }
 
 type CreditEventType int8

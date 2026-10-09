@@ -127,12 +127,12 @@ For each LLM request that requires Credits precheck and task fee, the service MU
 2. Resolve the request effective `priority_gwei` from the project Cost Level mode as specified in [llm-api.md](./llm-api.md) Project Cost Level.
 3. Fetch and validate execution-time coefficients for `(model, effective_vram)`.
 4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and `billable_gwei` using the request's resolved effective `priority_gwei`.
-5. Reject with HTTP 402 when the account balance is strictly less than `max(1, floor(billable_gwei * G))`.
+5. Let `estimate = max(1, floor(billable_gwei * G))`. In one database transaction, lock the user's `credit_accounts` row with `SELECT ... FOR UPDATE`, reject with HTTP 402 when `available = balance - locked` is strictly less than `estimate`, increase `credit_accounts.locked` by `estimate`, and create the `task_jobs` row with `credits_locked = estimate` and `credits_lock_status = held`. The pre-lock MUST NOT write a `credit_events` row and MUST NOT change `credit_accounts.balance`.
 6. Set `task_fee_gwei = floor(billable_gwei)` from the same `billable_gwei`.
 7. Resolve `median_priority_gwei` with the Queue Median Hint rules in [llm-api.md](./llm-api.md). This resolution MUST always produce a value and MUST NOT fail the request.
-8. Persist on the LLM job: the resolved effective `priority_gwei`, `constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `vram_weight`, `task_fee_gwei`, precheck `estimated_node_seconds`, and the resolved `median_priority_gwei` snapshot.
+8. Persist on the LLM job: the resolved effective `priority_gwei`, `constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `vram_weight`, `task_fee_gwei`, precheck `estimated_node_seconds`, the resolved `median_priority_gwei` snapshot, and the Credits hold fields from step 5. The versioned `billing_data` MAY include `locked_credits` for audit; unlock authority MUST be `task_jobs.credits_lock_status` and `credits_locked`.
 
-Credits precheck and task fee MUST use the same coefficient fetch and the same `billable_gwei`. The service MUST NOT run a Credits precheck that uses a different formula or a second coefficient fetch from the task fee path.
+Credits precheck and task fee MUST use the same coefficient fetch and the same `billable_gwei`. The service MUST NOT run a Credits precheck that uses a different formula or a second coefficient fetch from the task fee path. Whether a request may proceed MUST use `available`, not `balance` alone.
 
 When step 3 fails validation or Relay fetch rules in [llm-api.md](./llm-api.md) Task Fee Estimation Failure, the service MUST NOT forward the request and MUST NOT charge Credits for that attempt.
 
@@ -151,15 +151,16 @@ After a successful Bridge response:
 
 1. The service MUST read `usage.prompt_tokens`, `usage.completion_tokens`, and `usage.total_tokens`.
 2. The service MUST compute Credits with the charge formula using persisted job coefficients, persisted `vram_weight`, the job `priority_gwei` snapshot, and the usage token counts.
-3. The service MUST create one `llm_call_records` row with success status, token counts, the job `priority_gwei` used for the charge, the billed effective VRAM, call duration, the pre-forward Task Fee Estimation fields, and the Credits recalculation snapshot (`constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `credits_per_gwei`). The call record MUST NOT store the charged Credits amount. The call record `estimated_node_seconds` MUST be the pre-forward value persisted on the job. It MUST NOT be replaced by the settle-time recomputation used only for Credits.
-4. When the computed Credits are greater than zero and the account balance is sufficient, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by the same amount in the same database transaction. The event amount is the sole permanent store of the charged Credits. Because Credits for a successful chargeable settle MUST be at least `1`, a sufficient balance MUST produce a ledger event.
-5. The service MUST mark the LLM job `completed` only after steps 1 through 4 succeed.
+3. In the success settle transaction, after locking the job row, the service MUST release the Credits hold when `credits_lock_status` is `held`: lock the account row, decrease `credit_accounts.locked` by `credits_locked` (clamp `locked` to zero and emit an error log when `locked` is less than `credits_locked`), and set `credits_lock_status` to `released`. When `credits_lock_status` is already `released` or `none`, the unlock step MUST be a no-op.
+4. The service MUST create one `llm_call_records` row with success status, token counts, the job `priority_gwei` used for the charge, the billed effective VRAM, call duration, the pre-forward Task Fee Estimation fields, and the Credits recalculation snapshot (`constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `credits_per_gwei`). The call record MUST NOT store the charged Credits amount. The call record `estimated_node_seconds` MUST be the pre-forward value persisted on the job. It MUST NOT be replaced by the settle-time recomputation used only for Credits.
+5. Let `charge = min(computed_credits, balance)`. When `charge` is greater than zero, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by `charge` in the same database transaction. The event amount is the sole permanent store of the charged Credits. When `charge` is zero, the service MUST NOT create a ledger event. When `charge` is less than `computed_credits`, the service MUST emit an error log for operators.
+6. The service MUST mark the LLM job `completed` only after steps 1 through 5 succeed.
 
-For a Raw Image task, AS MUST persist the create-time settlement Credits in the versioned job billing data. Successful settle MUST use that persisted amount and MUST NOT fetch coefficients or read current configuration. The submitted `task_fee` MUST be the Wei fee expected by Bridge for one network task.
+For a Raw Image task, AS MUST persist the create-time settlement Credits in the versioned job billing data and MUST pre-lock that same amount at job create. Successful settle MUST release the hold, then charge `min(persisted_settlement_credits, balance)`, and MUST NOT fetch coefficients or read current configuration. The submitted `task_fee` MUST be the Wei fee expected by Bridge for one network task.
 
 Settle MUST NOT re-fetch Relay coefficients for the charge. Settle MUST NOT recompute or replace the already submitted `task_fee_gwei`. The full transaction ownership rules are specified in [llm-job-processing.md](./llm-job-processing.md).
 
-When the Bridge call succeeds but the account balance is insufficient for the computed Credits at settle time, the service MUST still create a success `llm_call_records` row without a Credits amount field, MUST NOT create a Credits ledger event, and MUST emit an error log for operators.
+A terminal failure MUST release the Credits hold in the failure record transaction and MUST NOT change `credit_accounts.balance` or create a charge event.
 
 ## Cost Level
 

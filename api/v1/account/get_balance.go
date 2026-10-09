@@ -6,6 +6,7 @@ import (
 	"crynux_as/api/v1/response"
 	"crynux_as/config"
 	"crynux_as/models"
+	"crynux_as/service"
 	"errors"
 	"math/big"
 	"time"
@@ -16,8 +17,10 @@ import (
 )
 
 type GetBalanceData struct {
-	Address string        `json:"address" description:"The wallet address of the user"`
-	Balance models.BigInt `json:"balance" description:"The Credits balance of the account"`
+	Address   string        `json:"address" description:"The wallet address of the user"`
+	Balance   models.BigInt `json:"balance" description:"The Credits balance of the account"`
+	Locked    models.BigInt `json:"locked" description:"Credits reserved by in-flight tasks"`
+	Available models.BigInt `json:"available" description:"Credits available for new tasks (balance - locked)"`
 }
 
 type GetBalanceResponse struct {
@@ -49,10 +52,13 @@ func GetBalance(c *gin.Context) (*GetBalanceResponse, error) {
 	var account models.CreditAccount
 	if err := db.WithContext(dbCtx).Where("user_id = ?", user.ID).First(&account).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			zero := models.BigInt{Int: *big.NewInt(0)}
 			return &GetBalanceResponse{
 				Data: &GetBalanceData{
-					Address: address,
-					Balance: models.BigInt{Int: *big.NewInt(0)},
+					Address:   address,
+					Balance:   zero,
+					Locked:    zero,
+					Available: zero,
 				},
 			}, nil
 		}
@@ -60,10 +66,13 @@ func GetBalance(c *gin.Context) (*GetBalanceResponse, error) {
 		return nil, response.NewExceptionResponse(err)
 	}
 
+	available := service.AvailableCredits(&account.Balance.Int, &account.Locked.Int)
 	return &GetBalanceResponse{
 		Data: &GetBalanceData{
-			Address: address,
-			Balance: account.Balance,
+			Address:   address,
+			Balance:   account.Balance,
+			Locked:    account.Locked,
+			Available: models.BigInt{Int: *available},
 		},
 	}, nil
 }

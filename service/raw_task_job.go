@@ -25,9 +25,12 @@ type CreateRawTaskJobInput struct {
 	TaskFeeWei      *big.Int
 	LLMBilling      *models.LLMTaskBillingData
 	ImageCredits    *big.Int
+	CreditsToLock   *big.Int
 }
 
-func CreateRawTaskJob(ctx context.Context, db *gorm.DB, in CreateRawTaskJobInput) (*models.TaskJob, error) {
+// ReserveCreditsAndCreateRawTaskJob locks estimated Credits and creates the raw
+// task job in one transaction.
+func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in CreateRawTaskJobInput) (*models.TaskJob, error) {
 	if in.Project == nil {
 		return nil, errors.New("project is required")
 	}
@@ -46,12 +49,16 @@ func CreateRawTaskJob(ctx context.Context, db *gorm.DB, in CreateRawTaskJobInput
 	if in.BilledVram == 0 {
 		return nil, errors.New("billed_vram must be positive")
 	}
+	if in.CreditsToLock == nil || in.CreditsToLock.Sign() <= 0 {
+		return nil, errors.New("credits_to_lock must be positive")
+	}
 	billing := models.TaskBillingData{
-		Version:      models.TaskBillingDataVersion,
-		PriorityGwei: in.PriorityGwei.String(),
-		BilledVram:   in.BilledVram,
-		TaskFeeWei:   in.TaskFeeWei.String(),
-		LLM:          in.LLMBilling,
+		Version:       models.TaskBillingDataVersion,
+		PriorityGwei:  in.PriorityGwei.String(),
+		BilledVram:    in.BilledVram,
+		TaskFeeWei:    in.TaskFeeWei.String(),
+		LockedCredits: in.CreditsToLock.String(),
+		LLM:           in.LLMBilling,
 	}
 	if in.TaskType == models.TaskTypeImage {
 		if in.ImageCredits == nil || in.ImageCredits.Sign() <= 0 {
@@ -64,25 +71,33 @@ func CreateRawTaskJob(ctx context.Context, db *gorm.DB, in CreateRawTaskJobInput
 		return nil, err
 	}
 	job := models.TaskJob{
-		ProjectID:       in.Project.ID,
-		UserID:          in.Project.UserID,
-		PriorityGwei:    models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
-		TaskType:        in.TaskType,
-		APIType:         models.TaskAPITypeRaw,
-		Model:           in.Model,
-		BilledVram:      in.BilledVram,
-		TaskArgsJSON:    in.TaskArgsJSON,
-		TaskVersion:     in.TaskVersion,
-		MinVram:         in.MinVram,
-		RequiredGPU:     in.RequiredGPU,
-		RequiredGPUVram: in.RequiredGPUVram,
-		Status:          models.TaskJobStatusPendingSubmit,
-		BillingStatus:   models.TaskJobBillingPending,
-		BillingData:     billingJSON,
+		ProjectID:         in.Project.ID,
+		UserID:            in.Project.UserID,
+		PriorityGwei:      models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
+		TaskType:          in.TaskType,
+		APIType:           models.TaskAPITypeRaw,
+		Model:             in.Model,
+		BilledVram:        in.BilledVram,
+		TaskArgsJSON:      in.TaskArgsJSON,
+		TaskVersion:       in.TaskVersion,
+		MinVram:           in.MinVram,
+		RequiredGPU:       in.RequiredGPU,
+		RequiredGPUVram:   in.RequiredGPUVram,
+		Status:            models.TaskJobStatusPendingSubmit,
+		BillingStatus:     models.TaskJobBillingPending,
+		BillingData:       billingJSON,
+		CreditsLocked:     models.BigInt{Int: *new(big.Int).Set(in.CreditsToLock)},
+		CreditsLockStatus: models.TaskJobCreditsLockHeld,
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := db.WithContext(dbCtx).Create(&job).Error; err != nil {
+	err = db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		if err := reserveCreditsTx(tx, in.Project.UserID, in.CreditsToLock); err != nil {
+			return err
+		}
+		return tx.Create(&job).Error
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &job, nil
@@ -103,6 +118,9 @@ func CompleteAndSettleImageTaskJob(ctx context.Context, db *gorm.DB, job *models
 		if locked.IsTerminal() && locked.TaskCallRecordID != nil {
 			*job = locked
 			return nil
+		}
+		if err := releaseCreditsHoldTx(tx, &locked); err != nil {
+			return err
 		}
 		billing, err := locked.DecodeBillingData()
 		if err != nil {
@@ -138,6 +156,7 @@ func CompleteAndSettleImageTaskJob(ctx context.Context, db *gorm.DB, job *models
 			"billing_status":      models.TaskJobBillingBilled,
 			"completed_at":        now,
 			"task_call_record_id": recordID,
+			"credits_lock_status": locked.CreditsLockStatus,
 		}).Error; err != nil {
 			return err
 		}

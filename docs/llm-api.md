@@ -264,7 +264,7 @@ Project read APIs MUST return `cost_level_mode`, `priority_gwei`, `auto_queue_po
 
 ## LLM Charging Rules
 
-Credits charging, balance precheck, settle, Credits configuration, failed-call non-charging rules, and the pricing-examples management API are specified only in [credits-billing.md](./credits-billing.md).
+Credits charging, available-Credits precheck and soft lock, settle, Credits configuration, failed-call non-charging rules, and the pricing-examples management API are specified only in [credits-billing.md](./credits-billing.md).
 
 The LLM-related service configuration items that remain shared with Task Fee Estimation and request handling are:
 
@@ -358,7 +358,7 @@ task_fee_gwei =
     floor(billable_gwei)
 ```
 
-* `estimated_prompt_tokens` and `max_completion_tokens` MUST be the same values used by the Credits balance precheck.
+* `estimated_prompt_tokens` and `max_completion_tokens` MUST be the same values used by the Credits available-Credits precheck and soft lock.
 * `priority_gwei` MUST be the effective Cost Level resolved for the request from the project Cost Level mode, snapshotted onto the job at create.
 * `effective_vram` MUST be the resolved effective VRAM of the request.
 * `base_vram` MUST come from `llm.base_vram`.

@@ -139,9 +139,9 @@ type RecordTaskCallInput struct {
 }
 
 // ProcessTaskCall writes an task_call_records row and, for a successful chargeable call,
-// applies the Credits ledger debit in the same transaction. When the balance is
-// insufficient at settle time, the record is stored as success and no ledger event
-// is created. The created record ID is returned.
+// applies the Credits ledger debit in the same transaction. When the computed Credits
+// exceed the balance at settle time, the debit is min(computed, balance). A zero charge
+// writes no ledger event. The created record ID is returned.
 func ProcessTaskCall(ctx context.Context, db *gorm.DB, in RecordTaskCallInput) (uint, error) {
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -195,10 +195,12 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 		}
 		if account.Balance.Cmp(chargeCredits) < 0 {
 			log.Errorf(
-				"insufficient balance at LLM settle: user_id=%d project_id=%d required=%s balance=%s",
+				"settle charge clamped to balance: user_id=%d project_id=%d computed=%s balance=%s",
 				in.UserID, in.ProjectID, chargeCredits.String(), account.Balance.String(),
 			)
-			chargeCredits = big.NewInt(0)
+			chargeCredits = new(big.Int).Set(&account.Balance.Int)
+		}
+		if chargeCredits.Sign() == 0 {
 			shouldCharge = false
 		} else {
 			newBalance := new(big.Int).Sub(&account.Balance.Int, chargeCredits)

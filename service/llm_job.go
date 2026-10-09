@@ -36,9 +36,12 @@ type CreateTaskJobInput struct {
 	ConstantSeconds       *float64
 	SecondsPerInputToken  *float64
 	SecondsPerOutputToken *float64
+	CreditsToLock         *big.Int
 }
 
-func CreateTaskJob(ctx context.Context, db *gorm.DB, in CreateTaskJobInput) (*models.TaskJob, error) {
+// ReserveCreditsAndCreateTaskJob locks estimated Credits on the account and creates
+// the task job in one transaction. available = balance - locked must cover CreditsToLock.
+func ReserveCreditsAndCreateTaskJob(ctx context.Context, db *gorm.DB, in CreateTaskJobInput) (*models.TaskJob, error) {
 	if in.Project == nil {
 		return nil, errors.New("project is required")
 	}
@@ -57,12 +60,16 @@ func CreateTaskJob(ctx context.Context, db *gorm.DB, in CreateTaskJobInput) (*mo
 	if in.VramWeight == nil || in.ConstantSeconds == nil || in.SecondsPerInputToken == nil || in.SecondsPerOutputToken == nil {
 		return nil, errors.New("llm billing data is required")
 	}
+	if in.CreditsToLock == nil || in.CreditsToLock.Sign() <= 0 {
+		return nil, errors.New("credits_to_lock must be positive")
+	}
 	taskFeeWei := new(big.Int).Mul(in.TaskFeeGwei, big.NewInt(1_000_000_000))
 	billingData, err := models.EncodeTaskBillingData(models.TaskBillingData{
-		Version:      models.TaskBillingDataVersion,
-		PriorityGwei: in.PriorityGwei.String(),
-		BilledVram:   in.BilledVram,
-		TaskFeeWei:   taskFeeWei.String(),
+		Version:       models.TaskBillingDataVersion,
+		PriorityGwei:  in.PriorityGwei.String(),
+		BilledVram:    in.BilledVram,
+		TaskFeeWei:    taskFeeWei.String(),
+		LockedCredits: in.CreditsToLock.String(),
 		LLM: &models.LLMTaskBillingData{
 			VramWeight:            *in.VramWeight,
 			ConstantSeconds:       *in.ConstantSeconds,
@@ -75,20 +82,22 @@ func CreateTaskJob(ctx context.Context, db *gorm.DB, in CreateTaskJobInput) (*mo
 		return nil, err
 	}
 	job := models.TaskJob{
-		ProjectID:    in.Project.ID,
-		UserID:       in.Project.UserID,
-		PriorityGwei: models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
-		TaskType:     models.TaskTypeLLM,
-		APIType:      in.APIType,
-		Model:        in.Model,
-		BilledVram:   in.BilledVram,
-		MinVram:      &in.BilledVram,
-		Background:   in.Background,
-		Stream:       in.Stream,
-		RequestBody:  in.RequestBody,
-		TaskArgsJSON: in.TaskArgsJSON,
-		Status:       models.TaskJobStatusPendingSubmit,
-		BillingData:  billingData,
+		ProjectID:         in.Project.ID,
+		UserID:            in.Project.UserID,
+		PriorityGwei:      models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
+		TaskType:          models.TaskTypeLLM,
+		APIType:           in.APIType,
+		Model:             in.Model,
+		BilledVram:        in.BilledVram,
+		MinVram:           &in.BilledVram,
+		Background:        in.Background,
+		Stream:            in.Stream,
+		RequestBody:       in.RequestBody,
+		TaskArgsJSON:      in.TaskArgsJSON,
+		Status:            models.TaskJobStatusPendingSubmit,
+		BillingData:       billingData,
+		CreditsLocked:     models.BigInt{Int: *new(big.Int).Set(in.CreditsToLock)},
+		CreditsLockStatus: models.TaskJobCreditsLockHeld,
 	}
 	if in.TaskFeeGwei != nil {
 		job.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
@@ -113,7 +122,13 @@ func CreateTaskJob(ctx context.Context, db *gorm.DB, in CreateTaskJobInput) (*mo
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	if err := db.WithContext(dbCtx).Create(&job).Error; err != nil {
+	err = db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		if err := reserveCreditsTx(tx, in.Project.UserID, in.CreditsToLock); err != nil {
+			return err
+		}
+		return tx.Create(&job).Error
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &job, nil
@@ -257,6 +272,10 @@ func CompleteAndSettleTaskJob(
 			return fmt.Errorf("task job %d already has call record %d", locked.ID, *locked.TaskCallRecordID)
 		}
 
+		if err := releaseCreditsHoldTx(tx, &locked); err != nil {
+			return err
+		}
+
 		lockedBilling, err := locked.DecodeBillingData()
 		if err != nil {
 			return err
@@ -299,6 +318,7 @@ func CompleteAndSettleTaskJob(
 			"completed_at":          now,
 			"billing_status":        models.TaskJobBillingBilled,
 			"task_call_record_id":   recordID,
+			"credits_lock_status":   locked.CreditsLockStatus,
 		}
 		if err := tx.Model(&models.TaskJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
 			return err
@@ -335,6 +355,10 @@ func FailAndRecordTaskJob(ctx context.Context, db *gorm.DB, job *models.TaskJob,
 		if locked.IsTerminal() && locked.TaskCallRecordID != nil {
 			*job = locked
 			return nil
+		}
+
+		if err := releaseCreditsHoldTx(tx, &locked); err != nil {
+			return err
 		}
 
 		lockedBilling, err := locked.DecodeBillingData()
@@ -375,6 +399,7 @@ func FailAndRecordTaskJob(ctx context.Context, db *gorm.DB, job *models.TaskJob,
 			"billing_status":      models.TaskJobBillingNotBilled,
 			"completed_at":        now,
 			"task_call_record_id": recordID,
+			"credits_lock_status": locked.CreditsLockStatus,
 		}
 		if err := tx.Model(&models.TaskJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
 			return err
@@ -394,13 +419,27 @@ func FailTaskJob(ctx context.Context, db *gorm.DB, jobID uint, errorMessage stri
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	updates := map[string]interface{}{
-		"status":         models.TaskJobStatusFailed,
-		"error_message":  errorMessage,
-		"billing_status": models.TaskJobBillingNotBilled,
-		"completed_at":   now,
-	}
-	if err := db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(updates).Error; err != nil {
+	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		var locked models.TaskJob
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&locked, jobID).Error; err != nil {
+			return err
+		}
+		if locked.IsTerminal() {
+			return nil
+		}
+		if err := releaseCreditsHoldTx(tx, &locked); err != nil {
+			return err
+		}
+		return tx.Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
+			"status":              models.TaskJobStatusFailed,
+			"error_message":       errorMessage,
+			"billing_status":      models.TaskJobBillingNotBilled,
+			"completed_at":        now,
+			"credits_lock_status": locked.CreditsLockStatus,
+		}).Error
+	})
+	if err != nil {
 		return nil, err
 	}
 	return GetTaskJobByID(ctx, db, jobID)

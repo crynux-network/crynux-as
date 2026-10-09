@@ -41,6 +41,14 @@ const (
 	TaskJobBillingNotBilled
 )
 
+type TaskJobCreditsLockStatus int8
+
+const (
+	TaskJobCreditsLockNone TaskJobCreditsLockStatus = iota
+	TaskJobCreditsLockHeld
+	TaskJobCreditsLockReleased
+)
+
 type TaskJob struct {
 	ID                    uint        `gorm:"primarykey"`
 	CreatedAt             time.Time   `gorm:"not null;index:idx_task_jobs_project_status_created,priority:3;index"`
@@ -58,24 +66,26 @@ type TaskJob struct {
 	TaskArgsJSON          string      `gorm:"type:longtext;not null"`
 	TaskVersion           *string     `gorm:"type:string;size:64"`
 	MinVram               *uint64
-	RequiredGPU           string               `gorm:"type:string;size:255"`
-	RequiredGPUVram       uint64               `gorm:"not null;default:0"`
-	BridgeClientTaskID    *uint                `gorm:"index"`
-	Status                TaskJobStatus        `gorm:"not null;default:0;index:idx_task_jobs_project_status_created,priority:2;index:idx_task_jobs_terminal_cleanup,priority:1;index"`
-	RawResultJSON         *string              `gorm:"type:longtext"`
-	FormattedResultJSON   *string              `gorm:"type:longtext"`
-	ErrorMessage          *string              `gorm:"type:text"`
-	BillingStatus         TaskJobBillingStatus `gorm:"not null;default:0;index:idx_task_jobs_terminal_cleanup,priority:2;index"`
-	TaskCallRecordID      *uint                `gorm:"index"`
-	BillingData           string               `gorm:"type:longtext;not null"`
-	RequestBody           []byte               `gorm:"-"`
-	TaskFeeGwei           *BigInt              `gorm:"-"`
-	MedianPriorityGwei    *BigInt              `gorm:"-"`
-	EstimatedNodeSeconds  *float64             `gorm:"-"`
-	VramWeight            *float64             `gorm:"-"`
-	ConstantSeconds       *float64             `gorm:"-"`
-	SecondsPerInputToken  *float64             `gorm:"-"`
-	SecondsPerOutputToken *float64             `gorm:"-"`
+	RequiredGPU           string                   `gorm:"type:string;size:255"`
+	RequiredGPUVram       uint64                   `gorm:"not null;default:0"`
+	BridgeClientTaskID    *uint                    `gorm:"index"`
+	Status                TaskJobStatus            `gorm:"not null;default:0;index:idx_task_jobs_project_status_created,priority:2;index:idx_task_jobs_terminal_cleanup,priority:1;index"`
+	RawResultJSON         *string                  `gorm:"type:longtext"`
+	FormattedResultJSON   *string                  `gorm:"type:longtext"`
+	ErrorMessage          *string                  `gorm:"type:text"`
+	BillingStatus         TaskJobBillingStatus     `gorm:"not null;default:0;index:idx_task_jobs_terminal_cleanup,priority:2;index"`
+	TaskCallRecordID      *uint                    `gorm:"index"`
+	BillingData           string                   `gorm:"type:longtext;not null"`
+	CreditsLocked         BigInt                   `gorm:"type:string;size:255;not null;default:0"`
+	CreditsLockStatus     TaskJobCreditsLockStatus `gorm:"not null;default:0;index:idx_task_jobs_credits_lock_status"`
+	RequestBody           []byte                   `gorm:"-"`
+	TaskFeeGwei           *BigInt                  `gorm:"-"`
+	MedianPriorityGwei    *BigInt                  `gorm:"-"`
+	EstimatedNodeSeconds  *float64                 `gorm:"-"`
+	VramWeight            *float64                 `gorm:"-"`
+	ConstantSeconds       *float64                 `gorm:"-"`
+	SecondsPerInputToken  *float64                 `gorm:"-"`
+	SecondsPerOutputToken *float64                 `gorm:"-"`
 	StartedAt             *time.Time
 	CompletedAt           *time.Time `gorm:"index:idx_task_jobs_terminal_cleanup,priority:3"`
 }
@@ -83,12 +93,13 @@ type TaskJob struct {
 const TaskBillingDataVersion = 1
 
 type TaskBillingData struct {
-	Version      int                   `json:"version"`
-	PriorityGwei string                `json:"priority_gwei"`
-	BilledVram   uint64                `json:"billed_vram"`
-	TaskFeeWei   string                `json:"task_fee_wei"`
-	LLM          *LLMTaskBillingData   `json:"llm,omitempty"`
-	Image        *ImageTaskBillingData `json:"image,omitempty"`
+	Version       int                   `json:"version"`
+	PriorityGwei  string                `json:"priority_gwei"`
+	BilledVram    uint64                `json:"billed_vram"`
+	TaskFeeWei    string                `json:"task_fee_wei"`
+	LockedCredits string                `json:"locked_credits,omitempty"`
+	LLM           *LLMTaskBillingData   `json:"llm,omitempty"`
+	Image         *ImageTaskBillingData `json:"image,omitempty"`
 }
 
 type LLMTaskBillingData struct {

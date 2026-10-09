@@ -56,19 +56,13 @@ func CreateTask(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	account, err := loadAccount(c.Request.Context(), project.UserID)
-	if err != nil {
-		writeInternalError(c, err)
-		return
-	}
-	credits, _ := new(big.Int).SetString(prepared.credits, 10)
-	if err := service.EnsureSufficientBalance(&account.Balance.Int, credits); err != nil {
-		recordFailure(c.Request.Context(), project, prepared.model, prepared.billedVram)
-		writeError(c, http.StatusPaymentRequired, "insufficient credits balance")
-		return
-	}
 	job, err := createPreparedTask(c.Request.Context(), project, prepared)
 	if err != nil {
+		if errors.Is(err, service.ErrInsufficientBalance) {
+			recordFailure(c.Request.Context(), project, prepared.model, prepared.billedVram)
+			writeError(c, http.StatusPaymentRequired, "insufficient credits balance")
+			return
+		}
 		writeInternalError(c, err)
 		return
 	}
@@ -86,12 +80,6 @@ func BatchCreate(c *gin.Context) {
 		writeError(c, http.StatusBadRequest, "tasks must contain between 1 and 100 items")
 		return
 	}
-	account, err := loadAccount(c.Request.Context(), project.UserID)
-	if err != nil {
-		writeInternalError(c, err)
-		return
-	}
-	remaining := new(big.Int).Set(&account.Balance.Int)
 	results := make([]BatchCreateItem, 0, len(request.Tasks))
 	for index, item := range request.Tasks {
 		prepared, err := prepareTask(c.Request.Context(), project, item)
@@ -100,19 +88,17 @@ func BatchCreate(c *gin.Context) {
 			results = append(results, BatchCreateItem{Index: index, Error: err.Error()})
 			continue
 		}
-		credits, _ := new(big.Int).SetString(prepared.credits, 10)
-		if remaining.Cmp(credits) < 0 {
-			recordFailure(c.Request.Context(), project, prepared.model, prepared.billedVram)
-			results = append(results, BatchCreateItem{Index: index, Error: "insufficient credits balance"})
-			continue
-		}
 		job, err := createPreparedTask(c.Request.Context(), project, prepared)
 		if err != nil {
+			if errors.Is(err, service.ErrInsufficientBalance) {
+				recordFailure(c.Request.Context(), project, prepared.model, prepared.billedVram)
+				results = append(results, BatchCreateItem{Index: index, Error: "insufficient credits balance"})
+				continue
+			}
 			results = append(results, BatchCreateItem{Index: index, Error: "failed to create task"})
 			log.Errorf("Create raw task failed for project %d: %v", project.ID, err)
 			continue
 		}
-		remaining.Sub(remaining, credits)
 		view := taskView(job)
 		results = append(results, BatchCreateItem{Index: index, ClientTask: &view})
 	}
@@ -367,20 +353,14 @@ func createPreparedTask(ctx context.Context, project *models.Project, prepared *
 	priority, _ := new(big.Int).SetString(prepared.priority, 10)
 	fee, _ := new(big.Int).SetString(prepared.taskFeeWei, 10)
 	credits, _ := new(big.Int).SetString(prepared.credits, 10)
-	return service.CreateRawTaskJob(ctx, config.GetDB(), service.CreateRawTaskJobInput{
+	return service.ReserveCreditsAndCreateRawTaskJob(ctx, config.GetDB(), service.CreateRawTaskJobInput{
 		Project: project, TaskType: *prepared.request.TaskType, Model: prepared.model,
 		TaskArgsJSON: prepared.taskArgs, TaskVersion: prepared.request.TaskVersion,
 		MinVram: prepared.minVram, RequiredGPU: prepared.request.RequiredGPU,
 		RequiredGPUVram: prepared.request.RequiredGPUVram,
 		PriorityGwei: priority, BilledVram: prepared.billedVram, TaskFeeWei: fee,
-		LLMBilling: prepared.llmBilling, ImageCredits: credits,
+		LLMBilling: prepared.llmBilling, ImageCredits: credits, CreditsToLock: credits,
 	})
-}
-
-func loadAccount(ctx context.Context, userID uint) (*models.CreditAccount, error) {
-	var account models.CreditAccount
-	err := config.GetDB().WithContext(ctx).Where("user_id = ?", userID).First(&account).Error
-	return &account, err
 }
 
 func loadProjectTask(ctx context.Context, projectID, id uint) (*models.TaskJob, error) {

@@ -63,12 +63,6 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	effectiveVram := vramlimit.ResolveEffectiveVram(parsed.model, userVram)
 
 	db := config.GetDB()
-	account, err := loadCreditAccount(c.Request.Context(), db, project.UserID)
-	if err != nil {
-		log.Errorf("Error loading credit account for user %d: %v", project.UserID, err)
-		writeServerError(c)
-		return
-	}
 
 	estPrompt := estimatePromptTokens(body, apiType)
 	maxCompletion := service.ResolveMaxCompletionTokens(parsed.maxTokens, parsed.maxCompletionTokens, appCfg.LLM.DefaultMaxTokens)
@@ -93,11 +87,6 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		writeServerError(c)
 		return
 	}
-	if err := service.EnsureSufficientBalance(&account.Balance.Int, taskFee.Credits); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
-		writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
-		return
-	}
 
 	jobInput := service.CreateTaskJobInput{
 		Project:               project,
@@ -116,10 +105,16 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		ConstantSeconds:       float64Ptr(taskFee.ConstantSeconds),
 		SecondsPerInputToken:  float64Ptr(taskFee.SecondsPerInputToken),
 		SecondsPerOutputToken: float64Ptr(taskFee.SecondsPerOutputToken),
+		CreditsToLock:         taskFee.Credits,
 	}
 
-	job, err := service.CreateTaskJob(c.Request.Context(), db, jobInput)
+	job, err := service.ReserveCreditsAndCreateTaskJob(c.Request.Context(), db, jobInput)
 	if err != nil {
+		if errors.Is(err, service.ErrInsufficientBalance) {
+			_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
+			writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
+			return
+		}
 		log.Errorf("Create LLM job failed for project %d: %v", project.ID, err)
 		writeServerError(c)
 		return

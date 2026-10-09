@@ -94,13 +94,6 @@ func CreateResponse(c *gin.Context) {
 	}
 	effectiveVram := vramlimit.ResolveEffectiveVram(req.Model, userVram)
 
-	account, err := loadCreditAccount(c.Request.Context(), db, project.UserID)
-	if err != nil {
-		log.Errorf("Error loading credit account for user %d: %v", project.UserID, err)
-		writeServerError(c)
-		return
-	}
-
 	estPrompt := estimatePromptTokensFromResponsesBody(body)
 	maxCompletion := service.ResolveMaxCompletionTokens(nil, req.MaxOutputTokens, appCfg.LLM.DefaultMaxTokens)
 	priorityGwei, err := service.ResolveEffectivePriorityGwei(project)
@@ -124,11 +117,6 @@ func CreateResponse(c *gin.Context) {
 		writeServerError(c)
 		return
 	}
-	if err := service.EnsureSufficientBalance(&account.Balance.Int, taskFee.Credits); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
-		writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
-		return
-	}
 
 	jobInput := service.CreateTaskJobInput{
 		Project:               project,
@@ -146,10 +134,16 @@ func CreateResponse(c *gin.Context) {
 		ConstantSeconds:       float64Ptr(taskFee.ConstantSeconds),
 		SecondsPerInputToken:  float64Ptr(taskFee.SecondsPerInputToken),
 		SecondsPerOutputToken: float64Ptr(taskFee.SecondsPerOutputToken),
+		CreditsToLock:         taskFee.Credits,
 	}
 
-	job, err := service.CreateTaskJob(c.Request.Context(), db, jobInput)
+	job, err := service.ReserveCreditsAndCreateTaskJob(c.Request.Context(), db, jobInput)
 	if err != nil {
+		if errors.Is(err, service.ErrInsufficientBalance) {
+			_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
+			writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
+			return
+		}
 		log.Errorf("Create LLM job failed for project %d: %v", project.ID, err)
 		writeServerError(c)
 		return
@@ -356,17 +350,6 @@ func estimatePromptTokensFromResponsesBody(body []byte) uint64 {
 func float64Ptr(v float64) *float64 {
 	copied := v
 	return &copied
-}
-
-func loadCreditAccount(ctx context.Context, db *gorm.DB, userID uint) (*models.CreditAccount, error) {
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var account models.CreditAccount
-	if err := db.WithContext(dbCtx).Where("user_id = ?", userID).First(&account).Error; err != nil {
-		return nil, err
-	}
-	return &account, nil
 }
 
 func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, acceptedAt, completedAt time.Time, priorityGwei *big.Int, taskFee *service.CalcTaskFeeResult) error {

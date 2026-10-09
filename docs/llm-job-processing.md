@@ -15,12 +15,13 @@ Each row MUST contain:
 * Bridge client task ID when submitted
 * execution status and billing status
 * raw result JSON and formatted result JSON when available
-* versioned `billing_data` with common `priority_gwei`, billed VRAM, and `task_fee_wei`; LLM token-settlement coefficients or the fixed Image settlement Credits
+* versioned `billing_data` with common `priority_gwei`, billed VRAM, and `task_fee_wei`; LLM token-settlement coefficients or the fixed Image settlement Credits; optional audit field `locked_credits`
+* `credits_locked` and `credits_lock_status` (`none`, `held`, or `released`) for the create-time Credits soft lock
 * optional Responses public ID
 * `task_call_record_id` after the terminal settle or failure record transaction commits
 * `started_at` and `completed_at` when set
 
-`task_jobs` MUST NOT be the permanent store of billed token counts. Final prompt, completion, and total token counts MUST live only on `task_call_records`.
+`task_jobs` MUST NOT be the permanent store of billed token counts. Final prompt, completion, and total token counts MUST live only on `task_call_records`. Unlock of a Credits hold MUST use `credits_lock_status` and `credits_locked`, not `billing_data.locked_credits`.
 
 Retention:
 
@@ -56,7 +57,7 @@ For task charging:
 * The event `amount` MUST be the actual Credits debit applied to the account.
 * The `(type, ref_id)` pair MUST be unique so one call record produces at most one task charge event.
 
-When settle computes a positive Credits amount but the account balance is insufficient, the service MUST write the success call record, MUST NOT create an task charge event, and MUST leave the account balance unchanged.
+When settle computes a positive Credits amount, the service MUST charge `min(computed_credits, balance)`. When that amount is greater than zero, the event amount MUST equal the applied debit. When balance is zero, the service MUST write the success call record and MUST NOT create a task charge event.
 
 The destructive task-schema migration MUST reject any negative `credit_accounts.balance`, delete prior task, call-record, deposit, usage, and ledger history, and preserve users, projects, account balances, and blockchain cursors. It MUST create one processed opening-balance event for every positive account balance with amount equal to that balance and `ref_id` equal to the user ID. It MUST NOT create an opening event for a zero balance.
 
@@ -64,15 +65,20 @@ The destructive task-schema migration MUST reject any negative `credit_accounts.
 
 `credit_accounts.balance` MUST equal the sum of that user's processed `credit_events` amounts after every committed deposit or task charge transaction. New writes after this schema MUST make that equality verifiable from processed events alone.
 
+`credit_accounts.locked` MUST be a non-negative Credits amount reserved by in-flight jobs. Pre-lock and unlock MUST change only `locked`. `balance` MUST change only through processed ledger events. Available Credits MUST be `balance - locked`. The account API MUST return `balance`, `locked`, and `available`.
+
+A reconciler MUST periodically compare `credit_accounts.locked` with the sum of `task_jobs.credits_locked` where `credits_lock_status = held` for the same user. When they differ, the reconciler MUST set `locked` to that sum and MUST emit an error log.
+
 ## Request Processing Flow
 
 ```mermaid
 flowchart TD
   A[Validate request] -->|invalid before job| F[Write failed call record]
-  A -->|valid| B[Estimate task fee and check balance]
-  B -->|insufficient or estimate failure| F
-  B -->|ok| C[Create llm_jobs row]
-  C --> D[Bridge submit and poll]
+  A -->|valid| B[Estimate task fee]
+  B -->|estimate failure| F
+  B -->|ok| C[Reserve available Credits and create task_jobs]
+  C -->|insufficient available| F
+  C -->|ok| D[Bridge submit and poll]
   D -->|success raw result| E[Format result]
   E --> G[Success settle transaction]
   D -->|terminal failure| H[Failure record transaction]
@@ -83,11 +89,11 @@ flowchart TD
 
 ### Validation failure before job creation
 
-When authentication succeeds but request validation, VRAM resolution, task-fee estimation, or balance precheck fails before an `task_jobs` row is created, the API MUST write one failed `task_call_records` row and MUST NOT create a job, MUST NOT create a Credits event, and MUST NOT change the account balance.
+When authentication succeeds but request validation, VRAM resolution, task-fee estimation, or Credits reserve fails before an `task_jobs` row is created, the API MUST write one failed `task_call_records` row and MUST NOT create a job, MUST NOT create a Credits event, and MUST NOT change the account balance or `locked`.
 
 ### Job creation
 
-When the request is accepted for execution, the API MUST create one `task_jobs` row with status `pending_submit`, create-time snapshots for user, the resolved effective `priority_gwei`, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`.
+When the request is accepted for execution, the API MUST reserve the estimated Credits and create one `task_jobs` row in the same database transaction: lock `credit_accounts` with `SELECT ... FOR UPDATE`, require `available >= estimate`, increase `locked` by `estimate`, and insert the job with status `pending_submit`, `credits_lock_status = held`, `credits_locked = estimate`, create-time snapshots for user, the resolved effective `priority_gwei`, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`. If any step fails, the transaction MUST roll back so no hold remains without a job.
 
 For Responses requests with `previous_response_id`, the API MUST resolve the previous job before creating the new job:
 
@@ -114,24 +120,26 @@ A `pending_submit` job older than `llm.job_submit_timeout` seconds MUST be marke
 
 The success settle transaction MUST lock the job row and, in one commit, write:
 
-1. one success `task_call_records` row with final tokens and the Credits recalculation snapshot
-2. when charged amount is greater than zero and balance is sufficient, one processed LLM `credit_events` row and the matching `credit_accounts` debit
-3. the job terminal update to status `completed`, billing status `billed`, raw and formatted results, `completed_at`, and `llm_call_record_id`
+1. release of the Credits hold when `credits_lock_status` is `held`, then set `credits_lock_status` to `released`
+2. one success `task_call_records` row with final tokens and the Credits recalculation snapshot
+3. when `charge = min(computed_credits, balance)` is greater than zero, one processed LLM `credit_events` row and the matching `credit_accounts` debit of `charge`
+4. the job terminal update to status `completed`, billing status `billed`, raw and formatted results, `completed_at`, and `llm_call_record_id`
 
-The transaction MUST NOT write final token counts onto the job row. The transaction MUST NOT write the charged Credits amount onto the call record.
+The transaction MUST NOT write final token counts onto the job row. The transaction MUST NOT write the charged Credits amount onto the call record. Unlock and terminal settle MUST NOT commit in separate transactions.
 
-If the job already has `llm_call_record_id`, or is already `completed` and `billed`, the settle path MUST leave existing rows unchanged and MUST NOT create another call record or Credits event.
+If the job already has `llm_call_record_id`, or is already `completed` and `billed`, the settle path MUST leave existing rows unchanged and MUST NOT create another call record, Credits event, or second unlock debit.
 
 ### Failure record transaction
 
 The failure record transaction MUST lock the job row and, in one commit, write:
 
-1. one failed `task_call_records` row
-2. the job terminal update to status `failed`, billing status `not_billed`, error message, `completed_at`, and `llm_call_record_id`
+1. release of the Credits hold when `credits_lock_status` is `held`, then set `credits_lock_status` to `released`
+2. one failed `task_call_records` row
+3. the job terminal update to status `failed`, billing status `not_billed`, error message, `completed_at`, and `llm_call_record_id`
 
 It MUST NOT create a Credits event and MUST NOT change the account balance.
 
-If the job is already terminal with a call record, the failure path MUST leave existing rows unchanged.
+If the job is already terminal with a call record, the failure path MUST leave existing rows unchanged and MUST NOT unlock again.
 
 ### Responses lookup
 

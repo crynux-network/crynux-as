@@ -46,3 +46,33 @@ func StartTaskJobRetentionCleanup(ctx context.Context) {
 		}
 	}()
 }
+
+func StartCreditsLockedReconciler(ctx context.Context) {
+	go func() {
+		log.Infoln("credits locked reconciler started")
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		runReconcile := func() {
+			corrected, err := service.ReconcileCreditsLocked(ctx, config.GetDB())
+			if err != nil {
+				log.Errorf("credits locked reconcile failed: %v", err)
+				return
+			}
+			if corrected > 0 {
+				log.Errorf("credits locked reconcile corrected %d accounts", corrected)
+			}
+		}
+
+		runReconcile()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Infoln("credits locked reconciler stopped")
+				return
+			case <-ticker.C:
+				runReconcile()
+			}
+		}
+	}()
+}

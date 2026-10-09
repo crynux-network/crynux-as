@@ -10,21 +10,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 var estimateTaskFeeFn = service.EstimateTaskFee
-
-func loadCreditAccount(ctx context.Context, db *gorm.DB, userID uint) (*models.CreditAccount, error) {
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var account models.CreditAccount
-	if err := db.WithContext(dbCtx).Where("user_id = ?", userID).First(&account).Error; err != nil {
-		return nil, err
-	}
-	return &account, nil
-}
 
 func recordFailedCall(ctx context.Context, project *models.Project, apiType models.TaskAPIType, model string, billedVram uint64, acceptedAt, completedAt time.Time, priorityGwei *big.Int, taskFee *service.CalcTaskFeeResult) error {
 	if acceptedAt.IsZero() {
