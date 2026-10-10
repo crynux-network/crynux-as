@@ -97,6 +97,10 @@ func CalcBillableGwei(in CalcBillableInput) (*CalcBillableResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	billableGwei, taskFeeGwei, err = applyMaxTaskFeeCap(billableGwei, taskFeeGwei)
+	if err != nil {
+		return nil, err
+	}
 
 	return &CalcBillableResult{
 		BillableGwei:         billableGwei,
@@ -265,7 +269,7 @@ func CalcCredits(
 		secondsPerInputToken*float64(promptTokens) +
 		secondsPerOutputToken*float64(completionTokens)
 
-	billableGwei, _, err := billableFromParts(
+	billableGwei, taskFeeGwei, err := billableFromParts(
 		priorityGwei,
 		estimatedNodeSeconds,
 		vramWeight,
@@ -273,7 +277,33 @@ func CalcCredits(
 	if err != nil {
 		return nil, err
 	}
+	billableGwei, _, err = applyMaxTaskFeeCap(billableGwei, taskFeeGwei)
+	if err != nil {
+		return nil, err
+	}
 	return CalcCreditsFromBillable(billableGwei, rate)
+}
+
+// applyMaxTaskFeeCap clamps billable_gwei and task_fee_gwei to llm.max_task_price_cnx.
+func applyMaxTaskFeeCap(billableGwei *big.Float, taskFeeGwei *big.Int) (*big.Float, *big.Int, error) {
+	if billableGwei == nil {
+		return nil, nil, errors.New("billable_gwei is required")
+	}
+	if taskFeeGwei == nil {
+		return nil, nil, errors.New("task_fee_gwei is required")
+	}
+	appCfg := config.GetConfig()
+	if appCfg == nil {
+		return nil, nil, errors.New("config is not initialized")
+	}
+	maxFeeGwei, err := appCfg.MaxTaskFeeGwei()
+	if err != nil {
+		return nil, nil, fmt.Errorf("max_task_price_cnx: %w", err)
+	}
+	if taskFeeGwei.Cmp(maxFeeGwei) <= 0 {
+		return billableGwei, taskFeeGwei, nil
+	}
+	return new(big.Float).SetInt(maxFeeGwei), new(big.Int).Set(maxFeeGwei), nil
 }
 
 func validateExecutionTimeCoefficients(constantSeconds, secondsPerInputToken, secondsPerOutputToken float64) error {

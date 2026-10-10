@@ -210,6 +210,9 @@ func checkLLMConfig() error {
 	if _, err := appConfig.ParseCreditsPerGwei(); err != nil {
 		return fmt.Errorf("llm.credits_per_gwei is invalid: %w", err)
 	}
+	if _, err := appConfig.MaxTaskFeeGwei(); err != nil {
+		return fmt.Errorf("llm.max_task_price_cnx is invalid: %w", err)
+	}
 	if appConfig.LLM.JobSubmitTimeout == 0 {
 		return errors.New("llm.job_submit_timeout is not set")
 	}
@@ -258,6 +261,21 @@ func (cfg *AppConfig) ParseMaxPriorityGwei() (*big.Int, error) {
 
 func (cfg *AppConfig) ParseCreditsPerGwei() (*big.Rat, error) {
 	return ParsePositiveDecimalRate(cfg.LLM.CreditsPerGwei)
+}
+
+// MaxTaskFeeGwei converts llm.max_task_price_cnx to Gwei as floor(price_cnx * 1e9).
+// 1 CNX = 1e18 wei and task_fee_gwei * 1e9 = wei, so 1 CNX = 1e9 Gwei.
+func (cfg *AppConfig) MaxTaskFeeGwei() (*big.Int, error) {
+	price, err := ParsePositiveDecimalRate(cfg.LLM.MaxTaskPriceCNX)
+	if err != nil {
+		return nil, err
+	}
+	scaled := new(big.Rat).Mul(price, big.NewRat(1_000_000_000, 1))
+	feeGwei := new(big.Int).Quo(scaled.Num(), scaled.Denom())
+	if feeGwei.Sign() <= 0 {
+		return nil, errors.New("must convert to a positive Gwei amount")
+	}
+	return feeGwei, nil
 }
 
 func (cfg *AppConfig) ParseRecentFailureRateThreshold() (*big.Rat, error) {

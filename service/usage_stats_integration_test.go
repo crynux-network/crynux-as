@@ -276,6 +276,7 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 	cfg.LLM.MinPriorityGwei = "1"
 	cfg.LLM.MaxPriorityGwei = "1000"
 	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = "1000"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 

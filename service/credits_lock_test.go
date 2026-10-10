@@ -14,6 +14,7 @@ func TestReserveCreditsRejectsWhenAvailableInsufficient(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = "1000"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -82,6 +83,7 @@ func TestReserveCreditsSecondRequestSeesHeldLock(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = "1000"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -125,6 +127,7 @@ func TestFailReleasesHoldWithoutCharging(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = "1000"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -200,6 +203,7 @@ func TestSettleChargesActualAndClearsLock(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = "1000"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -270,6 +274,7 @@ func TestSettleChargesMinOfActualAndBalance(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = "1000"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -387,6 +392,7 @@ func TestReserveTransactionFailureLeavesLockedUnchanged(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = "1000"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 

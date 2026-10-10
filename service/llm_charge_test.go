@@ -1,11 +1,17 @@
 package service
 
 import (
+	"crynux_as/config"
 	"math/big"
 	"testing"
 )
 
 func TestCalcCredits(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.MaxTaskPriceCNX = "1000"
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
 	cases := []struct {
 		name                  string
 		promptTokens          uint64

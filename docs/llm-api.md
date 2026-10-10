@@ -301,6 +301,7 @@ llm:
   min_priority_gwei: "1"
   max_priority_gwei: "1000000000"
   credits_per_gwei: "1"
+  max_task_price_cnx: "0.001"
   job_submit_timeout: 600
   job_retention_days: 30
   project_recent_requests_limit: 50
@@ -317,6 +318,7 @@ llm:
 * `empty_queue_median_priority_gwei` is the median priority hint used when the queued-priority cache has never observed a non-empty queue, and when creating a project with no usable live or remembered median. It MUST NOT enter `billable_gwei` except when it becomes the project's stored `priority_gwei` at project creation through the Queue Median Hint rules. Every YAML configuration template MUST set it to a positive decimal integer string. Every Gwei-denominated LLM configuration and response field whose name ends in `_gwei` MUST use a decimal integer string.
 * `min_priority_gwei` and `max_priority_gwei` are the hard bounds for project Cost Level values. They MUST be positive decimal integer strings. Configuration loading MUST fail when `min_priority_gwei` is greater than `max_priority_gwei`.
 * `credits_per_gwei` is specified in [credits-billing.md](./credits-billing.md). It MUST be a positive decimal string.
+* `max_task_price_cnx` is specified in [credits-billing.md](./credits-billing.md). It MUST be a positive decimal string in CNX units. Configuration loading MUST fail when it is missing, non-positive, or does not convert to a positive Gwei amount. Every YAML configuration template MUST set it.
 * `job_submit_timeout` is the maximum age in seconds of a `pending_submit` LLM job before the worker stops Bridge submit retries and marks the job failed. Every YAML configuration template MUST set it to a positive integer.
 * `job_retention_days` is the number of days a terminal settled job remains readable for Responses lookup and `previous_response_id`. Every YAML configuration template MUST set it to a positive integer. Example configurations MUST use `30`.
 * `project_recent_requests_limit` is the maximum number of Recent Requests rows returned for a project. Every YAML configuration template MUST set it to a positive integer.
@@ -379,6 +381,8 @@ billable_gwei =
 
 task_fee_gwei =
     floor(billable_gwei)
+
+When `task_fee_gwei` would exceed `floor(llm.max_task_price_cnx * 1e9)`, both the submitted `task_fee_gwei` and the Credits `billable_gwei` MUST be clamped as specified in [credits-billing.md](./credits-billing.md). The job and call-record `priority_gwei` snapshot MUST remain the uncapped effective Cost Level.
 ```
 
 * `estimated_prompt_tokens` and `max_completion_tokens` MUST be the same values used by the Credits available-Credits precheck and soft lock.

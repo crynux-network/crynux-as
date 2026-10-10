@@ -1,11 +1,23 @@
 package service
 
 import (
+	"crynux_as/config"
 	"math/big"
 	"testing"
 )
 
+func setTaskFeeTestConfig(t *testing.T, maxTaskPriceCNX string) {
+	t.Helper()
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = maxTaskPriceCNX
+	cfg.LLM.BaseVRAM = 8
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+}
+
 func TestCalcBillableAndCreditsBasic(t *testing.T) {
+	setTaskFeeTestConfig(t, "1000")
 	got, err := CalcBillableGwei(CalcBillableInput{
 		PriorityGwei:          big.NewInt(10),
 		EffectiveVram:         8,
@@ -62,6 +74,7 @@ func TestImagePixelStepUnitsRejectsOverflow(t *testing.T) {
 }
 
 func TestCalcBillablePriorityAndVramWeight(t *testing.T) {
+	setTaskFeeTestConfig(t, "1000")
 	got, err := CalcBillableGwei(CalcBillableInput{
 		PriorityGwei:          big.NewInt(10),
 		EffectiveVram:         24,
@@ -85,6 +98,7 @@ func TestCalcBillablePriorityAndVramWeight(t *testing.T) {
 }
 
 func TestCalcBillableTruncatesTowardZero(t *testing.T) {
+	setTaskFeeTestConfig(t, "1000")
 	got, err := CalcBillableGwei(CalcBillableInput{
 		PriorityGwei:          big.NewInt(1),
 		EffectiveVram:         8,
@@ -104,6 +118,7 @@ func TestCalcBillableTruncatesTowardZero(t *testing.T) {
 }
 
 func TestCalcBillableVramWeightUsesBaseWhenEffectiveLower(t *testing.T) {
+	setTaskFeeTestConfig(t, "1000")
 	got, err := CalcBillableGwei(CalcBillableInput{
 		PriorityGwei:          big.NewInt(10),
 		EffectiveVram:         4,
@@ -155,5 +170,79 @@ func TestParseCreditsPerGweiRejected(t *testing.T) {
 		if _, err := ParseCreditsPerGwei(value); err == nil {
 			t.Fatalf("ParseCreditsPerGwei(%q) should fail", value)
 		}
+	}
+}
+
+func TestCalcBillableAppliesMaxTaskPriceCap(t *testing.T) {
+	// 0.001 CNX = 1_000_000 Gwei
+	setTaskFeeTestConfig(t, "0.001")
+	got, err := CalcBillableGwei(CalcBillableInput{
+		PriorityGwei:          big.NewInt(5_000_000),
+		EffectiveVram:         8,
+		BaseVram:              8,
+		ConstantSeconds:       1,
+		SecondsPerInputToken:  0,
+		SecondsPerOutputToken: 0,
+		PromptTokens:          0,
+		CompletionTokens:      0,
+	})
+	if err != nil {
+		t.Fatalf("CalcBillableGwei: %v", err)
+	}
+	wantFee := big.NewInt(1_000_000)
+	if got.TaskFeeGwei.Cmp(wantFee) != 0 {
+		t.Fatalf("TaskFeeGwei = %s, want %s", got.TaskFeeGwei.String(), wantFee.String())
+	}
+	rate, err := ParseCreditsPerGwei("1")
+	if err != nil {
+		t.Fatalf("ParseCreditsPerGwei: %v", err)
+	}
+	credits, err := CalcCreditsFromBillable(got.BillableGwei, rate)
+	if err != nil {
+		t.Fatalf("CalcCreditsFromBillable: %v", err)
+	}
+	if credits.Cmp(wantFee) != 0 {
+		t.Fatalf("Credits = %s, want %s", credits.String(), wantFee.String())
+	}
+}
+
+func TestCalcBillableBelowMaxTaskPriceUnchanged(t *testing.T) {
+	setTaskFeeTestConfig(t, "0.001")
+	got, err := CalcBillableGwei(CalcBillableInput{
+		PriorityGwei:          big.NewInt(10),
+		EffectiveVram:         8,
+		BaseVram:              8,
+		ConstantSeconds:       32,
+		SecondsPerInputToken:  0,
+		SecondsPerOutputToken: 0,
+		PromptTokens:          0,
+		CompletionTokens:      0,
+	})
+	if err != nil {
+		t.Fatalf("CalcBillableGwei: %v", err)
+	}
+	if got.TaskFeeGwei.Cmp(big.NewInt(320)) != 0 {
+		t.Fatalf("TaskFeeGwei = %s, want 320", got.TaskFeeGwei.String())
+	}
+}
+
+func TestCalcCreditsAppliesMaxTaskPriceCap(t *testing.T) {
+	setTaskFeeTestConfig(t, "0.001")
+	got, err := CalcCredits(
+		0,
+		0,
+		big.NewInt(5_000_000),
+		1,
+		1,
+		0,
+		0,
+		"1",
+	)
+	if err != nil {
+		t.Fatalf("CalcCredits: %v", err)
+	}
+	want := big.NewInt(1_000_000)
+	if got.Cmp(want) != 0 {
+		t.Fatalf("CalcCredits = %s, want %s", got.String(), want.String())
 	}
 }
