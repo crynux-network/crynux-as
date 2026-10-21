@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +14,6 @@ import (
 
 var (
 	ErrModelNotFound      = errors.New("huggingface model not found")
-	ErrVariantUnavailable = errors.New("huggingface model variant unavailable")
 	ErrServiceUnavailable = errors.New("huggingface service unavailable")
 )
 
@@ -57,13 +55,12 @@ func NewClient(baseURL string, timeout time.Duration, cacheTTL time.Duration) *C
 	}
 }
 
-func (c *Client) ValidateBaseModel(ctx context.Context, kind ModelKind, modelID, variant string) error {
+func (c *Client) ValidateBaseModel(ctx context.Context, kind ModelKind, modelID string) error {
 	modelID = strings.TrimSpace(modelID)
-	variant = strings.ToLower(strings.TrimSpace(variant))
 	if modelID == "" {
 		return ErrModelNotFound
 	}
-	cacheKey := string(kind) + "|" + strings.ToLower(modelID) + "|" + variant
+	cacheKey := string(kind) + "|" + strings.ToLower(modelID)
 	if err, ok := c.getCached(cacheKey); ok {
 		return err
 	}
@@ -77,7 +74,7 @@ func (c *Client) ValidateBaseModel(ctx context.Context, kind ModelKind, modelID,
 		return err
 	}
 	if kind == ModelKindSD {
-		if err := validateSDSiblings(info.Siblings, variant); err != nil {
+		if err := validateSDSiblings(info.Siblings); err != nil {
 			c.putCached(cacheKey, err)
 			return err
 		}
@@ -144,49 +141,12 @@ func (c *Client) fetchModelInfo(ctx context.Context, modelID string) (*modelInfo
 
 func validateSDSiblings(siblings []struct {
 	RFilename string `json:"rfilename"`
-}, variant string) error {
-	filenames := make([]string, 0, len(siblings))
-	hasModelIndex := false
+}) error {
 	for _, sibling := range siblings {
 		name := sibling.RFilename
-		filenames = append(filenames, name)
 		if name == "model_index.json" || strings.HasSuffix(name, "/model_index.json") {
-			hasModelIndex = true
-		}
-	}
-	if !hasModelIndex {
-		return ErrModelNotFound
-	}
-	if variant != "" {
-		needle := "." + variant + "."
-		for _, name := range filenames {
-			base := path.Base(name)
-			if strings.Contains(base, needle) {
-				return nil
-			}
-		}
-		return ErrVariantUnavailable
-	}
-	for _, name := range filenames {
-		base := path.Base(name)
-		if isDefaultWeightFile(base) {
 			return nil
 		}
 	}
-	return ErrVariantUnavailable
-}
-
-func isDefaultWeightFile(filename string) bool {
-	lower := strings.ToLower(filename)
-	var ext string
-	switch {
-	case strings.HasSuffix(lower, ".safetensors"):
-		ext = ".safetensors"
-	case strings.HasSuffix(lower, ".bin"):
-		ext = ".bin"
-	default:
-		return false
-	}
-	stem := filename[:len(filename)-len(ext)]
-	return !strings.Contains(stem, ".")
+	return ErrModelNotFound
 }

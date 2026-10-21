@@ -57,7 +57,7 @@ func TestCalcBillableAndCreditsBasic(t *testing.T) {
 }
 
 func TestImagePixelStepUnits(t *testing.T) {
-	units, err := imagePixelStepUnits(`{"task_config":{"num_images":2,"image_width":512,"image_height":512,"steps":20}}`)
+	units, err := imagePixelStepUnits(`{"task_config":{"num_images_per_prompt":2,"image_width":512,"image_height":512,"steps":20}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,8 +66,18 @@ func TestImagePixelStepUnits(t *testing.T) {
 	}
 }
 
+func TestImagePixelStepUnitsDefaultsNumImagesPerPrompt(t *testing.T) {
+	units, err := imagePixelStepUnits(`{"task_config":{"image_width":512,"image_height":512,"steps":20}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if units != 5_242_880 {
+		t.Fatalf("units = %d, want 5242880", units)
+	}
+}
+
 func TestImagePixelStepUnitsRejectsOverflow(t *testing.T) {
-	taskArgs := `{"task_config":{"num_images":18446744073709551615,"image_width":2,"image_height":1,"steps":1}}`
+	taskArgs := `{"task_config":{"num_images_per_prompt":18446744073709551615,"image_width":2,"image_height":1,"steps":1}}`
 	if _, err := imagePixelStepUnits(taskArgs); err == nil {
 		t.Fatal("overflow was accepted")
 	}

@@ -22,7 +22,7 @@ Chat Completions MUST accept top-level `reasoning_effort`. Responses MUST accept
 
 AS MUST persist the complete canonical request in `llm_jobs.task_args_json`. Its worker MUST submit that exact JSON through Bridge raw-task creation. Bridge and Relay schema validation MUST use the matching gpt-task schema version. Worker MUST deserialize the canonical object and invoke gpt-task without API-specific conversion.
 
-The required task version MUST be `3.6.0`. Relay MUST dispatch the task only to a node whose runner version has major version `3` and minor and patch version not lower than `3.6.0`.
+The required task version MUST be `3.7.0`. Relay MUST dispatch the task only to a node whose runner version has major version `3` and minor and patch version not lower than `3.7.0`. Canonical LLM TaskArgs MUST include `version` set to `3.7.0`. Quantization MUST use `quantization_config` and MUST NOT use `quantize_bits`.
 
 ## Raw Output Conversion
 

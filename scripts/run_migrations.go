@@ -1,10 +1,11 @@
 package main
 
 import (
-	"crynux_as/migrate"
 	"flag"
 	"fmt"
 	"os"
+
+	"crynux_as/migrate"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -12,7 +13,7 @@ import (
 )
 
 func main() {
-	rollback := flag.Bool("rollback", false, "roll back the newest migration")
+	rollback := flag.Bool("rollback", false, "rollback the last migration instead of migrating")
 	flag.Parse()
 
 	dsn := os.Getenv("AS_TEST_DB_DSN")
@@ -24,21 +25,23 @@ func main() {
 		Logger: logger.Default.LogMode(logger.Warn),
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "open db: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to connect to MySQL: %v\n", err)
 		os.Exit(1)
 	}
 
 	migrate.InitMigration(db)
+
 	if *rollback {
 		if err := migrate.Rollback(); err != nil {
 			fmt.Fprintf(os.Stderr, "rollback failed: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("newest migration rolled back successfully")
+		fmt.Println("rollback of the last migration succeeded")
 		return
 	}
+
 	if err := migrate.Migrate(); err != nil {
-		fmt.Fprintf(os.Stderr, "migrate failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "migration failed: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Println("all migrations applied successfully")

@@ -135,6 +135,63 @@ func TestResolveEffectivePriorityGweiAutoEmptyQueueUsesMin(t *testing.T) {
 	}
 }
 
+func TestResolveEffectivePriorityGweiAutoZeroLowestUsesLinearMap(t *testing.T) {
+	withPriorityBounds(t, "1", "1000000000")
+	resetQueuedPriorityCacheForTest()
+	t.Cleanup(resetQueuedPriorityCacheForTest)
+	setQueuedPriorityCacheStateForTest(QueuedPrioritySnapshot{
+		AsOf:                1,
+		QueuedTaskCount:     169,
+		HighestPriorityGwei: big.NewInt(5596),
+		LowestPriorityGwei:  big.NewInt(0),
+		MedianPriorityGwei:  big.NewInt(35),
+	}, big.NewInt(35))
+
+	position := 97
+	cap := models.BigInt{Int: *big.NewInt(1345)}
+	project := &models.Project{
+		CostLevelMode:       models.CostLevelModeAuto,
+		AutoQueuePosition:   &position,
+		AutoMaxPriorityGwei: &cap,
+	}
+	got, err := ResolveEffectivePriorityGwei(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 0 + floor((5596-0)*97/100) = 5428, then min(5428, 1345) = 1345
+	if got.Cmp(big.NewInt(1345)) != 0 {
+		t.Fatalf("got %s, want 1345", got.String())
+	}
+}
+
+func TestResolveEffectivePriorityGweiAutoZeroHighestFallsBackToMin(t *testing.T) {
+	withPriorityBounds(t, "1", "1000")
+	resetQueuedPriorityCacheForTest()
+	t.Cleanup(resetQueuedPriorityCacheForTest)
+	setQueuedPriorityCacheStateForTest(QueuedPrioritySnapshot{
+		AsOf:                1,
+		QueuedTaskCount:     2,
+		HighestPriorityGwei: big.NewInt(0),
+		LowestPriorityGwei:  big.NewInt(0),
+		MedianPriorityGwei:  big.NewInt(0),
+	}, big.NewInt(0))
+
+	position := 97
+	cap := models.BigInt{Int: *big.NewInt(500)}
+	project := &models.Project{
+		CostLevelMode:       models.CostLevelModeAuto,
+		AutoQueuePosition:   &position,
+		AutoMaxPriorityGwei: &cap,
+	}
+	got, err := ResolveEffectivePriorityGwei(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("got %s, want 1", got.String())
+	}
+}
+
 func TestResolveEffectivePriorityGweiAutoRequiresMax(t *testing.T) {
 	withPriorityBounds(t, "1", "1000")
 	project := &models.Project{

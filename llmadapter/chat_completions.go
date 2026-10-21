@@ -4,6 +4,7 @@ import (
 	"crynux_as/models"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 /* Request */
@@ -44,6 +45,8 @@ type ChatCompletionsRequest struct {
 	User                string                   `json:"user"`
 	WebSearchOptions    json.RawMessage          `json:"web_search_options"`
 	VramLimit           *uint64                  `json:"vram_limit"`
+	Dtype               string                   `json:"dtype"`
+	QuantizationConfig  any                      `json:"quantization_config"`
 }
 
 func (ccr *ChatCompletionsRequest) setDefaultValues() {
@@ -192,6 +195,8 @@ type ChatCompletionsMeta struct {
 	VramLimit           *uint64
 	StreamOptions       *StreamOptionsMeta
 	N                   int
+	Dtype               string
+	QuantizationConfig  any
 }
 
 type StreamOptionsMeta struct {
@@ -256,15 +261,20 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 	})
 
 	taskArgs := models.GPTTaskArgs{
-		Model:            req.Model,
-		Messages:         messages,
-		Tools:            tools,
-		ToolChoice:       toolChoice,
-		ResponseFormat:   responseFormat,
-		GenerationConfig: generationConfig,
-		TemplateArgs:     buildTemplateArgs(req.ChatTemplateKwargs, req.ReasoningEffort),
-		Seed:             req.Seed,
-		DType:            resolveDType(req.Model),
+		Version:            models.GPTTaskArgsVersion,
+		Model:              req.Model,
+		Messages:           messages,
+		Tools:              tools,
+		ToolChoice:         toolChoice,
+		ResponseFormat:     responseFormat,
+		GenerationConfig:   generationConfig,
+		TemplateArgs:       buildTemplateArgs(req.ChatTemplateKwargs, req.ReasoningEffort),
+		Seed:               req.Seed,
+		DType:              resolveDType(req.Model),
+		QuantizationConfig: req.QuantizationConfig,
+	}
+	if strings.TrimSpace(req.Dtype) != "" {
+		taskArgs.DType = models.DType(strings.ToLower(strings.TrimSpace(req.Dtype)))
 	}
 
 	taskMessages, err := BuildTemplateToolCallMessages(req.Model, messages)
@@ -284,6 +294,8 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 		MaxCompletionTokens: req.MaxCompletionTokens,
 		VramLimit:           req.VramLimit,
 		N:                   req.N,
+		Dtype:               strings.ToLower(strings.TrimSpace(req.Dtype)),
+		QuantizationConfig:  req.QuantizationConfig,
 	}
 	if req.StreamOptions != nil {
 		meta.StreamOptions = &StreamOptionsMeta{IncludeUsage: req.StreamOptions.IncludeUsage}

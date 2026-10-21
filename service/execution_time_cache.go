@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crynux_as/models"
 	"crynux_as/relay"
 	"errors"
 	"fmt"
@@ -94,15 +95,14 @@ func sdExecutionTimeCacheKey(query relay.ExecutionTimeQuery) (string, error) {
 	if query.GPUVRAM != nil {
 		gpuVRAM = *query.GPUVRAM
 	}
-	quantizeBits := uint64(0)
-	if query.QuantizeBits != nil {
-		quantizeBits = *query.QuantizeBits
+	quantKey, err := models.QuantizationConfigKey(query.QuantizationConfig)
+	if err != nil {
+		return "", err
 	}
 	return fmt.Sprintf(
-		"%s|%s|%d|%s|%d|%s|%d",
+		"%s|%s|%s|%d|%s|%d",
 		model,
-		strings.ToLower(strings.TrimSpace(query.Variant)),
-		quantizeBits,
+		quantKey,
 		strings.ToLower(strings.TrimSpace(query.Dtype)),
 		minVRAM,
 		strings.ToLower(strings.TrimSpace(query.GPUName)),

@@ -63,6 +63,9 @@ func InitConfig(configPath string) error {
 	if err := checkHuggingFaceConfig(); err != nil {
 		return err
 	}
+	if err := checkTaskSchemaConfig(); err != nil {
+		return err
+	}
 	if err := checkLLMConfig(); err != nil {
 		return err
 	}
@@ -167,6 +170,20 @@ func checkHuggingFaceConfig() error {
 	}
 	if hf.CacheTTLSeconds <= 0 {
 		return errors.New("huggingface.cache_ttl_seconds is not set")
+	}
+	return nil
+}
+
+func checkTaskSchemaConfig() error {
+	schema := appConfig.TaskSchema
+	if strings.TrimSpace(schema.StableDiffusionInference) == "" {
+		return errors.New("task_schema.stable_diffusion_inference is not set")
+	}
+	if strings.TrimSpace(schema.GPTInference) == "" {
+		return errors.New("task_schema.gpt_inference is not set")
+	}
+	if strings.TrimSpace(schema.StableDiffusionFinetuneLora) == "" {
+		return errors.New("task_schema.stable_diffusion_finetune_lora is not set")
 	}
 	return nil
 }

@@ -170,11 +170,14 @@ func resolveAutoPriorityGwei(project *models.Project) (*big.Int, error) {
 
 	var effective *big.Int
 	highest, lowest, ok := ResolveQueuePriorityBounds()
+	// Relay may report lowest_priority_gwei as 0 when the queue floor is
+	// below one Gwei after integer division. Zero lowest is usable for the
+	// linear map; only a non-positive highest makes bounds unusable.
 	if ok &&
 		highest != nil &&
 		lowest != nil &&
 		highest.Sign() > 0 &&
-		lowest.Sign() > 0 &&
+		lowest.Sign() >= 0 &&
 		highest.Cmp(lowest) >= 0 {
 		diff := new(big.Int).Sub(highest, lowest)
 		diff.Mul(diff, big.NewInt(int64(position)))

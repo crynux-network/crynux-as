@@ -96,7 +96,7 @@ The following items MUST NOT appear in configuration and MUST NOT be used for Cr
 | Project Cost Level | `Prio` | Effective `priority_gwei` resolved from the project Cost Level mode at job create; snapshotted on the job and call record |
 | Effective VRAM | `v` | Resolved effective VRAM in GB |
 | Base VRAM | `B` | `llm.base_vram` |
-| Constant seconds | `T0` | Relay LLM execution-time coefficient for `(model, min_vram=v)` |
+| Constant seconds | `T0` | Relay LLM execution-time coefficient for `(model, quantization_config, dtype, min_vram=v)` |
 | Seconds per input token | `Tin` | Same Relay response |
 | Seconds per output token | `Tout` | Same Relay response |
 | Credits per Gwei | `G` | `llm.credits_per_gwei` |
@@ -135,7 +135,7 @@ credits =
 
 ## Execution-Time Coefficients
 
-The service MUST obtain `T0`, `Tin`, and `Tout` from Relay `GET /v2/models/llm/execution-time` with query `model=<request model>` and `min_vram=<effective_vram>`, using the existing execution-time cache.
+The service MUST obtain `T0`, `Tin`, and `Tout` from Relay `GET /v2/models/llm/execution-time` with query `model=<request model>`, `min_vram=<effective_vram>`, and the request's `quantization_config` and `dtype` when present, using the existing execution-time cache.
 
 ## Request Path Before Bridge Forwarding
 
@@ -143,7 +143,7 @@ For each LLM request that requires Credits precheck and task fee, the service MU
 
 1. Resolve effective VRAM and precheck token estimates (`P` estimate and `C` estimate).
 2. Resolve the request effective `priority_gwei` from the project Cost Level mode as specified in [llm-api.md](./llm-api.md) Project Cost Level.
-3. Fetch and validate execution-time coefficients for `(model, effective_vram)`.
+3. Fetch and validate execution-time coefficients for `(model, quantization_config, dtype, effective_vram)`.
 4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and uncapped `billable_gwei` using the request's resolved effective `priority_gwei`. Apply `llm.max_task_price_cnx` so that when `floor(uncapped_billable_gwei) > max_task_fee_gwei`, both `billable_gwei` and `task_fee_gwei` become `max_task_fee_gwei`; otherwise `task_fee_gwei = floor(uncapped_billable_gwei)` and Credits use the uncapped floating-point `billable_gwei`. The snapshotted effective `priority_gwei` MUST remain the uncapped Cost Level value.
 5. Let `estimate = max(1, floor(billable_gwei * G))` using the post-cap `billable_gwei`. In one database transaction, lock the user's `credit_accounts` row with `SELECT ... FOR UPDATE`, reject with HTTP 402 when `available = balance - locked` is strictly less than `estimate`, increase `credit_accounts.locked` by `estimate`, and create the `task_jobs` row with `credits_locked = estimate` and `credits_lock_status = held`. The pre-lock MUST NOT write a `credit_events` row and MUST NOT change `credit_accounts.balance`.
 6. Use the post-cap `task_fee_gwei` from step 4 as the submitted task fee in Gwei.
@@ -340,6 +340,8 @@ Response shape:
       {
         "model": "example/model",
         "min_vram": 24,
+        "execution_dtype": "bfloat16",
+        "quantization_config": null,
         "constant_seconds": 30,
         "seconds_per_input_token": 0.0004,
         "seconds_per_output_token": 0.1
@@ -349,20 +351,20 @@ Response shape:
 }
 ```
 
-Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude models whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public LLM catalog visibility of `GET /models`. It MUST NOT read the Image loaded-models cache and MUST NOT select by SD `variant`.
+Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public LLM catalog visibility of `GET /models`. It MUST NOT read the Image loaded-models cache. Each catalog row is a distinct candidate keyed by `(model_id, quantization_config, execution_dtype)`.
 
-1. Collect models with a positive `min_vram`.
+1. Collect rows with a positive `min_vram`.
 2. Group by exact `min_vram`.
-3. Within each group, choose the model with the greatest node count; ties break by model id ascending.
+3. Within each group, choose the row with the greatest node count; ties break by model id ascending, then canonical `quantization_config` ascending, then `execution_dtype` ascending.
 4. Sort the chosen group representatives by `min_vram` ascending.
 5. If more than four representatives exist, keep exactly the representatives at indexes `0`, `floor((n-1)/3)`, `floor(2*(n-1)/3)`, and `n-1` in that sorted list, removing duplicates while preserving order.
 6. If fewer than one representative exists, `examples` MUST be an empty list.
 
-For each selected model, coefficients MUST come from Relay execution-time with `model=<selected model>` and `min_vram=<selected model min_vram>`.
+For each selected row, coefficients MUST come from Relay execution-time with `model=<selected model>`, `min_vram=<selected min_vram>`, `dtype=<selected execution_dtype>`, and `quantization_config=<selected quantization_config>`.
 
 `pricing_prompt_tokens` and `pricing_completion_tokens` MUST both be `1000000`. They are the token counts the UI MUST use for the Credits-per-1M-token Input and Output unit examples.
 
-The WebUI Credits table title MUST be `Credits per 1M tokens` in static mode and `Maximum Credits per 1M tokens` in auto mode. Column headers MUST be `Model`, `1M Input`, and `1M Output`. The WebUI MUST NOT present the sum of the Input and Output cells as the Credits for one combined request.
+The WebUI Credits table title MUST be `Credits per 1M tokens` in static mode and `Maximum Credits per 1M tokens` in auto mode. Column headers MUST be `Model`, `1M Input`, and `1M Output`. The Model cell MUST show the model id plus secondary tags for quantization when present (`<quant_method>-<bitwidth>` such as `bitsandbytes-4bit`; omit the quantization tag when there is no quantization) and `execution_dtype` when present. The WebUI MUST NOT present the sum of the Input and Output cells as the Credits for one combined request.
 
 Credits example cells MUST use marginal token work only. They MUST NOT include `constant_seconds` (`T0`):
 
@@ -387,7 +389,7 @@ estimated_node_seconds =
     + seconds_per_output_token * time_completion_tokens
 ```
 
-The WebUI execution-time table title MUST be `Execution time examples`. Column headers MUST be `Model`, `Input`, `Output`, and `Seconds`. The `Input` and `Output` cells MUST show `time_prompt_tokens` and `time_completion_tokens`.
+The WebUI execution-time table title MUST be `Execution time examples`. Column headers MUST be `Model`, `Input`, `Output`, and `Seconds`. The Model cell MUST use the same quantization and dtype tags as the Credits table. The `Input` and `Output` cells MUST show `time_prompt_tokens` and `time_completion_tokens`.
 
 The pricing-examples API MUST NOT return queue wait estimates. Queue wait MUST NOT be estimated from `median_priority_gwei` for this UI. The WebUI MUST load `credits_per_gwei`, `base_vram`, `min_priority_gwei`, `max_priority_gwei`, and `median_priority_gwei` from `billing_config` when computing Credits examples and the cost-level queue position.
 

@@ -95,6 +95,7 @@ func ReserveCreditsAndCreateTaskJob(ctx context.Context, db *gorm.DB, in CreateT
 		RequestBody:       in.RequestBody,
 		TaskArgsJSON:      in.TaskArgsJSON,
 		Status:            models.TaskJobStatusPendingSubmit,
+		Phase:             "queued",
 		BillingData:       billingData,
 		CreditsLocked:     models.BigInt{Int: *new(big.Int).Set(in.CreditsToLock)},
 		CreditsLockStatus: models.TaskJobCreditsLockHeld,
@@ -312,13 +313,15 @@ func CompleteAndSettleTaskJob(
 		}
 
 		updates := map[string]interface{}{
-			"status":                models.TaskJobStatusCompleted,
-			"raw_result_json":       rawResultJSON,
-			"formatted_result_json": formattedResultJSON,
-			"completed_at":          now,
-			"billing_status":        models.TaskJobBillingBilled,
-			"task_call_record_id":   recordID,
-			"credits_lock_status":   locked.CreditsLockStatus,
+			"status":                   models.TaskJobStatusCompleted,
+			"phase":                    "success",
+			"estimated_completion_at":  nil,
+			"raw_result_json":          rawResultJSON,
+			"formatted_result_json":    formattedResultJSON,
+			"completed_at":             now,
+			"billing_status":           models.TaskJobBillingBilled,
+			"task_call_record_id":      recordID,
+			"credits_lock_status":      locked.CreditsLockStatus,
 		}
 		if err := tx.Model(&models.TaskJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
 			return err
@@ -394,12 +397,14 @@ func FailAndRecordTaskJob(ctx context.Context, db *gorm.DB, job *models.TaskJob,
 		}
 
 		updates := map[string]interface{}{
-			"status":              models.TaskJobStatusFailed,
-			"error_message":       errorMessage,
-			"billing_status":      models.TaskJobBillingNotBilled,
-			"completed_at":        now,
-			"task_call_record_id": recordID,
-			"credits_lock_status": locked.CreditsLockStatus,
+			"status":                  models.TaskJobStatusFailed,
+			"phase":                   "failed",
+			"estimated_completion_at": nil,
+			"error_message":           errorMessage,
+			"billing_status":          models.TaskJobBillingNotBilled,
+			"completed_at":            now,
+			"task_call_record_id":     recordID,
+			"credits_lock_status":     locked.CreditsLockStatus,
 		}
 		if err := tx.Model(&models.TaskJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
 			return err
@@ -432,11 +437,13 @@ func FailTaskJob(ctx context.Context, db *gorm.DB, jobID uint, errorMessage stri
 			return err
 		}
 		return tx.Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-			"status":              models.TaskJobStatusFailed,
-			"error_message":       errorMessage,
-			"billing_status":      models.TaskJobBillingNotBilled,
-			"completed_at":        now,
-			"credits_lock_status": locked.CreditsLockStatus,
+			"status":                  models.TaskJobStatusFailed,
+			"phase":                   "failed",
+			"estimated_completion_at": nil,
+			"error_message":           errorMessage,
+			"billing_status":          models.TaskJobBillingNotBilled,
+			"completed_at":            now,
+			"credits_lock_status":     locked.CreditsLockStatus,
 		}).Error
 	})
 	if err != nil {
@@ -476,6 +483,7 @@ func UpdateTaskJobBridgeTask(ctx context.Context, db *gorm.DB, jobID uint, bridg
 	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
 		"bridge_client_task_id": bridgeClientTaskID,
 		"status":                models.TaskJobStatusSubmitted,
+		"phase":                 "queued",
 		"started_at":            now,
 	}).Error
 }
@@ -487,14 +495,39 @@ func UpdateTaskJobStatus(ctx context.Context, db *gorm.DB, jobID uint, status mo
 	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Update("status", status).Error
 }
 
+func UpdateTaskJobPhase(
+	ctx context.Context,
+	db *gorm.DB,
+	jobID uint,
+	status models.TaskJobStatus,
+	phase string,
+	estimatedCompletionAt *time.Time,
+) error {
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	updates := map[string]interface{}{
+		"status": status,
+		"phase":  phase,
+	}
+	if estimatedCompletionAt != nil {
+		updates["estimated_completion_at"] = *estimatedCompletionAt
+	} else {
+		updates["estimated_completion_at"] = nil
+	}
+	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(updates).Error
+}
+
 func ResetTaskJobToPending(ctx context.Context, db *gorm.DB, jobID uint) error {
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"status":                models.TaskJobStatusPendingSubmit,
-		"bridge_client_task_id": nil,
-		"started_at":            nil,
+		"status":                  models.TaskJobStatusPendingSubmit,
+		"phase":                   "queued",
+		"estimated_completion_at": nil,
+		"bridge_client_task_id":   nil,
+		"started_at":              nil,
 	}).Error
 }
 

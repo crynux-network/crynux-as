@@ -9,44 +9,26 @@ import (
 )
 
 type modelObject struct {
-	ID              string `json:"id"`
-	Object          string `json:"object"`
-	Created         int64  `json:"created"`
-	OwnedBy         string `json:"owned_by"`
-	MinVram         uint64 `json:"min_vram"`
-	OnDiskNodeCount int64  `json:"on_disk_node_count"`
-}
-
-type imageModelObject struct {
-	ID              string `json:"id"`
-	Object          string `json:"object"`
-	Created         int64  `json:"created"`
-	OwnedBy         string `json:"owned_by"`
-	MinVram         uint64 `json:"min_vram"`
-	Variant         string `json:"variant"`
-	OnDiskNodeCount int64  `json:"on_disk_node_count"`
+	ID                 string `json:"id"`
+	Object             string `json:"object"`
+	Created            int64  `json:"created"`
+	OwnedBy            string `json:"owned_by"`
+	MinVram            uint64 `json:"min_vram"`
+	OnDiskNodeCount    int64  `json:"on_disk_node_count"`
+	ExecutionDType     string `json:"execution_dtype"`
+	QuantizationConfig any    `json:"quantization_config"`
 }
 
 func newModelObject(model service.LoadedLLMModel) modelObject {
 	return modelObject{
-		ID:              model.ModelID,
-		Object:          "model",
-		Created:         0,
-		OwnedBy:         "crynux",
-		MinVram:         model.MinVRAM,
-		OnDiskNodeCount: model.OnDiskNodeCount,
-	}
-}
-
-func newImageModelObject(model service.LoadedLLMModel) imageModelObject {
-	return imageModelObject{
-		ID:              model.ModelID,
-		Object:          "model",
-		Created:         0,
-		OwnedBy:         "crynux",
-		MinVram:         model.MinVRAM,
-		Variant:         model.Variant,
-		OnDiskNodeCount: model.OnDiskNodeCount,
+		ID:                 model.ModelID,
+		Object:             "model",
+		Created:            0,
+		OwnedBy:            "crynux",
+		MinVram:            model.MinVRAM,
+		OnDiskNodeCount:    model.OnDiskNodeCount,
+		ExecutionDType:     model.ExecutionDType,
+		QuantizationConfig: service.QuantizationConfigForAPI(model.QuantizationConfig),
 	}
 }
 
@@ -66,9 +48,9 @@ func Models(c *gin.Context) {
 
 func ImageModels(c *gin.Context) {
 	loadedModels := service.ListLoadedSDModels()
-	data := make([]imageModelObject, 0, len(loadedModels))
+	data := make([]modelObject, 0, len(loadedModels))
 	for _, model := range loadedModels {
-		data = append(data, newImageModelObject(model))
+		data = append(data, newModelObject(model))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
@@ -77,14 +59,15 @@ func ImageModels(c *gin.Context) {
 }
 
 // RetrieveModel implements the OpenAI-compatible retrieve model endpoint.
+// When multiple catalog rows share a model id, the response is a list envelope.
 func RetrieveModel(c *gin.Context) {
 	modelID := strings.TrimPrefix(c.Param("model"), "/")
 	if modelID == "image" {
 		ImageModels(c)
 		return
 	}
-	model, ok := service.GetCatalogLLMModel(modelID)
-	if !ok {
+	models := service.ListCatalogLLMModelsByID(modelID)
+	if len(models) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": gin.H{
 				"message": "The model '" + modelID + "' does not exist",
@@ -94,5 +77,12 @@ func RetrieveModel(c *gin.Context) {
 		})
 		return
 	}
-	c.JSON(http.StatusOK, newModelObject(model))
+	data := make([]modelObject, 0, len(models))
+	for _, model := range models {
+		data = append(data, newModelObject(model))
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"object": "list",
+		"data":   data,
+	})
 }

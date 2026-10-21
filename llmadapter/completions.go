@@ -4,6 +4,7 @@ import (
 	"crynux_as/models"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 /* Request */
@@ -34,6 +35,8 @@ type CompletionsRequest struct {
 	Suffix              string             `json:"suffix"`
 	User                string             `json:"user"`
 	VramLimit           *uint64            `json:"vram_limit"`
+	Dtype               string             `json:"dtype"`
+	QuantizationConfig  any                `json:"quantization_config"`
 }
 
 func (cr *CompletionsRequest) setDefaultValues() {
@@ -84,6 +87,8 @@ type CompletionsMeta struct {
 	VramLimit           *uint64
 	StreamOptions       *StreamOptionsMeta
 	N                   int
+	Dtype               string
+	QuantizationConfig  any
 }
 
 // BuildCompletionsTaskArgs parses a completions request body and returns canonical task args JSON.
@@ -119,14 +124,19 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 	})
 
 	taskArgs := models.GPTTaskArgs{
-		Model:            req.Model,
-		Messages:         messages,
-		GenerationConfig: generationConfig,
-		Seed:             req.Seed,
-		DType:            resolveDType(req.Model),
+		Version:            models.GPTTaskArgsVersion,
+		Model:              req.Model,
+		Messages:           messages,
+		GenerationConfig:   generationConfig,
+		Seed:               req.Seed,
+		DType:              resolveDType(req.Model),
+		QuantizationConfig: req.QuantizationConfig,
 	}
-
-	taskArgsBytes, err := json.Marshal(taskArgs)
+	if strings.TrimSpace(req.Dtype) != "" {
+		taskArgs.DType = models.DType(strings.ToLower(strings.TrimSpace(req.Dtype)))
+	}
+	taskArgsPayload := buildLLMTaskArgsPayload(taskArgs, messages)
+	taskArgsBytes, err := json.Marshal(taskArgsPayload)
 	if err != nil {
 		return "", CompletionsMeta{}, fmt.Errorf("failed to marshal task args: %w", err)
 	}
@@ -138,6 +148,8 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 		MaxCompletionTokens: req.MaxCompletionTokens,
 		VramLimit:           req.VramLimit,
 		N:                   req.N,
+		Dtype:               strings.ToLower(strings.TrimSpace(req.Dtype)),
+		QuantizationConfig:  req.QuantizationConfig,
 	}
 	if req.Stream {
 		meta.StreamOptions = &StreamOptionsMeta{IncludeUsage: req.StreamOptions.IncludeUsage}

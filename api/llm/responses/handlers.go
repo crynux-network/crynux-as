@@ -6,6 +6,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
+	"crynux_as/relay"
 	"crynux_as/service"
 	"crynux_as/service/huggingface"
 	"encoding/json"
@@ -86,6 +87,13 @@ func CreateResponse(c *gin.Context) {
 		writeLLMAdapterError(c, err)
 		return
 	}
+	execution := service.ResolveLLMModelExecution(req.Model, req.Dtype, req.QuantizationConfig)
+	taskArgsJSON, err = service.ApplyLLMExecutionToTaskArgsJSON(taskArgsJSON, execution)
+	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
+		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
+		return
+	}
 
 	userVram, err := vramlimit.ResolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
 	if err != nil {
@@ -99,7 +107,6 @@ func CreateResponse(c *gin.Context) {
 		c.Request.Context(),
 		huggingface.ModelKindLLM,
 		req.Model,
-		"",
 	); err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), nil, nil)
 		if errors.Is(err, service.ErrBaseModelCheckUnavailable) {
@@ -123,9 +130,15 @@ func CreateResponse(c *gin.Context) {
 		writeServerError(c)
 		return
 	}
-	taskFee, err := estimateTaskFeeFn(
+	query := relay.ExecutionTimeQuery{
+		Model:              req.Model,
+		Dtype:              string(execution.Dtype),
+		QuantizationConfig: execution.QuantizationConfig,
+		MinVRAM:            &effectiveVram,
+	}
+	taskFee, err := service.EstimateLLMTaskFeeWithQuery(
 		c.Request.Context(),
-		req.Model,
+		query,
 		effectiveVram,
 		priorityGwei,
 		estPrompt,

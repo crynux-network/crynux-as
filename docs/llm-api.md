@@ -22,7 +22,7 @@ Implemented endpoints:
 
 The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields.
 
-Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. AS MUST map those public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
+Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. Chat Completions, Completions, and Responses MUST accept optional `dtype` and `quantization_config` body fields used to select a loaded-models row and to populate canonical TaskArgs. AS MUST map those public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
 
 ## Responses API
 
@@ -46,6 +46,7 @@ Supported request fields in the first version:
 * function-call and function-call-output history in `input`
 * `background` (`true` returns immediately with `queued` or `in_progress`; `false` waits for completion)
 * `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, `text.format`, and `vram_limit`
+* `dtype` and `quantization_config` (optional; select a loaded-models row when present)
 * `chat_template_kwargs`
 * `reasoning.effort`
 
@@ -90,7 +91,7 @@ Chat completions, completions, and responses share one `llm_jobs` table and one 
 
 For every LLM request, the service MUST:
 
-1. Parse the public API request into canonical `GPTTaskArgs`, expanding `previous_response_id` history when present. During parsing, the request `model` MUST be normalized to lowercase with surrounding whitespace trimmed. That normalized value MUST be used for fee estimation, VRAM lookup, `llm_jobs.model`, `llm_call_records.model`, canonical `task_args.model`, usage stats, and the public response `model` field.
+1. Parse the public API request into canonical `GPTTaskArgs`, expanding `previous_response_id` history when present. During parsing, the request `model` MUST be normalized to lowercase with surrounding whitespace trimmed. That normalized value MUST be used for fee estimation, VRAM lookup, `llm_jobs.model`, `llm_call_records.model`, canonical `task_args.model`, usage stats, and the public response `model` field. Canonical `GPTTaskArgs.version` MUST be `3.7.0`. When the request omits both `dtype` and `quantization_config`, AS MUST select the full-cache row with the greatest `min_vram` for that model and MUST write that row's `quantization_config` and `execution_dtype` into TaskArgs (`dtype` MUST prefer the row's `execution_dtype`, and MUST fall back to the adapter dtype resolver when the row dtype is empty). When the request supplies `dtype` and/or `quantization_config`, AS MUST exact-match a full-cache row when possible and MUST write the request values into TaskArgs.
 2. Create an `llm_jobs` row with status `pending_submit` and the fully expanded `TaskArgsJSON`.
 3. Let the background worker advance unfinished jobs in batches: submit `pending_submit` jobs to Bridge, query ClientTask status for in-flight jobs, download the raw `GPTTaskResponse` for each successful job, format the public API result, and perform one-time Credits settlement before marking the job `completed`.
 4. For chat completions and completions, wait synchronously on the HTTP request until the job reaches a terminal state, then return the formatted JSON body or simulated SSE stream.
@@ -125,7 +126,7 @@ The resolved effective VRAM MUST be sent as `min_vram` on raw task creation.
 
 The LLM job's `task_fee_gwei` MUST be multiplied by `1,000,000,000` with integer arithmetic and sent as the required raw task `task_fee` in Wei. AS MUST NOT send the stored GWei value directly. Bridge MUST treat this value as the final task fee and MUST NOT apply task-size multiplication or unit conversion.
 
-Bridge MUST return its whole-client-task aggregated status as one of `running`, `success`, or `failed`. AS MUST treat only `success` and `failed` as terminal. AS MUST NOT aggregate individual Bridge inference-task statuses.
+Bridge MUST return its whole-client-task aggregated `status` as one of `running`, `success`, or `failed`, and MUST also return a computed logical `phase` as specified by the Bridge raw status contract. AS MUST treat only `success` and `failed` as terminal. AS MUST NOT aggregate individual Bridge inference-task statuses. For Raw Task API responses, AS MUST persist and expose `phase` and optional `estimated_completion_at` as specified in [raw-task-api.md](./raw-task-api.md).
 
 Bridge status queries and result download MUST remain authorized after the Bridge API key's creation quota is exhausted. Invalid, expired, wrong-role, and cross-client access MUST remain rejected by Bridge.
 
@@ -146,9 +147,9 @@ The project MUST have status active. A request failing any of these checks MUST 
 
 ## Model Catalog
 
-The model catalog is the in-memory LLM catalog snapshot built during each successful loaded-models refresh from the Relay `GET /v2/loaded-models` API (see [architecture.md](./architecture.md)). All projects share the same catalog. A cached model's `min_vram` is the minimum VRAM in GB observed across historical successful executions of the model on the Crynux Network. The LLM catalog MUST be keyed only by `model_id`. SD rows and multi-variant Image catalog entries MUST NOT appear in this catalog. The list and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT include a `variant` field.
+The model catalog is the in-memory LLM catalog snapshot built during each successful loaded-models refresh from the Relay `GET /v2/loaded-models` API (see [architecture.md](./architecture.md)). All projects share the same catalog. A cached row's `min_vram` is the minimum VRAM in GB observed across historical successful executions of that model configuration on the Crynux Network. The LLM catalog MUST expose one list row per `(model_id, quantization_config, execution_dtype)` combination from the Relay snapshot. The same `id` MAY appear more than once when quantization or dtype differs. SD / Image rows MUST NOT appear in this catalog. List and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT include a `variant` field.
 
-The catalog snapshot MUST include only models whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. The full loaded-models cache MUST retain every Relay LLM row for default `min_vram` lookup. Catalog list and retrieve MUST read the catalog snapshot and MUST NOT re-filter the full cache on each request.
+The catalog snapshot MUST include only rows whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. The full loaded-models cache MUST retain every Relay LLM row for default `min_vram` and exact-configuration lookup. Catalog list and retrieve MUST read the catalog snapshot and MUST NOT re-filter the full cache on each request. Catalog rows MUST be sorted by `id` ascending, then `execution_dtype` ascending, then canonical `quantization_config` ascending.
 
 ### `GET /api/<endpoint_token>/v1/models`
 
@@ -164,7 +165,9 @@ Returns the OpenAI list-models response built from the catalog snapshot:
       "created": 0,
       "owned_by": "crynux",
       "min_vram": 24,
-      "on_disk_node_count": 3
+      "on_disk_node_count": 3,
+      "execution_dtype": "bfloat16",
+      "quantization_config": null
     }
   ]
 }
@@ -179,6 +182,8 @@ Requirements:
 * `owned_by` MUST be `"crynux"`.
 * Each item MUST include the extra field `min_vram` with the cached minimum VRAM in GB.
 * Each item MUST include the extra field `on_disk_node_count` with the cached Relay count of nodes that have the model files on disk.
+* Each item MUST include `execution_dtype` as a string. An empty string MUST mean the Relay row had no execution dtype.
+* Each item MUST include `quantization_config` as a JSON object or `null`.
 * Each item MUST NOT include a `variant` field.
 * Each item MUST NOT include `in_memory_node_count`.
 * The response MUST be the OpenAI JSON body directly, without the management-API `{"message": ...}` envelope.
@@ -186,7 +191,7 @@ Requirements:
 
 ### `GET /api/<endpoint_token>/v1/models/<model>`
 
-Returns the single model object described above for a model ID present in the catalog snapshot. The lookup MUST be case-insensitive. A model ID absent from the catalog snapshot, including a model present only in the full loaded-models cache because its `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, MUST return HTTP 404 with the OpenAI error shape:
+Returns an OpenAI list envelope whose `data` contains every catalog row for that model ID. The lookup MUST be case-insensitive. When no catalog row matches, including when the model is present only in the full loaded-models cache because every row's `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, the response MUST be HTTP 404 with the OpenAI error shape:
 
 ```json
 {
@@ -204,7 +209,7 @@ Chat Completions, Completions, and Responses create requests MUST validate the r
 
 1. AS MUST normalize `model` with trim and lowercase.
 2. `model` MUST be a Hugging Face model id. Absolute URLs and any value containing `://` MUST be rejected with HTTP 400. Values with whitespace or characters outside the Hugging Face repo-id pattern MUST be rejected with HTTP 400.
-3. When the normalized model is present in the full LLM loaded-models cache, AS MUST skip the Hub lookup.
+3. When any row for the normalized model is present in the full LLM loaded-models cache, AS MUST skip the Hub lookup.
 4. When the model is absent from that cache, AS MUST query Hugging Face Hub `GET {huggingface.api_base_url}/api/models/{model}`. A missing model MUST return HTTP 400. Hub timeouts and HTTP 5xx MUST return HTTP 500 and MUST NOT reserve Credits or create a job.
 
 The catalog snapshot used by `GET /models` MUST NOT be used as a create-time allowlist.
@@ -225,8 +230,9 @@ The path value MUST override the body value. A non-integer path value MUST be re
 The effective VRAM of a request MUST be resolved as:
 
 1. When the user specified a `vram_limit`, the effective VRAM is the user value. A user value lower than the cached `min_vram` of a known model MUST be accepted.
-2. When the user did not specify a `vram_limit` and the model is in the loaded-models cache, the effective VRAM is the cached `min_vram`.
-3. When the user did not specify a `vram_limit` and the model is not in the cache, the effective VRAM is `llm.default_vram_limit`.
+2. When the user did not specify a `vram_limit` and the request includes `quantization_config` and/or `dtype` that exact-match a full-cache row for the model, the effective VRAM is that row's `min_vram`.
+3. When the user did not specify a `vram_limit` and the model has one or more rows in the full loaded-models cache without an exact match above, the effective VRAM is the greatest `min_vram` among those rows. Ties MUST break by canonical `quantization_config` ascending, then `execution_dtype` ascending.
+4. When the user did not specify a `vram_limit` and the model is not in the cache, the effective VRAM is `llm.default_vram_limit`.
 
 The model lookup MUST be case-insensitive. The effective VRAM is used for `vram_weight`, Relay execution-time selection (`min_vram`), and Bridge raw task `min_vram`.
 
@@ -252,7 +258,7 @@ When a project is created, the service MUST:
 1. Set `cost_level_mode` to `static`.
 2. Set `priority_gwei` to the Queue Median Hint resolved by `ResolveQueueMedianHint`, clamped into `[min_priority_gwei, max_priority_gwei]`.
 3. Set `auto_queue_position` to `50`.
-4. Set `auto_max_priority_gwei` from one consistent queued-priority snapshot: the live `highest_priority_gwei` when the queue is non-empty and both bounds are present and valid; otherwise `llm.min_priority_gwei`. Clamp the result into `[min_priority_gwei, max_priority_gwei]`.
+4. Set `auto_max_priority_gwei` from one consistent queued-priority snapshot: the live `highest_priority_gwei` when the queue is non-empty, both bounds are present, and `highest_priority_gwei` is positive; otherwise `llm.min_priority_gwei`. Clamp the result into `[min_priority_gwei, max_priority_gwei]`.
 
 The create request MUST NOT require the client to supply Cost Level fields. After creation, only an explicit project update MUST change Cost Level fields.
 
@@ -264,11 +270,11 @@ Before Credits precheck and Task Fee Estimation for an LLM request, the service 
 
 1. When `cost_level_mode` is `static`, the effective value MUST be the project's stored `priority_gwei`.
 2. When `cost_level_mode` is `auto`:
-   1. If the live queued-priority snapshot has `queued_task_count > 0` and both `lowest_priority_gwei` and `highest_priority_gwei` are present, positive, and `highest >= lowest`, compute:
+   1. If the live queued-priority snapshot has `queued_task_count > 0`, both `lowest_priority_gwei` and `highest_priority_gwei` are present, `lowest_priority_gwei` is non-negative, `highest_priority_gwei` is positive, and `highest >= lowest`, compute:
       ```text
       effective = lowest + floor((highest - lowest) * auto_queue_position / 100)
       ```
-      using integer arithmetic. The result MUST lie in `[lowest, highest]`.
+      using integer arithmetic. The result MUST lie in `[lowest, highest]`. `lowest_priority_gwei` MAY be `0` when Relay truncates a sub-Gwei queue floor to zero; that value remains a usable bound.
    2. Otherwise the effective value MUST be `llm.min_priority_gwei`.
    3. The service MUST then set `effective = min(effective, auto_max_priority_gwei)`.
    4. The service MUST clamp the result into `[llm.min_priority_gwei, llm.max_priority_gwei]`.

@@ -6,6 +6,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
+	"crynux_as/relay"
 	"crynux_as/service"
 	"crynux_as/service/huggingface"
 	"encoding/json"
@@ -29,6 +30,8 @@ type parsedTaskJobRequest struct {
 	maxCompletionTokens *int
 	taskArgsJSON        string
 	streamIncludeUsage  bool
+	dtype               string
+	quantizationConfig  any
 }
 
 func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
@@ -55,6 +58,15 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 
+	execution := service.ResolveLLMModelExecution(parsed.model, parsed.dtype, parsed.quantizationConfig)
+	taskArgsJSON, err := service.ApplyLLMExecutionToTaskArgsJSON(parsed.taskArgsJSON, execution)
+	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
+		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
+		return
+	}
+	parsed.taskArgsJSON = taskArgsJSON
+
 	userVram, err := vramlimit.ResolveUserVramLimit(parsed.vramLimit, c.Param("vram_limit"))
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
@@ -67,7 +79,6 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		c.Request.Context(),
 		huggingface.ModelKindLLM,
 		parsed.model,
-		"",
 	); err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), nil, nil)
 		writeTaskModelValidationError(c, err)
@@ -85,9 +96,15 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		writeServerError(c)
 		return
 	}
-	taskFee, err := estimateTaskFeeFn(
+	query := relay.ExecutionTimeQuery{
+		Model:              parsed.model,
+		Dtype:              string(execution.Dtype),
+		QuantizationConfig: execution.QuantizationConfig,
+		MinVRAM:            &effectiveVram,
+	}
+	taskFee, err := service.EstimateLLMTaskFeeWithQuery(
 		c.Request.Context(),
-		parsed.model,
+		query,
 		effectiveVram,
 		priorityGwei,
 		estPrompt,
@@ -177,6 +194,8 @@ func parseTaskJobRequest(body []byte, apiType models.TaskAPIType, defaultMaxToke
 			maxCompletionTokens: meta.MaxCompletionTokens,
 			taskArgsJSON:        taskArgsJSON,
 			streamIncludeUsage:  includeUsage,
+			dtype:               meta.Dtype,
+			quantizationConfig:  meta.QuantizationConfig,
 		}, nil
 	case models.TaskAPITypeCompletions:
 		taskArgsJSON, meta, err := llmadapter.BuildCompletionsTaskArgs(body, defaultMaxTokens)
@@ -195,6 +214,8 @@ func parseTaskJobRequest(body []byte, apiType models.TaskAPIType, defaultMaxToke
 			maxCompletionTokens: meta.MaxCompletionTokens,
 			taskArgsJSON:        taskArgsJSON,
 			streamIncludeUsage:  includeUsage,
+			dtype:               meta.Dtype,
+			quantizationConfig:  meta.QuantizationConfig,
 		}, nil
 	default:
 		return parsedTaskJobRequest{}, errors.New("unsupported api type")

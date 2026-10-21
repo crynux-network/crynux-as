@@ -41,6 +41,8 @@ type ResponsesRequest struct {
 	ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs"`
 	Reasoning          *ResponsesReasoning      `json:"reasoning"`
 	VramLimit          *uint64                  `json:"vram_limit"`
+	Dtype              string                   `json:"dtype"`
+	QuantizationConfig any                      `json:"quantization_config"`
 }
 
 type ResponsesReasoning struct {
@@ -297,15 +299,20 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 	}
 
 	taskArgs := models.GPTTaskArgs{
-		Model:            req.Model,
-		Messages:         messages,
-		Tools:            req.Tools,
-		ToolChoice:       req.ToolChoice,
-		ResponseFormat:   req.ResponseFormat,
-		GenerationConfig: generationConfig,
-		TemplateArgs:     buildTemplateArgs(req.ChatTemplateKwargs, reasoningEffort),
-		Seed:             seed,
-		DType:            resolveDType(req.Model),
+		Version:            models.GPTTaskArgsVersion,
+		Model:              req.Model,
+		Messages:           messages,
+		Tools:              req.Tools,
+		ToolChoice:         req.ToolChoice,
+		ResponseFormat:     req.ResponseFormat,
+		GenerationConfig:   generationConfig,
+		TemplateArgs:       buildTemplateArgs(req.ChatTemplateKwargs, reasoningEffort),
+		Seed:               seed,
+		DType:              resolveDType(req.Model),
+		QuantizationConfig: req.QuantizationConfig,
+	}
+	if strings.TrimSpace(req.Dtype) != "" {
+		taskArgs.DType = models.DType(strings.ToLower(strings.TrimSpace(req.Dtype)))
 	}
 
 	taskMessages, err := BuildTemplateToolCallMessages(req.Model, messages)

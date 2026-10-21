@@ -31,16 +31,18 @@ The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge Clien
 
 `task_type` MUST be `0` for an Image task or `1` for an LLM task. `task_args` MUST be a JSON string valid for the selected task type.
 
-Before Credits reservation, AS MUST validate the task model:
+Before Credits reservation, AS MUST validate `task_args` against the configured JSON Schema for the task type (`task_schema.gpt_inference` for LLM, `task_schema.stable_diffusion_inference` for Image). A schema validation failure MUST return HTTP 400 with a validation error on field `task_args` and MUST NOT reserve Credits or create a job.
 
-1. For an LLM task, the `task_args.model` value MUST be a Hugging Face model id. For an Image task, `task_args.base_model.name` MUST be a Hugging Face model id and `variant` MAY be empty.
+Before Credits reservation, AS MUST also validate the task model:
+
+1. For an LLM task, the `task_args.model` value MUST be a Hugging Face model id. For an Image task, `task_args.base_model.name` MUST be a Hugging Face model id. Image `base_model` MUST NOT use `variant`; AS MUST ignore any Relay `variant` field for Image identity.
 2. Absolute URLs and any model id containing `://` MUST be rejected with HTTP 400.
-3. When the model is present in the corresponding full loaded-models cache (LLM by model id, Image by `(model_id, variant)`), AS MUST skip the Hub lookup.
-4. When the model is absent from that cache, AS MUST query Hugging Face Hub. LLM validation MUST require the repo to exist. Image validation MUST require `model_index.json` and either a matching variant weight file when `variant` is non-empty or a default non-variant weight file when `variant` is empty. A permanent Hub rejection MUST return HTTP 400. Hub timeouts and HTTP 5xx MUST return HTTP 500 and MUST NOT reserve Credits or create a job.
+3. When any row for the model is present in the corresponding full loaded-models cache (LLM or Image keyed by `(model_id, quantization_config, execution_dtype)`), AS MUST skip the Hub lookup.
+4. When the model is absent from that cache, AS MUST query Hugging Face Hub. LLM validation MUST require the repo to exist. Image validation MUST require `model_index.json`. A permanent Hub rejection MUST return HTTP 400. Hub timeouts and HTTP 5xx MUST return HTTP 500 and MUST NOT reserve Credits or create a job.
 
 The request MAY select hardware with `min_vram`, or with both `required_gpu` and `required_gpu_vram`. It MUST NOT combine `min_vram` with either required-GPU field. It MUST provide both required-GPU fields together.
 
-When `min_vram` is omitted and the request does not select an exact GPU, AS MUST resolve the default `min_vram` as follows: for an Image task, look up the Image loaded-models cache by `task_args.base_model` name and `variant` (missing or empty `variant` is the empty string); for an LLM task, look up the LLM loaded-models cache by model id. When the lookup misses or the cached `min_vram` is zero, AS MUST use `llm.default_vram_limit`. AS MUST NOT rewrite a missing Image `variant` to `fp16` or any other default string.
+When `min_vram` is omitted and the request does not select an exact GPU, AS MUST resolve the default `min_vram` as follows: prefer an exact loaded-models match using the TaskArgs model id plus `quantization_config` and `dtype` when present; otherwise select the full-cache row with the greatest `min_vram` for that model id, with ties broken by canonical `quantization_config` ascending then `execution_dtype` ascending. When the lookup misses or the cached `min_vram` is zero, AS MUST use `llm.default_vram_limit`. AS MUST NOT rewrite the caller's TaskArgs to inject a default `quantization_config` or `dtype` on the Raw path.
 
 `task_fee` is owned by Crynux AS. A request containing `task_fee`, including a null value, MUST be rejected. AS MUST resolve the project Cost Level, fetch the applicable Relay execution-time coefficients, calculate the task fee in Wei and the Credits estimate, then in one transaction reserve that estimate against available Credits (`balance - locked`) and create a `task_jobs` row with a `held` Credits lock, without waiting for Bridge. Insufficient available Credits MUST return HTTP 402.
 
@@ -53,6 +55,7 @@ The response MUST use the local task view:
     "id": 123,
     "task_type": 1,
     "status": "running",
+    "phase": "queued",
     "created_at": "2026-01-01T00:00:00Z",
     "updated_at": "2026-01-01T00:00:00Z"
   }
@@ -60,6 +63,8 @@ The response MUST use the local task view:
 ```
 
 Public status MUST be `running`, `success`, or `failed`. Pending submission, submitted, and in-progress jobs MUST map to `running`. When status is `failed` and the job has a stored error message, the task view MUST include `error_message` with that text. Running and success responses MUST omit `error_message`.
+
+The task view MUST include `phase`. Allowed values are `queued`, `running`, `validating`, `uploading`, `finalizing`, `success`, and `failed`. When `status` is `running`, `phase` MUST be one of `queued`, `running`, `validating`, `uploading`, or `finalizing`. When `status` is `success`, `phase` MUST be `success`. When `status` is `failed`, `phase` MUST be `failed`. A newly created job MUST use `phase` `queued` until the background worker advances it from Bridge status. When `phase` is `running` and an estimated execution completion time is known, the task view MUST include `estimated_completion_at`. Otherwise the task view MUST omit `estimated_completion_at`.
 
 ## Batch Operations
 
@@ -79,16 +84,16 @@ Image bytes MUST NOT be stored in MySQL. OpenAI-formatted results MAY remain on 
 
 ## Models
 
-`GET /models` and `GET /models/<model>` MUST continue to use only the LLM catalog snapshot and MUST keep the OpenAI-compatible model object fields without a `variant` field. Each LLM list and retrieve object MUST include `min_vram` and `on_disk_node_count` and MUST NOT include `in_memory_node_count`. `GET /models/image` MUST use the independent Image catalog snapshot and MUST return one list entry per `(model_id, variant)` pair, sorted by `id` ascending then `variant` ascending. Each Image list entry MUST include `id`, `object`, `created`, `owned_by`, `min_vram`, `variant`, and `on_disk_node_count`. `id` MUST be the lowercase HuggingFace model ID. `variant` MUST be the cached lowercase variant string, which MAY be empty. `on_disk_node_count` MUST be the cached Relay count of nodes that have the model files on disk. Image list entries MUST NOT include `in_memory_node_count`. Both catalog snapshots MUST include only models whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`, and both list endpoints MUST use the `{"object":"list","data":[...]}` envelope.
+`GET /models` and `GET /models/<model>` MUST continue to use only the LLM catalog snapshot. Each LLM list object MUST include `min_vram`, `on_disk_node_count`, `execution_dtype`, and `quantization_config`, and MUST NOT include `variant` or `in_memory_node_count`. The same `id` MAY appear on multiple rows when quantization or dtype differs. `GET /models/<model>` MUST return the list envelope of every catalog row for that model id, or HTTP 404 when none match. `GET /models/image` MUST use the independent Image catalog snapshot and MUST return one list entry per `(model_id, quantization_config, execution_dtype)` row, sorted by `id` ascending, then `execution_dtype` ascending, then canonical `quantization_config` ascending. Each Image list entry MUST include `id`, `object`, `created`, `owned_by`, `min_vram`, `on_disk_node_count`, `execution_dtype`, and `quantization_config`. `id` MUST be the lowercase HuggingFace model ID. Image list entries MUST NOT include `variant` or `in_memory_node_count`. Both catalog snapshots MUST include only rows whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`, and both list endpoints MUST use the `{"object":"list","data":[...]}` envelope.
 
 ## Pricing and Settlement
 
 LLM tasks MUST use the LLM execution-time coefficients, precheck token estimate, and actual result usage specified in [credits-billing.md](./credits-billing.md).
 
-Image tasks MUST fetch Relay `GET /v2/models/sd/execution-time` with the complete model execution and hardware selection. Image work MUST be:
+Image tasks MUST fetch Relay `GET /v2/models/sd/execution-time` with the complete model execution and hardware selection, including `quantization_config` when present in TaskArgs. Image work MUST be:
 
 ```text
-pixel_step_units = num_images * image_width * image_height * steps
+pixel_step_units = num_images_per_prompt * image_width * image_height * steps
 estimated_node_seconds =
     max(overhead_seconds + seconds_per_sd_pixel_step * pixel_step_units, 1)
 ```

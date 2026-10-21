@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"crynux_as/models"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,12 +29,14 @@ func NewClient(baseURL string) *Client {
 }
 
 type LoadedModel struct {
-	ModelID           string `json:"model_id"`
-	ModelType         string `json:"model_type"`
-	Variant           string `json:"variant"`
-	MinVRAM           uint64 `json:"min_vram"`
-	InMemoryNodeCount int64  `json:"in_memory_node_count"`
-	OnDiskNodeCount   int64  `json:"on_disk_node_count"`
+	ModelID            string          `json:"model_id"`
+	ModelType          string          `json:"model_type"`
+	Variant            string          `json:"variant"`
+	ExecutionDType     string          `json:"execution_dtype"`
+	QuantizationConfig json.RawMessage `json:"quantization_config"`
+	MinVRAM            uint64          `json:"min_vram"`
+	InMemoryNodeCount  int64           `json:"in_memory_node_count"`
+	OnDiskNodeCount    int64           `json:"on_disk_node_count"`
 }
 
 type getLoadedModelsResponse struct {
@@ -44,8 +47,8 @@ type getLoadedModelsResponse struct {
 // GetLoadedModels fetches the loaded models from the public Relay API
 // GET /v2/loaded-models.
 func (c *Client) GetLoadedModels(ctx context.Context) ([]LoadedModel, error) {
-	url := c.baseURL + "/v2/loaded-models"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	reqURL := c.baseURL + "/v2/loaded-models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -153,13 +156,12 @@ type SDExecutionTime struct {
 }
 
 type ExecutionTimeQuery struct {
-	Model        string
-	Dtype        string
-	QuantizeBits *uint64
-	Variant      string
-	MinVRAM      *uint64
-	GPUName      string
-	GPUVRAM      *uint64
+	Model              string
+	Dtype              string
+	QuantizationConfig any
+	MinVRAM            *uint64
+	GPUName            string
+	GPUVRAM            *uint64
 }
 
 type getLLMExecutionTimeResponse struct {
@@ -259,11 +261,12 @@ func (c *Client) executionTimeURL(path string, query ExecutionTimeQuery) (string
 	if query.Dtype != "" {
 		values.Set("dtype", query.Dtype)
 	}
-	if query.QuantizeBits != nil {
-		values.Set("quantize_bits", strconv.FormatUint(*query.QuantizeBits, 10))
+	quantKey, err := models.QuantizationConfigKey(query.QuantizationConfig)
+	if err != nil {
+		return "", fmt.Errorf("invalid quantization_config: %w", err)
 	}
-	if query.Variant != "" {
-		values.Set("variant", query.Variant)
+	if quantKey != "null" {
+		values.Set("quantization_config", quantKey)
 	}
 	if hasMinVRAM {
 		if *query.MinVRAM == 0 {

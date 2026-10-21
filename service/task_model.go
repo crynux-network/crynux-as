@@ -45,9 +45,8 @@ func SetHuggingFaceClientForTest(client *huggingface.Client) {
 
 // ValidateTaskModel checks that the model id is a Hugging Face repo id and that the
 // model is either already present in the loaded-models cache or exists on the Hub.
-func ValidateTaskModel(ctx context.Context, kind huggingface.ModelKind, modelID, variant string) error {
+func ValidateTaskModel(ctx context.Context, kind huggingface.ModelKind, modelID string) error {
 	modelID = llmadapter.NormalizeModelID(modelID)
-	variant = strings.ToLower(strings.TrimSpace(variant))
 	if err := llmadapter.ValidateHuggingFaceModelID(modelID); err != nil {
 		return errors.Join(ErrInvalidBaseModel, err)
 	}
@@ -57,7 +56,7 @@ func ValidateTaskModel(ctx context.Context, kind huggingface.ModelKind, modelID,
 			return nil
 		}
 	case huggingface.ModelKindSD:
-		if _, ok := GetLoadedSDModel(modelID, variant); ok {
+		if _, ok := GetLoadedSDModel(modelID); ok {
 			return nil
 		}
 	default:
@@ -65,12 +64,9 @@ func ValidateTaskModel(ctx context.Context, kind huggingface.ModelKind, modelID,
 	}
 
 	client := getHuggingFaceClient()
-	if err := client.ValidateBaseModel(ctx, kind, modelID, variant); err != nil {
+	if err := client.ValidateBaseModel(ctx, kind, modelID); err != nil {
 		if errors.Is(err, huggingface.ErrServiceUnavailable) {
 			return ErrBaseModelCheckUnavailable
-		}
-		if errors.Is(err, huggingface.ErrVariantUnavailable) {
-			return errors.Join(ErrInvalidBaseModel, err)
 		}
 		if errors.Is(err, huggingface.ErrModelNotFound) {
 			return errors.Join(ErrInvalidBaseModel, err)

@@ -49,10 +49,10 @@ type CalcImageTaskFeeInput struct {
 
 type imageTaskArgs struct {
 	TaskConfig struct {
-		NumImages   uint64 `json:"num_images"`
-		ImageWidth  uint64 `json:"image_width"`
-		ImageHeight uint64 `json:"image_height"`
-		Steps       uint64 `json:"steps"`
+		NumImagesPerPrompt *uint64 `json:"num_images_per_prompt"`
+		ImageWidth         uint64  `json:"image_width"`
+		ImageHeight        uint64  `json:"image_height"`
+		Steps              uint64  `json:"steps"`
 	} `json:"task_config"`
 }
 
@@ -168,10 +168,14 @@ func imagePixelStepUnits(taskArgs string) (uint64, error) {
 		return 0, fmt.Errorf("parse image task args: %w", err)
 	}
 	cfg := args.TaskConfig
-	if cfg.NumImages == 0 || cfg.ImageWidth == 0 || cfg.ImageHeight == 0 || cfg.Steps == 0 {
-		return 0, errors.New("num_images, image_width, image_height, and steps must be positive")
+	numImages := uint64(1)
+	if cfg.NumImagesPerPrompt != nil {
+		numImages = *cfg.NumImagesPerPrompt
 	}
-	units := cfg.NumImages
+	if numImages == 0 || cfg.ImageWidth == 0 || cfg.ImageHeight == 0 || cfg.Steps == 0 {
+		return 0, errors.New("num_images_per_prompt, image_width, image_height, and steps must be positive")
+	}
+	units := numImages
 	for _, factor := range []uint64{cfg.ImageWidth, cfg.ImageHeight, cfg.Steps} {
 		if units > math.MaxUint64/factor {
 			return 0, errors.New("image pixel-step units overflow uint64")

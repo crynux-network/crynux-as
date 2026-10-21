@@ -70,6 +70,8 @@ type TaskJob struct {
 	RequiredGPUVram       uint64                   `gorm:"not null;default:0"`
 	BridgeClientTaskID    *uint                    `gorm:"index"`
 	Status                TaskJobStatus            `gorm:"not null;default:0;index:idx_task_jobs_project_status_created,priority:2;index:idx_task_jobs_terminal_cleanup,priority:1;index"`
+	Phase                 string                   `gorm:"type:string;size:32;not null;default:queued"`
+	EstimatedCompletionAt *time.Time               `gorm:"column:estimated_completion_at"`
 	RawResultJSON         *string                  `gorm:"type:longtext"`
 	FormattedResultJSON   *string                  `gorm:"type:longtext"`
 	ErrorMessage          *string                  `gorm:"type:text"`

@@ -227,22 +227,40 @@ func syncInFlightTaskJobs(
 
 		status := result.ClientTask.Status
 		if !bridge.IsBridgeTaskTerminal(status) {
-			if job.Status != models.TaskJobStatusInProgress {
-				if err := UpdateTaskJobStatus(ctx, db, job.ID, models.TaskJobStatusInProgress); err != nil {
-					return err
+			phase := result.ClientTask.Phase
+			if phase == "" {
+				phase = "queued"
+			}
+			var eta *time.Time
+			if result.ClientTask.EstimatedCompletionAt != nil && *result.ClientTask.EstimatedCompletionAt != "" {
+				parsed, parseErr := time.Parse(time.RFC3339Nano, *result.ClientTask.EstimatedCompletionAt)
+				if parseErr != nil {
+					parsed, parseErr = time.Parse(time.RFC3339, *result.ClientTask.EstimatedCompletionAt)
 				}
+				if parseErr == nil {
+					eta = &parsed
+				}
+			}
+			if err := UpdateTaskJobPhase(ctx, db, job.ID, models.TaskJobStatusInProgress, phase, eta); err != nil {
+				return err
 			}
 			continue
 		}
 
 		if !bridge.IsBridgeTaskSuccess(status) {
-			msg := fmt.Sprintf("bridge task failed with status %s", status)
+			msg := result.ClientTask.ErrorMessage
+			if msg == "" {
+				msg = fmt.Sprintf("bridge task failed with status %s", status)
+			}
 			if failErr := failTaskJobWithRecord(ctx, db, job, msg); failErr != nil {
 				return failErr
 			}
 			continue
 		}
 
+		if err := UpdateTaskJobPhase(ctx, db, job.ID, models.TaskJobStatusInProgress, "finalizing", nil); err != nil {
+			return err
+		}
 		if err := completeSuccessfulTaskJob(ctx, db, client, job); err != nil {
 			log.Errorf("complete task job %d failed, will retry next tick: %v", job.ID, err)
 			continue

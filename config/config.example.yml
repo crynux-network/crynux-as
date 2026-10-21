@@ -85,3 +85,7 @@ usage_stats:
   recent_failure_rate_threshold: "0.2"
 credits:
   signup_bonus: 1000
+task_schema:
+  stable_diffusion_inference: "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.0/schema/image-task.json"
+  gpt_inference: "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
+  stable_diffusion_finetune_lora: "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.0/schema/stable-diffusion-finetune-lora-task.json"

@@ -26,12 +26,7 @@ const (
 	DTypeAuto     DType = "auto"
 )
 
-type QuantizeBits int
-
-const (
-	QuantizeBits4 QuantizeBits = 4
-	QuantizeBits8 QuantizeBits = 8
-)
+const GPTTaskArgsVersion = "3.7.0"
 
 type ToolCall struct {
 	Id       string       `json:"id"`
@@ -77,16 +72,17 @@ type Usage struct {
 }
 
 type GPTTaskArgs struct {
-	Model            string                   `json:"model"`
-	Messages         []Message                `json:"messages"`
-	Tools            []map[string]interface{} `json:"tools,omitempty"`
-	ToolChoice       any                      `json:"tool_choice,omitempty"`
-	ResponseFormat   map[string]interface{}   `json:"response_format,omitempty"`
-	GenerationConfig *GPTGenerationConfig     `json:"generation_config,omitempty"`
-	TemplateArgs     map[string]interface{}   `json:"template_args,omitempty"`
-	Seed             int                      `json:"seed"`
-	DType            DType                    `json:"dtype,omitempty"`
-	QuantizeBits     QuantizeBits             `json:"quantize_bits,omitempty"`
+	Version            string                   `json:"version"`
+	Model              string                   `json:"model"`
+	Messages           []Message                `json:"messages"`
+	Tools              []map[string]interface{} `json:"tools,omitempty"`
+	ToolChoice         any                      `json:"tool_choice,omitempty"`
+	ResponseFormat     map[string]interface{}   `json:"response_format,omitempty"`
+	GenerationConfig   *GPTGenerationConfig     `json:"generation_config,omitempty"`
+	TemplateArgs       map[string]interface{}   `json:"template_args,omitempty"`
+	Seed               int                      `json:"seed"`
+	DType              DType                    `json:"dtype,omitempty"`
+	QuantizationConfig any                      `json:"quantization_config,omitempty"`
 }
 
 type ResponseChoice struct {

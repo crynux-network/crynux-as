@@ -84,6 +84,7 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 		RequiredGPU:       in.RequiredGPU,
 		RequiredGPUVram:   in.RequiredGPUVram,
 		Status:            models.TaskJobStatusPendingSubmit,
+		Phase:             "queued",
 		BillingStatus:     models.TaskJobBillingPending,
 		BillingData:       billingJSON,
 		CreditsLocked:     models.BigInt{Int: *new(big.Int).Set(in.CreditsToLock)},
@@ -152,11 +153,13 @@ func CompleteAndSettleImageTaskJob(ctx context.Context, db *gorm.DB, job *models
 			return err
 		}
 		if err := tx.Model(&models.TaskJob{}).Where("id = ?", locked.ID).Updates(map[string]interface{}{
-			"status":              models.TaskJobStatusCompleted,
-			"billing_status":      models.TaskJobBillingBilled,
-			"completed_at":        now,
-			"task_call_record_id": recordID,
-			"credits_lock_status": locked.CreditsLockStatus,
+			"status":                  models.TaskJobStatusCompleted,
+			"phase":                   "success",
+			"estimated_completion_at": nil,
+			"billing_status":          models.TaskJobBillingBilled,
+			"completed_at":            now,
+			"task_call_record_id":     recordID,
+			"credits_lock_status":     locked.CreditsLockStatus,
 		}).Error; err != nil {
 			return err
 		}

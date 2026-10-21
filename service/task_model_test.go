@@ -14,7 +14,7 @@ import (
 )
 
 func TestValidateTaskModelRejectsURL(t *testing.T) {
-	err := ValidateTaskModel(context.Background(), huggingface.ModelKindLLM, "https://huggingface.co/org/model", "")
+	err := ValidateTaskModel(context.Background(), huggingface.ModelKindLLM, "https://huggingface.co/org/model")
 	if !errors.Is(err, ErrInvalidBaseModel) {
 		t.Fatalf("expected ErrInvalidBaseModel, got %v", err)
 	}
@@ -36,7 +36,7 @@ func TestValidateTaskModelSkipsHubWhenCached(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"message": "success",
 			"data": []map[string]interface{}{
-				{"model_id": "cached/llm", "model_type": "llm", "variant": "", "min_vram": 24, "in_memory_node_count": 1, "on_disk_node_count": 1},
+				{"model_id": "cached/llm", "model_type": "llm", "execution_dtype": "bfloat16", "quantization_config": nil, "min_vram": 24, "in_memory_node_count": 1, "on_disk_node_count": 1},
 			},
 		})
 	}))
@@ -53,7 +53,7 @@ func TestValidateTaskModelSkipsHubWhenCached(t *testing.T) {
 	defer hub.Close()
 	SetHuggingFaceClientForTest(huggingface.NewClient(hub.URL, time.Second, time.Minute))
 
-	if err := ValidateTaskModel(context.Background(), huggingface.ModelKindLLM, "cached/llm", ""); err != nil {
+	if err := ValidateTaskModel(context.Background(), huggingface.ModelKindLLM, "cached/llm"); err != nil {
 		t.Fatalf("expected cached model to pass: %v", err)
 	}
 }
@@ -93,7 +93,7 @@ func TestValidateTaskModelUsesHubForUnknown(t *testing.T) {
 	defer hub.Close()
 	SetHuggingFaceClientForTest(huggingface.NewClient(hub.URL, time.Second, time.Minute))
 
-	if err := ValidateTaskModel(context.Background(), huggingface.ModelKindLLM, "org/new", ""); err != nil {
+	if err := ValidateTaskModel(context.Background(), huggingface.ModelKindLLM, "org/new"); err != nil {
 		t.Fatalf("expected hub model to pass: %v", err)
 	}
 }

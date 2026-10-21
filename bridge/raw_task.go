@@ -37,11 +37,14 @@ type CreateRawTaskRequest struct {
 }
 
 type RawClientTask struct {
-	ID        uint   `json:"id"`
-	ClientID  uint   `json:"client_id"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID                    uint    `json:"id"`
+	ClientID              uint    `json:"client_id"`
+	Status                string  `json:"status"`
+	Phase                 string  `json:"phase"`
+	EstimatedCompletionAt *string `json:"estimated_completion_at,omitempty"`
+	ErrorMessage          string  `json:"error_message,omitempty"`
+	CreatedAt             string  `json:"created_at"`
+	UpdatedAt             string  `json:"updated_at"`
 }
 
 type createRawTaskEnvelope struct {

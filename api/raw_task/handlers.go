@@ -27,21 +27,20 @@ import (
 const weiPerGwei = int64(1_000_000_000)
 
 type llmArgsForPricing struct {
-	Model            string                      `json:"model"`
-	Dtype            string                      `json:"dtype"`
-	QuantizeBits     *uint64                     `json:"quantize_bits"`
-	GenerationConfig *models.GPTGenerationConfig `json:"generation_config"`
+	Model              string                      `json:"model"`
+	Dtype              string                      `json:"dtype"`
+	QuantizationConfig any                         `json:"quantization_config"`
+	GenerationConfig   *models.GPTGenerationConfig `json:"generation_config"`
 }
 
 type imageModelArg struct {
-	Name    string `json:"name"`
-	Variant string `json:"variant"`
+	Name string `json:"name"`
 }
 
 type imageArgsForPricing struct {
-	BaseModel    json.RawMessage `json:"base_model"`
-	Dtype        string          `json:"dtype"`
-	QuantizeBits *uint64         `json:"quantize_bits"`
+	BaseModel          json.RawMessage `json:"base_model"`
+	Dtype              string          `json:"dtype"`
+	QuantizationConfig any             `json:"quantization_config"`
 }
 
 func CreateTask(c *gin.Context) {
@@ -239,6 +238,11 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if !json.Valid([]byte(request.TaskArgs)) {
 		return nil, errors.New("task_args must be valid JSON")
 	}
+	if validationErr, err := models.ValidateTaskArgsJsonStr(request.TaskArgs, *request.TaskType); err != nil {
+		return nil, err
+	} else if validationErr != nil {
+		return nil, fmt.Errorf("invalid task_args: %s", validationErr.Error())
+	}
 	hasGPUName := strings.TrimSpace(request.RequiredGPU) != ""
 	hasGPUVram := request.RequiredGPUVram > 0
 	if request.MinVram != nil && (hasGPUName || hasGPUVram) {
@@ -248,7 +252,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		return nil, errors.New("required_gpu and required_gpu_vram must be provided together")
 	}
 
-	model, variant, dtype, quantizeBits, maxTokens, err := parseTaskArgs(*request.TaskType, request.TaskArgs)
+	model, dtype, quantConfig, maxTokens, err := parseTaskArgs(*request.TaskType, request.TaskArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +260,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if *request.TaskType == models.TaskTypeImage {
 		kind = huggingface.ModelKindSD
 	}
-	if err := service.ValidateTaskModel(ctx, kind, model, variant); err != nil {
+	if err := service.ValidateTaskModel(ctx, kind, model); err != nil {
 		return nil, err
 	}
 	minVram := request.MinVram
@@ -266,9 +270,13 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if minVram == nil && !hasGPUName {
 		resolved := config.GetConfig().LLM.DefaultVramLimit
 		if *request.TaskType == models.TaskTypeImage {
-			if loaded, ok := service.GetLoadedSDModel(model, variant); ok && loaded.MinVRAM > 0 {
+			if loaded, ok := service.GetLoadedSDModelExact(model, quantConfig, dtype); ok && loaded.MinVRAM > 0 {
+				resolved = loaded.MinVRAM
+			} else if loaded, ok := service.GetLoadedSDModel(model); ok && loaded.MinVRAM > 0 {
 				resolved = loaded.MinVRAM
 			}
+		} else if loaded, ok := service.GetLoadedLLMModelExact(model, quantConfig, dtype); ok && loaded.MinVRAM > 0 {
+			resolved = loaded.MinVRAM
 		} else if loaded, ok := service.GetLoadedLLMModel(model); ok && loaded.MinVRAM > 0 {
 			resolved = loaded.MinVRAM
 		}
@@ -283,8 +291,11 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		return nil, err
 	}
 	query := relay.ExecutionTimeQuery{
-		Model: model, Variant: variant, Dtype: dtype, QuantizeBits: quantizeBits,
-		MinVRAM: minVram, GPUName: request.RequiredGPU,
+		Model:              model,
+		Dtype:              dtype,
+		QuantizationConfig: quantConfig,
+		MinVRAM:            minVram,
+		GPUName:            request.RequiredGPU,
 	}
 	if hasGPUVram {
 		query.GPUVRAM = &request.RequiredGPUVram
@@ -319,15 +330,15 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	}, nil
 }
 
-func parseTaskArgs(taskType models.TaskType, raw string) (model, variant, dtype string, quantizeBits *uint64, maxTokens uint64, err error) {
+func parseTaskArgs(taskType models.TaskType, raw string) (model, dtype string, quantConfig any, maxTokens uint64, err error) {
 	if taskType == models.TaskTypeLLM {
 		var args llmArgsForPricing
 		if err = json.Unmarshal([]byte(raw), &args); err != nil {
 			return
 		}
 		model = strings.TrimSpace(args.Model)
-		dtype = args.Dtype
-		quantizeBits = args.QuantizeBits
+		dtype = strings.ToLower(strings.TrimSpace(args.Dtype))
+		quantConfig = args.QuantizationConfig
 		if args.GenerationConfig != nil && args.GenerationConfig.MaxNewTokens > 0 {
 			maxTokens = uint64(args.GenerationConfig.MaxNewTokens)
 		} else {
@@ -338,8 +349,8 @@ func parseTaskArgs(taskType models.TaskType, raw string) (model, variant, dtype 
 		if err = json.Unmarshal([]byte(raw), &args); err != nil {
 			return
 		}
-		dtype = args.Dtype
-		quantizeBits = args.QuantizeBits
+		dtype = strings.ToLower(strings.TrimSpace(args.Dtype))
+		quantConfig = args.QuantizationConfig
 		var name string
 		if json.Unmarshal(args.BaseModel, &name) == nil {
 			model = name
@@ -348,7 +359,7 @@ func parseTaskArgs(taskType models.TaskType, raw string) (model, variant, dtype 
 			if err = json.Unmarshal(args.BaseModel, &base); err != nil {
 				return
 			}
-			model, variant = base.Name, base.Variant
+			model = base.Name
 		}
 	}
 	if strings.TrimSpace(model) == "" {
@@ -379,14 +390,30 @@ func loadProjectTask(ctx context.Context, projectID, id uint) (*models.TaskJob, 
 
 func taskView(job *models.TaskJob) TaskView {
 	status := "running"
+	phase := job.Phase
 	if job.Status == models.TaskJobStatusCompleted {
 		status = "success"
+		phase = "success"
 	} else if job.Status == models.TaskJobStatusFailed {
 		status = "failed"
+		phase = "failed"
+	} else if phase == "" || job.Status == models.TaskJobStatusPendingSubmit {
+		phase = "queued"
 	}
-	view := TaskView{ID: job.ID, TaskType: job.TaskType, Status: status, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt}
+	view := TaskView{
+		ID:                    job.ID,
+		TaskType:              job.TaskType,
+		Status:                status,
+		Phase:                 phase,
+		EstimatedCompletionAt: job.EstimatedCompletionAt,
+		CreatedAt:             job.CreatedAt,
+		UpdatedAt:             job.UpdatedAt,
+	}
 	if status == "failed" && job.ErrorMessage != nil {
 		view.ErrorMessage = *job.ErrorMessage
+	}
+	if status != "running" || phase != "running" {
+		view.EstimatedCompletionAt = nil
 	}
 	return view
 }

@@ -103,4 +103,10 @@ type AppConfig struct {
 	Credits struct {
 		SignupBonus uint64 `mapstructure:"signup_bonus"`
 	} `mapstructure:"credits"`
+
+	TaskSchema struct {
+		StableDiffusionInference    string `mapstructure:"stable_diffusion_inference"`
+		GPTInference                string `mapstructure:"gpt_inference"`
+		StableDiffusionFinetuneLora string `mapstructure:"stable_diffusion_finetune_lora"`
+	} `mapstructure:"task_schema"`
 }

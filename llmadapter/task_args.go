@@ -7,30 +7,36 @@ import (
 )
 
 type llmTaskArgsPayload struct {
-	Model            string                      `json:"model"`
-	Messages         any                         `json:"messages"`
-	Tools            []map[string]interface{}    `json:"tools,omitempty"`
-	ToolChoice       any                         `json:"tool_choice,omitempty"`
-	ResponseFormat   map[string]interface{}      `json:"response_format,omitempty"`
-	GenerationConfig *models.GPTGenerationConfig `json:"generation_config,omitempty"`
-	TemplateArgs     map[string]interface{}      `json:"template_args,omitempty"`
-	Seed             int                         `json:"seed"`
-	DType            models.DType                `json:"dtype,omitempty"`
-	QuantizeBits     models.QuantizeBits         `json:"quantize_bits,omitempty"`
+	Version            string                      `json:"version"`
+	Model              string                      `json:"model"`
+	Messages           any                         `json:"messages"`
+	Tools              []map[string]interface{}    `json:"tools,omitempty"`
+	ToolChoice         any                         `json:"tool_choice,omitempty"`
+	ResponseFormat     map[string]interface{}      `json:"response_format,omitempty"`
+	GenerationConfig   *models.GPTGenerationConfig `json:"generation_config,omitempty"`
+	TemplateArgs       map[string]interface{}      `json:"template_args,omitempty"`
+	Seed               int                         `json:"seed"`
+	DType              models.DType                `json:"dtype,omitempty"`
+	QuantizationConfig any                         `json:"quantization_config"`
 }
 
 func buildLLMTaskArgsPayload(args models.GPTTaskArgs, messages any) llmTaskArgsPayload {
+	version := args.Version
+	if version == "" {
+		version = models.GPTTaskArgsVersion
+	}
 	return llmTaskArgsPayload{
-		Model:            args.Model,
-		Messages:         messages,
-		Tools:            args.Tools,
-		ToolChoice:       args.ToolChoice,
-		ResponseFormat:   args.ResponseFormat,
-		GenerationConfig: args.GenerationConfig,
-		TemplateArgs:     args.TemplateArgs,
-		Seed:             args.Seed,
-		DType:            args.DType,
-		QuantizeBits:     args.QuantizeBits,
+		Version:            version,
+		Model:              args.Model,
+		Messages:           messages,
+		Tools:              args.Tools,
+		ToolChoice:         args.ToolChoice,
+		ResponseFormat:     args.ResponseFormat,
+		GenerationConfig:   args.GenerationConfig,
+		TemplateArgs:       args.TemplateArgs,
+		Seed:               args.Seed,
+		DType:              args.DType,
+		QuantizationConfig: args.QuantizationConfig,
 	}
 }
 

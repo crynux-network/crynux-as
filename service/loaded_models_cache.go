@@ -1,9 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crynux_as/config"
+	"crynux_as/models"
 	"crynux_as/relay"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -16,11 +19,13 @@ const loadedModelTypeLLM = "llm"
 const loadedModelTypeSD = "sd"
 
 type LoadedLLMModel struct {
-	ModelID         string
-	Variant         string
-	MinVRAM         uint64
-	NodeCount       int64
-	OnDiskNodeCount int64
+	ModelID            string
+	ExecutionDType     string
+	QuantizationConfig json.RawMessage
+	QuantizationKey    string
+	MinVRAM            uint64
+	NodeCount          int64
+	OnDiskNodeCount    int64
 }
 
 type loadedModelsCache struct {
@@ -40,8 +45,8 @@ var sdModelsCache = &loadedModelsCache{
 	catalogModels: map[string]LoadedLLMModel{},
 }
 
-func sdCacheKey(modelID, variant string) string {
-	return strings.ToLower(modelID) + "\x00" + strings.ToLower(variant)
+func modelCacheKey(modelID, quantKey, executionDType string) string {
+	return strings.ToLower(modelID) + "\x00" + quantKey + "\x00" + strings.ToLower(executionDType)
 }
 
 func catalogVisible(model LoadedLLMModel, minOnDiskNodeCount uint64) bool {
@@ -59,6 +64,55 @@ func filterCatalogModels(models map[string]LoadedLLMModel, minOnDiskNodeCount ui
 		}
 	}
 	return catalog
+}
+
+func normalizeQuantizationConfig(raw json.RawMessage) (json.RawMessage, string, error) {
+	key, err := models.QuantizationConfigKey(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	if key == "null" {
+		return json.RawMessage("null"), "null", nil
+	}
+	return json.RawMessage(key), key, nil
+}
+
+func betterMaxMinVRAM(candidate, existing LoadedLLMModel) bool {
+	if candidate.MinVRAM != existing.MinVRAM {
+		return candidate.MinVRAM > existing.MinVRAM
+	}
+	if candidate.QuantizationKey != existing.QuantizationKey {
+		return candidate.QuantizationKey < existing.QuantizationKey
+	}
+	return candidate.ExecutionDType < existing.ExecutionDType
+}
+
+func pickMaxMinVRAM(models map[string]LoadedLLMModel, modelID string) (LoadedLLMModel, bool) {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	var best LoadedLLMModel
+	found := false
+	for _, model := range models {
+		if model.ModelID != modelID {
+			continue
+		}
+		if !found || betterMaxMinVRAM(model, best) {
+			best = model
+			found = true
+		}
+	}
+	return best, found
+}
+
+func sortLoadedModels(models []LoadedLLMModel) {
+	sort.Slice(models, func(i, j int) bool {
+		if models[i].ModelID != models[j].ModelID {
+			return models[i].ModelID < models[j].ModelID
+		}
+		if models[i].ExecutionDType != models[j].ExecutionDType {
+			return models[i].ExecutionDType < models[j].ExecutionDType
+		}
+		return models[i].QuantizationKey < models[j].QuantizationKey
+	})
 }
 
 // InitLoadedModelsCache sets the Relay client used by cache refreshes. It must
@@ -94,22 +148,27 @@ func RefreshLoadedModels(ctx context.Context) error {
 		if modelID == "" {
 			continue
 		}
-		variant := strings.ToLower(strings.TrimSpace(loadedModel.Variant))
-		entry := LoadedLLMModel{
-			ModelID:         modelID,
-			Variant:         variant,
-			MinVRAM:         loadedModel.MinVRAM,
-			NodeCount:       loadedModel.InMemoryNodeCount,
-			OnDiskNodeCount: loadedModel.OnDiskNodeCount,
+		quantRaw, quantKey, err := normalizeQuantizationConfig(loadedModel.QuantizationConfig)
+		if err != nil {
+			log.Warnf("skip loaded model %s: invalid quantization_config: %v", modelID, err)
+			continue
 		}
+		executionDType := strings.ToLower(strings.TrimSpace(loadedModel.ExecutionDType))
+		entry := LoadedLLMModel{
+			ModelID:            modelID,
+			ExecutionDType:     executionDType,
+			QuantizationConfig: quantRaw,
+			QuantizationKey:    quantKey,
+			MinVRAM:            loadedModel.MinVRAM,
+			NodeCount:          loadedModel.InMemoryNodeCount,
+			OnDiskNodeCount:    loadedModel.OnDiskNodeCount,
+		}
+		key := modelCacheKey(modelID, quantKey, executionDType)
 		switch loadedModel.ModelType {
 		case loadedModelTypeLLM:
-			if variant != "" {
-				continue
-			}
-			llmSnapshot[modelID] = entry
+			llmSnapshot[key] = entry
 		case loadedModelTypeSD:
-			sdSnapshot[sdCacheKey(modelID, variant)] = entry
+			sdSnapshot[key] = entry
 		}
 	}
 
@@ -136,10 +195,21 @@ func RefreshLoadedModels(ctx context.Context) error {
 	return nil
 }
 
-func GetLoadedSDModel(modelID, variant string) (LoadedLLMModel, bool) {
+func GetLoadedSDModel(modelID string) (LoadedLLMModel, bool) {
 	sdModelsCache.mu.RLock()
 	defer sdModelsCache.mu.RUnlock()
-	model, ok := sdModelsCache.models[sdCacheKey(modelID, variant)]
+	return pickMaxMinVRAM(sdModelsCache.models, modelID)
+}
+
+func GetLoadedSDModelExact(modelID string, quantizationConfig any, executionDType string) (LoadedLLMModel, bool) {
+	quantKey, err := models.QuantizationConfigKey(quantizationConfig)
+	if err != nil {
+		return LoadedLLMModel{}, false
+	}
+	key := modelCacheKey(modelID, quantKey, executionDType)
+	sdModelsCache.mu.RLock()
+	defer sdModelsCache.mu.RUnlock()
+	model, ok := sdModelsCache.models[key]
 	return model, ok
 }
 
@@ -150,33 +220,54 @@ func ListLoadedSDModels() []LoadedLLMModel {
 		models = append(models, model)
 	}
 	sdModelsCache.mu.RUnlock()
-	sort.Slice(models, func(i, j int) bool {
-		if models[i].ModelID != models[j].ModelID {
-			return models[i].ModelID < models[j].ModelID
-		}
-		return models[i].Variant < models[j].Variant
-	})
+	sortLoadedModels(models)
 	return models
 }
 
-// GetLoadedLLMModel looks up a cached LLM model by model ID (case-insensitive).
+// GetLoadedLLMModel looks up cached LLM rows by model ID and returns the row
+// with the greatest min_vram (ties broken by quantization key then dtype).
 func GetLoadedLLMModel(modelID string) (LoadedLLMModel, bool) {
 	llmModelsCache.mu.RLock()
 	defer llmModelsCache.mu.RUnlock()
-	model, ok := llmModelsCache.models[strings.ToLower(modelID)]
+	return pickMaxMinVRAM(llmModelsCache.models, modelID)
+}
+
+func GetLoadedLLMModelExact(modelID string, quantizationConfig any, executionDType string) (LoadedLLMModel, bool) {
+	quantKey, err := models.QuantizationConfigKey(quantizationConfig)
+	if err != nil {
+		return LoadedLLMModel{}, false
+	}
+	key := modelCacheKey(modelID, quantKey, executionDType)
+	llmModelsCache.mu.RLock()
+	defer llmModelsCache.mu.RUnlock()
+	model, ok := llmModelsCache.models[key]
 	return model, ok
 }
 
-// GetCatalogLLMModel looks up an LLM model in the catalog snapshot by model ID
-// (case-insensitive). Models below the configured on-disk node threshold are absent.
+// GetCatalogLLMModel returns the catalog row for modelID with the greatest min_vram.
 func GetCatalogLLMModel(modelID string) (LoadedLLMModel, bool) {
 	llmModelsCache.mu.RLock()
 	defer llmModelsCache.mu.RUnlock()
-	model, ok := llmModelsCache.catalogModels[strings.ToLower(modelID)]
-	return model, ok
+	return pickMaxMinVRAM(llmModelsCache.catalogModels, modelID)
 }
 
-// ListLoadedLLMModels returns the catalog LLM models sorted by model ID.
+// ListCatalogLLMModelsByID returns every catalog LLM row for modelID.
+func ListCatalogLLMModelsByID(modelID string) []LoadedLLMModel {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	llmModelsCache.mu.RLock()
+	models := make([]LoadedLLMModel, 0)
+	for _, model := range llmModelsCache.catalogModels {
+		if model.ModelID == modelID {
+			models = append(models, model)
+		}
+	}
+	llmModelsCache.mu.RUnlock()
+	sortLoadedModels(models)
+	return models
+}
+
+// ListLoadedLLMModels returns the catalog LLM models sorted by model ID,
+// execution dtype, and quantization key.
 func ListLoadedLLMModels() []LoadedLLMModel {
 	llmModelsCache.mu.RLock()
 	models := make([]LoadedLLMModel, 0, len(llmModelsCache.catalogModels))
@@ -184,9 +275,19 @@ func ListLoadedLLMModels() []LoadedLLMModel {
 		models = append(models, model)
 	}
 	llmModelsCache.mu.RUnlock()
-
-	sort.Slice(models, func(i, j int) bool {
-		return models[i].ModelID < models[j].ModelID
-	})
+	sortLoadedModels(models)
 	return models
+}
+
+// QuantizationConfigForAPI returns a JSON value suitable for API responses.
+func QuantizationConfigForAPI(raw json.RawMessage) any {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	var parsed any
+	if err := json.Unmarshal(trimmed, &parsed); err != nil {
+		return nil
+	}
+	return parsed
 }

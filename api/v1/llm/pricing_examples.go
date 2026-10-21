@@ -2,6 +2,7 @@ package llm
 
 import (
 	"crynux_as/api/v1/response"
+	"crynux_as/relay"
 	"crynux_as/service"
 	"math"
 	"sort"
@@ -19,6 +20,8 @@ const (
 type PricingExampleRow struct {
 	Model                 string  `json:"model" description:"Selected model id"`
 	MinVRAM               uint64  `json:"min_vram" description:"Model minimum VRAM in GB"`
+	ExecutionDType        string  `json:"execution_dtype" description:"Selected execution dtype"`
+	QuantizationConfig    any     `json:"quantization_config" description:"Selected quantization_config"`
 	ConstantSeconds       float64 `json:"constant_seconds" description:"Relay constant seconds coefficient"`
 	SecondsPerInputToken  float64 `json:"seconds_per_input_token" description:"Relay seconds per input token"`
 	SecondsPerOutputToken float64 `json:"seconds_per_output_token" description:"Relay seconds per output token"`
@@ -41,13 +44,22 @@ func GetPricingExamples(c *gin.Context) (*GetPricingExamplesResponse, error) {
 	selected := selectPricingExampleModels(service.ListLoadedLLMModels())
 	examples := make([]PricingExampleRow, 0, len(selected))
 	for _, model := range selected {
-		coefficients, err := service.GetLLMExecutionTime(c.Request.Context(), model.ModelID, model.MinVRAM)
+		minVRAM := model.MinVRAM
+		query := relay.ExecutionTimeQuery{
+			Model:              model.ModelID,
+			Dtype:              model.ExecutionDType,
+			QuantizationConfig: service.QuantizationConfigForAPI(model.QuantizationConfig),
+			MinVRAM:            &minVRAM,
+		}
+		coefficients, err := service.GetLLMExecutionTimeForQuery(c.Request.Context(), query)
 		if err != nil {
 			return nil, err
 		}
 		examples = append(examples, PricingExampleRow{
 			Model:                 model.ModelID,
 			MinVRAM:               model.MinVRAM,
+			ExecutionDType:        model.ExecutionDType,
+			QuantizationConfig:    service.QuantizationConfigForAPI(model.QuantizationConfig),
 			ConstantSeconds:       coefficients.ConstantSeconds,
 			SecondsPerInputToken:  coefficients.SecondsPerInputToken,
 			SecondsPerOutputToken: coefficients.SecondsPerOutputToken,
@@ -74,7 +86,9 @@ func selectPricingExampleModels(models []service.LoadedLLMModel) []service.Loade
 		existing, ok := byVRAM[model.MinVRAM]
 		if !ok ||
 			model.NodeCount > existing.NodeCount ||
-			(model.NodeCount == existing.NodeCount && model.ModelID < existing.ModelID) {
+			(model.NodeCount == existing.NodeCount && model.ModelID < existing.ModelID) ||
+			(model.NodeCount == existing.NodeCount && model.ModelID == existing.ModelID && model.QuantizationKey < existing.QuantizationKey) ||
+			(model.NodeCount == existing.NodeCount && model.ModelID == existing.ModelID && model.QuantizationKey == existing.QuantizationKey && model.ExecutionDType < existing.ExecutionDType) {
 			byVRAM[model.MinVRAM] = model
 		}
 	}
