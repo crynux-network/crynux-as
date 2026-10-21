@@ -15,6 +15,7 @@ Implemented endpoints:
 * `POST /api/<endpoint_token>/v1/responses`
 * `GET /api/<endpoint_token>/v1/responses/<response_id>`
 * `POST /api/<endpoint_token>/v1/images/generations`
+* `POST /api/<endpoint_token>/v1/<vram_limit>/images/generations`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/responses`
@@ -31,7 +32,9 @@ Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Resp
 
 Creates one Image `task_jobs` row, waits for terminal settle, reads PNG files from `{llm.task_result_dir}/{task_jobs.id}/`, and returns an OpenAI Images response with `b64_json` values encoded from those files for the HTTP response only.
 
-AS MUST NOT expose `POST /images/edits`, `POST /images/variations`, streaming Images responses, or a `/:vram_limit/images/generations` path variant.
+The same create operation is also available at `POST /api/<endpoint_token>/v1/<vram_limit>/images/generations`. The path segment and body field `vram_limit` follow the VRAM Limit and Effective VRAM rules for Images.
+
+AS MUST NOT expose `POST /images/edits`, `POST /images/variations`, or streaming Images responses.
 
 Supported request fields:
 
@@ -45,8 +48,9 @@ Supported request fields:
 * `safety_identifier` and `user` (optional; accepted with no side effects)
 * `quantization_config` (optional; object or `null`; written into Image TaskArgs)
 * `components` (optional; object or `null`; written into Image TaskArgs)
+* `vram_limit` (optional; unsigned integer GB; see VRAM Limit and Effective VRAM)
 
-AS MUST reject unknown fields and the following values with HTTP 400 and the OpenAI invalid-request error shape: `response_format=url`; `output_format` other than `png`; `output_compression`; `background`; `moderation`; `style`; `stream=true`; `partial_images`; `dtype`; and Crynux Raw Task fields such as `steps`, `negative_prompt`, or `vram_limit`.
+AS MUST reject unknown fields and the following values with HTTP 400 and the OpenAI invalid-request error shape: `response_format=url`; `output_format` other than `png`; `output_compression`; `background`; `moderation`; `style`; `stream=true`; `partial_images`; `dtype`; and Crynux Raw Task fields such as `steps` or `negative_prompt`.
 
 `size` mapping:
 
@@ -60,9 +64,9 @@ AS MUST reject unknown fields and the following values with HTTP 400 and the Ope
 * omitted, `auto`, `medium`, or `standard` → `40`
 * `high`, `hd`, `xhigh`, or `max` → `50`
 
-AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. When the request includes `quantization_config`, AS MUST copy that value into TaskArgs and MUST NOT overwrite it from the Image loaded-models cache. When the request includes `components`, AS MUST copy that value into TaskArgs. AS MUST NOT accept client `dtype` on this endpoint; when an Image loaded-models row exists for the model, AS MUST write that row's `execution_dtype` into TaskArgs `dtype`. When the request omits `quantization_config`, AS MUST resolve default `min_vram` and `quantization_config` from the Image loaded-models cache using the same max-`min_vram` rules as Raw Image create. When the request supplies `quantization_config`, AS MUST prefer an exact Image loaded-models match on `(model, quantization_config)` for `min_vram`, and MUST fall back to the max-`min_vram` row for that model when no exact match exists. AS MUST estimate and settle Credits with the Image pixel-step rules in [credits-billing.md](./credits-billing.md) and [raw-task-api.md](./raw-task-api.md).
+AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. When the request includes `quantization_config`, AS MUST copy that value into TaskArgs and MUST NOT overwrite it from the Image loaded-models cache. When the request includes `components`, AS MUST copy that value into TaskArgs. AS MUST NOT accept client `dtype` on this endpoint; when an Image loaded-models row exists for the model, AS MUST write that row's `execution_dtype` into TaskArgs `dtype`. When the request omits `quantization_config`, AS MUST resolve default cache `min_vram` and `quantization_config` from the Image loaded-models cache using the same max-`min_vram` rules as Raw Image create. When the request supplies `quantization_config`, AS MUST prefer an exact Image loaded-models match on `(model, quantization_config)` for cache `min_vram`, and MUST fall back to the max-`min_vram` row for that model when no exact match exists. When the user specified a `vram_limit`, the effective VRAM MUST be the user value and MUST override that cache `min_vram`. When the user did not specify a `vram_limit`, the effective VRAM MUST be that cache `min_vram`, or `llm.default_vram_limit` when the cache misses. AS MUST estimate and settle Credits with the Image pixel-step rules in [credits-billing.md](./credits-billing.md) and [raw-task-api.md](./raw-task-api.md).
 
-Clients MAY send `quantization_config` and `components` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body.
+Clients MAY send `quantization_config`, `components`, and `vram_limit` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body.
 
 The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, `quality`, and `output_format`. The response MUST omit `url`, `revised_prompt`, `usage`, `background`, and `safety_identifier`. AS MUST NOT persist the response body, PNG bytes, or base64 strings on the job row.
 
@@ -260,21 +264,27 @@ The catalog snapshot used by `GET /models` MUST NOT be used as a create-time all
 
 ### User-specified `vram_limit`
 
-A chat, completions, or responses request specifies the VRAM limit in GB through either:
+A chat, completions, responses, or images generations request specifies the VRAM limit in GB through either:
 
-1. The URL path segment `<vram_limit>` (`POST .../v1/<vram_limit>/chat/completions`, `POST .../v1/<vram_limit>/completions`, or `POST .../v1/<vram_limit>/responses`).
+1. The URL path segment `<vram_limit>` (`POST .../v1/<vram_limit>/chat/completions`, `POST .../v1/<vram_limit>/completions`, `POST .../v1/<vram_limit>/responses`, or `POST .../v1/<vram_limit>/images/generations`).
 2. The body field `vram_limit` (unsigned integer).
 
 The path value MUST override the body value. A non-integer path value MUST be rejected with HTTP 400. When neither is set, the user has not specified a VRAM limit.
 
 ### Effective VRAM Resolution
 
-The effective VRAM of a request MUST be resolved as:
+For chat, completions, and responses, the effective VRAM of a request MUST be resolved as:
 
 1. When the user specified a `vram_limit`, the effective VRAM is the user value. A user value lower than the cached `min_vram` of a known model MUST be accepted.
 2. When the user did not specify a `vram_limit` and the request includes `quantization_config` and/or `dtype` that exact-match a full-cache row for the model, the effective VRAM is that row's `min_vram`.
 3. When the user did not specify a `vram_limit` and the model has one or more rows in the full loaded-models cache without an exact match above, the effective VRAM is the greatest `min_vram` among those rows. Ties MUST break by canonical `quantization_config` ascending, then `execution_dtype` ascending.
 4. When the user did not specify a `vram_limit` and the model is not in the cache, the effective VRAM is `llm.default_vram_limit`.
+
+For images generations, the effective VRAM MUST be resolved as:
+
+1. When the user specified a `vram_limit`, the effective VRAM is the user value. A user value lower than the Image loaded-models cache `min_vram` MUST be accepted.
+2. When the user did not specify a `vram_limit`, the effective VRAM is the Image loaded-models cache `min_vram` selected by the Images Generations rules above (exact `(model, quantization_config)` match when the request supplies `quantization_config`, otherwise the max-`min_vram` row for the model).
+3. When the user did not specify a `vram_limit` and the model is not in the Image loaded-models cache, the effective VRAM is `llm.default_vram_limit`.
 
 The model lookup MUST be case-insensitive. The effective VRAM is used for `vram_weight`, Relay execution-time selection (`min_vram`), and Bridge raw task `min_vram`.
 

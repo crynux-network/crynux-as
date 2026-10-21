@@ -88,6 +88,7 @@ Each project exposes the following endpoints under its private base URL:
 * `POST /api/<endpoint_token>/v1/chat/completions`
 * `POST /api/<endpoint_token>/v1/completions`
 * `POST /api/<endpoint_token>/v1/images/generations`
+* `POST /api/<endpoint_token>/v1/<vram_limit>/images/generations`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/responses`

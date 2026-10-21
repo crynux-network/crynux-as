@@ -36,6 +36,7 @@ var imagesAllowedFields = map[string]struct{}{
 	"user":                {},
 	"quantization_config": {},
 	"components":          {},
+	"vram_limit":          {},
 }
 
 var imagesNamedSizes = map[string][2]int{
@@ -68,6 +69,7 @@ type ImagesGenerationsRequest struct {
 	HasQuantizationConfig bool
 	Components            any
 	HasComponents         bool
+	VramLimit             *uint64
 }
 
 type ImagesGenerationsResponse struct {
@@ -227,6 +229,15 @@ func ParseImagesGenerationsRequest(body []byte) (ImagesGenerationsRequest, error
 		return ImagesGenerationsRequest{}, err
 	}
 
+	var vramLimit *uint64
+	if value, ok := raw["vram_limit"]; ok && !isJSONNull(value) {
+		var parsed uint64
+		if err := json.Unmarshal(value, &parsed); err != nil {
+			return ImagesGenerationsRequest{}, newValidationError("vram_limit", "must be an unsigned integer")
+		}
+		vramLimit = &parsed
+	}
+
 	return ImagesGenerationsRequest{
 		Prompt:                prompt,
 		Model:                 model,
@@ -247,6 +258,7 @@ func ParseImagesGenerationsRequest(body []byte) (ImagesGenerationsRequest, error
 		HasQuantizationConfig: hasQuantizationConfig,
 		Components:            components,
 		HasComponents:         hasComponents,
+		VramLimit:             vramLimit,
 	}, nil
 }
 

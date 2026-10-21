@@ -62,6 +62,42 @@ func TestParseImagesGenerationsRequestRejectsUnsupported(t *testing.T) {
 	}
 }
 
+func TestParseImagesGenerationsRequestVramLimit(t *testing.T) {
+	req, err := ParseImagesGenerationsRequest([]byte(`{
+		"model": "org/model",
+		"prompt": "hi",
+		"vram_limit": 24
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.VramLimit == nil || *req.VramLimit != 24 {
+		t.Fatalf("vram_limit = %v", req.VramLimit)
+	}
+
+	req, err = ParseImagesGenerationsRequest([]byte(`{
+		"model": "org/model",
+		"prompt": "hi",
+		"vram_limit": null
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.VramLimit != nil {
+		t.Fatalf("null vram_limit = %v", req.VramLimit)
+	}
+
+	for _, body := range []string{
+		`{"model":"org/m","prompt":"a","vram_limit":"24"}`,
+		`{"model":"org/m","prompt":"a","vram_limit":-1}`,
+		`{"model":"org/m","prompt":"a","vram_limit":24.5}`,
+	} {
+		if _, err := ParseImagesGenerationsRequest([]byte(body)); err == nil {
+			t.Fatalf("expected error for %s", body)
+		}
+	}
+}
+
 func TestParseAndBuildImagesGenerationsQuantAndComponents(t *testing.T) {
 	req, err := ParseImagesGenerationsRequest([]byte(`{
 		"model": "Qwen/Qwen-Image-2.1",

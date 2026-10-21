@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"crynux_as/api/llm/vramlimit"
 	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
@@ -56,6 +57,15 @@ func ImagesGenerations(c *gin.Context) {
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
 		return
+	}
+	userVram, err := vramlimit.ResolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
+	if err != nil {
+		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if userVram != nil {
+		billedVram = *userVram
 	}
 	if validationErr, err := models.ValidateTaskArgsJsonStr(taskArgsJSON, models.TaskTypeImage); err != nil {
 		log.Errorf("Validate image task args for project %d failed: %v", project.ID, err)
