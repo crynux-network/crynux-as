@@ -51,11 +51,58 @@ func TestParseImagesGenerationsRequestRejectsUnsupported(t *testing.T) {
 		`{"model":"org/m","prompt":"a","background":"auto"}`,
 		`{"model":"org/m","prompt":"a","partial_images":1}`,
 		`{"model":"org/m","prompt":"a","size":"100x100"}`,
+		`{"model":"org/m","prompt":"a","dtype":"bfloat16"}`,
+		`{"model":"org/m","prompt":"a","quantization_config":"bitsandbytes"}`,
+		`{"model":"org/m","prompt":"a","components":[]}`,
 	}
 	for _, body := range cases {
 		if _, err := ParseImagesGenerationsRequest([]byte(body)); err == nil {
 			t.Fatalf("expected error for %s", body)
 		}
+	}
+}
+
+func TestParseAndBuildImagesGenerationsQuantAndComponents(t *testing.T) {
+	req, err := ParseImagesGenerationsRequest([]byte(`{
+		"model": "Qwen/Qwen-Image-2.1",
+		"prompt": "a cat",
+		"quantization_config": {
+			"quant_method": "bitsandbytes",
+			"components_to_quantize": ["text_encoder"],
+			"quant_kwargs": {"load_in_8bit": true}
+		},
+		"components": {
+			"transformer": {
+				"format": "gguf",
+				"repo": "abenzerps/Qwen-Image-2.1-Uncensored-Quantized",
+				"format_kwargs": {"filename": "qwen-image-2.1-UC-Q4_K_M.gguf"}
+			}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !req.HasQuantizationConfig || !req.HasComponents {
+		t.Fatalf("flags = quant=%v components=%v", req.HasQuantizationConfig, req.HasComponents)
+	}
+	taskArgs, err := BuildImagesGenerationsTaskArgs(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(taskArgs), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["quantization_config"] == nil {
+		t.Fatalf("missing quantization_config in %s", taskArgs)
+	}
+	components, ok := payload["components"].(map[string]any)
+	if !ok {
+		t.Fatalf("components missing in %s", taskArgs)
+	}
+	transformer, ok := components["transformer"].(map[string]any)
+	if !ok || transformer["repo"] != "abenzerps/Qwen-Image-2.1-Uncensored-Quantized" {
+		t.Fatalf("transformer = %#v", components["transformer"])
 	}
 }
 

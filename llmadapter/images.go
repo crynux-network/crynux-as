@@ -19,21 +19,23 @@ const (
 )
 
 var imagesAllowedFields = map[string]struct{}{
-	"prompt":            {},
-	"model":             {},
-	"n":                 {},
-	"size":              {},
-	"quality":           {},
-	"response_format":   {},
-	"output_format":     {},
-	"output_compression": {},
-	"background":        {},
-	"moderation":        {},
-	"style":             {},
-	"stream":            {},
-	"partial_images":    {},
-	"safety_identifier": {},
-	"user":              {},
+	"prompt":              {},
+	"model":               {},
+	"n":                   {},
+	"size":                {},
+	"quality":             {},
+	"response_format":     {},
+	"output_format":       {},
+	"output_compression":  {},
+	"background":          {},
+	"moderation":          {},
+	"style":               {},
+	"stream":              {},
+	"partial_images":      {},
+	"safety_identifier":   {},
+	"user":                {},
+	"quantization_config": {},
+	"components":          {},
 }
 
 var imagesNamedSizes = map[string][2]int{
@@ -47,21 +49,25 @@ var imagesNamedSizes = map[string][2]int{
 }
 
 type ImagesGenerationsRequest struct {
-	Prompt            string
-	Model             string
-	N                 int
-	Size              string
-	Quality           string
-	ResponseFormat    string
-	OutputFormat      string
-	SafetyIdentifier  string
-	User              string
-	Width             int
-	Height            int
-	Steps             int
-	EchoSize          string
-	EchoQuality       string
-	EchoOutputFormat  string
+	Prompt                string
+	Model                 string
+	N                     int
+	Size                  string
+	Quality               string
+	ResponseFormat        string
+	OutputFormat          string
+	SafetyIdentifier      string
+	User                  string
+	Width                 int
+	Height                int
+	Steps                 int
+	EchoSize              string
+	EchoQuality           string
+	EchoOutputFormat      string
+	QuantizationConfig    any
+	HasQuantizationConfig bool
+	Components            any
+	HasComponents         bool
 }
 
 type ImagesGenerationsResponse struct {
@@ -212,23 +218,54 @@ func ParseImagesGenerationsRequest(body []byte) (ImagesGenerationsRequest, error
 		return ImagesGenerationsRequest{}, err
 	}
 
+	quantizationConfig, hasQuantizationConfig, err := getObjectOrNull("quantization_config", raw)
+	if err != nil {
+		return ImagesGenerationsRequest{}, err
+	}
+	components, hasComponents, err := getObjectOrNull("components", raw)
+	if err != nil {
+		return ImagesGenerationsRequest{}, err
+	}
+
 	return ImagesGenerationsRequest{
-		Prompt:           prompt,
-		Model:            model,
-		N:                n,
-		Size:             size,
-		Quality:          quality,
-		ResponseFormat:   responseFormat,
-		OutputFormat:     outputFormat,
-		SafetyIdentifier: safetyIdentifier,
-		User:             user,
-		Width:            width,
-		Height:           height,
-		Steps:            steps,
-		EchoSize:         echoSize,
-		EchoQuality:      echoQuality,
-		EchoOutputFormat: outputFormat,
+		Prompt:                prompt,
+		Model:                 model,
+		N:                     n,
+		Size:                  size,
+		Quality:               quality,
+		ResponseFormat:        responseFormat,
+		OutputFormat:          outputFormat,
+		SafetyIdentifier:      safetyIdentifier,
+		User:                  user,
+		Width:                 width,
+		Height:                height,
+		Steps:                 steps,
+		EchoSize:              echoSize,
+		EchoQuality:           echoQuality,
+		EchoOutputFormat:      outputFormat,
+		QuantizationConfig:    quantizationConfig,
+		HasQuantizationConfig: hasQuantizationConfig,
+		Components:            components,
+		HasComponents:         hasComponents,
 	}, nil
+}
+
+func getObjectOrNull(field string, raw map[string]json.RawMessage) (any, bool, error) {
+	value, ok := raw[field]
+	if !ok {
+		return nil, false, nil
+	}
+	if isJSONNull(value) {
+		return nil, true, nil
+	}
+	var parsed any
+	if err := json.Unmarshal(value, &parsed); err != nil {
+		return nil, false, newValidationError(field, "must be an object or null")
+	}
+	if _, isObject := parsed.(map[string]any); !isObject {
+		return nil, false, newValidationError(field, "must be an object or null")
+	}
+	return parsed, true, nil
 }
 
 func parseImagesSize(size string) (width, height int, echo string, err error) {
@@ -299,6 +336,12 @@ func BuildImagesGenerationsTaskArgs(req ImagesGenerationsRequest) (string, error
 			"steps":                 req.Steps,
 			"num_images_per_prompt": req.N,
 		},
+	}
+	if req.HasQuantizationConfig {
+		payload["quantization_config"] = req.QuantizationConfig
+	}
+	if req.HasComponents {
+		payload["components"] = req.Components
 	}
 	out, err := json.Marshal(payload)
 	if err != nil {

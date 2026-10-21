@@ -31,7 +31,7 @@ Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Resp
 
 Creates one Image `task_jobs` row, waits for terminal settle, reads PNG files from `{llm.task_result_dir}/{task_jobs.id}/`, and returns an OpenAI Images response with `b64_json` values encoded from those files for the HTTP response only.
 
-AS MUST NOT expose `POST /images/edits`, `POST /images/variations`, streaming Images responses, or Crynux-only request fields on this endpoint. AS MUST NOT accept a `/:vram_limit/images/generations` path variant.
+AS MUST NOT expose `POST /images/edits`, `POST /images/variations`, streaming Images responses, or a `/:vram_limit/images/generations` path variant.
 
 Supported request fields:
 
@@ -43,8 +43,10 @@ Supported request fields:
 * `response_format` (optional; only `b64_json` or omitted)
 * `output_format` (optional; only `png` or omitted)
 * `safety_identifier` and `user` (optional; accepted with no side effects)
+* `quantization_config` (optional; object or `null`; written into Image TaskArgs)
+* `components` (optional; object or `null`; written into Image TaskArgs)
 
-AS MUST reject unknown fields and the following values with HTTP 400 and the OpenAI invalid-request error shape: `response_format=url`; `output_format` other than `png`; `output_compression`; `background`; `moderation`; `style`; `stream=true`; `partial_images`; and any Crynux Raw Task fields such as `steps`, `negative_prompt`, `dtype`, `quantization_config`, or `vram_limit`.
+AS MUST reject unknown fields and the following values with HTTP 400 and the OpenAI invalid-request error shape: `response_format=url`; `output_format` other than `png`; `output_compression`; `background`; `moderation`; `style`; `stream=true`; `partial_images`; `dtype`; and Crynux Raw Task fields such as `steps`, `negative_prompt`, or `vram_limit`.
 
 `size` mapping:
 
@@ -58,7 +60,9 @@ AS MUST reject unknown fields and the following values with HTTP 400 and the Ope
 * omitted, `auto`, `medium`, or `standard` → `40`
 * `high`, `hd`, `xhigh`, or `max` → `50`
 
-AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. AS MUST resolve default `min_vram`, `dtype`, and `quantization_config` from the Image loaded-models cache using the same rules as Raw Image create when those fields are omitted from TaskArgs. AS MUST estimate and settle Credits with the Image pixel-step rules in [credits-billing.md](./credits-billing.md) and [raw-task-api.md](./raw-task-api.md).
+AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. When the request includes `quantization_config`, AS MUST copy that value into TaskArgs and MUST NOT overwrite it from the Image loaded-models cache. When the request includes `components`, AS MUST copy that value into TaskArgs. AS MUST NOT accept client `dtype` on this endpoint; when an Image loaded-models row exists for the model, AS MUST write that row's `execution_dtype` into TaskArgs `dtype`. When the request omits `quantization_config`, AS MUST resolve default `min_vram` and `quantization_config` from the Image loaded-models cache using the same max-`min_vram` rules as Raw Image create. When the request supplies `quantization_config`, AS MUST prefer an exact Image loaded-models match on `(model, quantization_config)` for `min_vram`, and MUST fall back to the max-`min_vram` row for that model when no exact match exists. AS MUST estimate and settle Credits with the Image pixel-step rules in [credits-billing.md](./credits-billing.md) and [raw-task-api.md](./raw-task-api.md).
+
+Clients MAY send `quantization_config` and `components` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body.
 
 The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, `quality`, and `output_format`. The response MUST omit `url`, `revised_prompt`, `usage`, `background`, and `safety_identifier`. AS MUST NOT persist the response body, PNG bytes, or base64 strings on the job row.
 

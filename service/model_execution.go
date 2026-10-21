@@ -159,14 +159,36 @@ func ResolveImageDefaultMinVRAM(modelID string) (uint64, bool) {
 }
 
 // ApplyImageExecutionToTaskArgsJSON sets version and optional cache dtype/quantization on Image TaskArgs.
+// Client-supplied quantization_config and components are preserved. dtype is always taken from cache when present.
 func ApplyImageExecutionToTaskArgsJSON(taskArgsJSON string, modelID string) (string, uint64, error) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
 		return "", 0, err
 	}
 	payload["version"] = models.GPTTaskArgsVersion
+	modelID = llmadapter.NormalizeModelID(modelID)
 	minVRAM := config.GetConfig().LLM.DefaultVramLimit
-	if loaded, ok := GetLoadedSDModel(modelID); ok {
+
+	_, hasUserQuant := payload["quantization_config"]
+	userQuant := payload["quantization_config"]
+
+	if hasUserQuant {
+		if loaded, ok := lookupSDExactOrMax(modelID, userQuant); ok {
+			if loaded.MinVRAM > 0 {
+				minVRAM = loaded.MinVRAM
+			}
+			if dtype := strings.TrimSpace(loaded.ExecutionDType); dtype != "" {
+				payload["dtype"] = strings.ToLower(dtype)
+			}
+		} else if loaded, ok := GetLoadedSDModel(modelID); ok {
+			if loaded.MinVRAM > 0 {
+				minVRAM = loaded.MinVRAM
+			}
+			if dtype := strings.TrimSpace(loaded.ExecutionDType); dtype != "" {
+				payload["dtype"] = strings.ToLower(dtype)
+			}
+		}
+	} else if loaded, ok := GetLoadedSDModel(modelID); ok {
 		if loaded.MinVRAM > 0 {
 			minVRAM = loaded.MinVRAM
 		}
@@ -177,9 +199,31 @@ func ApplyImageExecutionToTaskArgsJSON(taskArgsJSON string, modelID string) (str
 	} else {
 		payload["quantization_config"] = nil
 	}
+
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return "", 0, err
 	}
 	return string(out), minVRAM, nil
+}
+
+func lookupSDExactOrMax(modelID string, quant any) (LoadedLLMModel, bool) {
+	quantKey, err := models.QuantizationConfigKey(quant)
+	if err != nil {
+		return LoadedLLMModel{}, false
+	}
+	sdModelsCache.mu.RLock()
+	defer sdModelsCache.mu.RUnlock()
+	var best LoadedLLMModel
+	found := false
+	for _, model := range sdModelsCache.models {
+		if model.ModelID != modelID || model.QuantizationKey != quantKey {
+			continue
+		}
+		if !found || betterMaxMinVRAM(model, best) {
+			best = model
+			found = true
+		}
+	}
+	return best, found
 }
