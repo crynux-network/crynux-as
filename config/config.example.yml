@@ -79,6 +79,7 @@ llm:
   max_task_price_cnx: "0.001"
   job_submit_timeout: 600
   job_retention_days: 30
+  task_result_dir: "data/task_results"
   project_recent_requests_limit: 50
 usage_stats:
   recent_failure_window_seconds: 3600

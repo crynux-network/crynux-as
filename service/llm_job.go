@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"time"
 
+	log "github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -545,7 +546,7 @@ func DeleteExpiredTerminalTaskJobs(ctx context.Context, db *gorm.DB, retentionDa
 	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	var deleted int
+	var deletedIDs []uint
 	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
 		var ids []uint
 		selectBatch := func(status models.TaskJobStatus, billing models.TaskJobBillingStatus) error {
@@ -580,10 +581,18 @@ func DeleteExpiredTerminalTaskJobs(ctx context.Context, db *gorm.DB, retentionDa
 		if result.Error != nil {
 			return result.Error
 		}
-		deleted = int(result.RowsAffected)
+		deletedIDs = ids
 		return nil
 	})
-	return deleted, err
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range deletedIDs {
+		if removeErr := DeleteTaskResultJobDir(id); removeErr != nil {
+			log.Errorf("delete task result dir for job %d failed: %v", id, removeErr)
+		}
+	}
+	return len(deletedIDs), nil
 }
 
 // RunTaskJobRetentionCleanup repeatedly deletes expired terminal jobs until a

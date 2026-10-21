@@ -92,6 +92,7 @@ type AppConfig struct {
 		MaxTaskPriceCNX               string `mapstructure:"max_task_price_cnx"`
 		JobSubmitTimeout              uint64 `mapstructure:"job_submit_timeout"`
 		JobRetentionDays              uint64 `mapstructure:"job_retention_days"`
+		TaskResultDir                 string `mapstructure:"task_result_dir"`
 		ProjectRecentRequestsLimit    uint64 `mapstructure:"project_recent_requests_limit"`
 	} `mapstructure:"llm"`
 

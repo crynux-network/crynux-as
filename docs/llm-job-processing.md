@@ -14,7 +14,7 @@ Each row MUST contain:
 * task type, API type, model, hardware selection, and canonical `TaskArgsJSON`
 * Bridge client task ID when submitted
 * execution status and billing status
-* raw result JSON and formatted result JSON when available
+* raw result JSON and formatted result JSON when available for LLM OpenAI-compatible jobs
 * versioned `billing_data` with common `priority_gwei`, billed VRAM, and `task_fee_wei`; LLM token-settlement coefficients or the fixed Image settlement Credits; optional audit field `locked_credits`
 * `credits_locked` and `credits_lock_status` (`none`, `held`, or `released`) for the create-time Credits soft lock
 * optional Responses public ID
@@ -23,11 +23,14 @@ Each row MUST contain:
 
 `task_jobs` MUST NOT be the permanent store of billed token counts. Final prompt, completion, and total token counts MUST live only on `task_call_records`. Unlock of a Credits hold MUST use `credits_lock_status` and `credits_locked`, not `billing_data.locked_credits`.
 
+Image jobs MUST store successful PNG results only under `{llm.task_result_dir}/{task_jobs.id}/{index}.png`. The worker MUST download every expected image index from Bridge into that directory before the success settle transaction. Image jobs MUST NOT write PNG bytes or base64 image payloads into `raw_result_json`, `formatted_result_json`, or any other MySQL column. The result directory path MUST be derived from `task_jobs.id` and MUST NOT be stored as a database column.
+
 Retention:
 
 * Terminal jobs with status `completed` and billing status `billed`, or status `failed` and billing status `not_billed`, and with a non-null `task_call_record_id`, MUST be deleted when `completed_at` is older than `llm.job_retention_days`.
 * Non-terminal jobs, terminal jobs without a call record, and jobs still pending billing MUST NOT be deleted.
-* The retention cleanup worker MUST select a bounded batch of candidate IDs through the terminal cleanup index, delete only that batch in one transaction, and repeat until a batch deletes fewer than the batch size.
+* The retention cleanup worker MUST select a bounded batch of candidate IDs through the terminal cleanup index, delete only that batch of `task_jobs` rows in one transaction, then delete each corresponding `{llm.task_result_dir}/{id}` directory when present, and repeat until a batch deletes fewer than the batch size.
+* Retention cleanup MUST NOT delete `task_call_records`, `credit_events`, or `credit_accounts` rows.
 
 ### `task_call_records`
 

@@ -200,9 +200,9 @@ func downloadResult(c *gin.Context, expectedType models.TaskType, index uint64) 
 		writeError(c, http.StatusConflict, "task is not successful")
 		return
 	}
-	cfg := config.GetConfig()
-	client := bridge.NewRawTaskClient(cfg.Bridge.BaseURL, cfg.Bridge.APIKey)
 	if expectedType == models.TaskTypeLLM {
+		cfg := config.GetConfig()
+		client := bridge.NewRawTaskClient(cfg.Bridge.BaseURL, cfg.Bridge.APIKey)
 		body, err := client.DownloadLLMResult(c.Request.Context(), *job.BridgeClientTaskID)
 		if err != nil {
 			writeInternalError(c, err)
@@ -212,17 +212,13 @@ func downloadResult(c *gin.Context, expectedType models.TaskType, index uint64) 
 		c.Data(http.StatusOK, "application/json", body)
 		return
 	}
-	result, err := client.DownloadImageResult(c.Request.Context(), *job.BridgeClientTaskID, index)
+	body, err := service.ReadImageResultPNG(job.ID, index)
 	if err != nil {
 		writeInternalError(c, err)
 		return
 	}
-	disposition := result.ContentDisposition
-	if disposition == "" {
-		disposition = fmt.Sprintf("attachment; filename=%d.png", index)
-	}
-	c.Header("Content-Disposition", disposition)
-	c.Data(http.StatusOK, "image/png", result.Body)
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%d.png", index))
+	c.Data(http.StatusOK, "image/png", body)
 }
 
 func prepareTask(ctx context.Context, project *models.Project, request CreateTaskRequest) (*preparedTask, error) {

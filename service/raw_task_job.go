@@ -14,6 +14,7 @@ import (
 type CreateRawTaskJobInput struct {
 	Project         *models.Project
 	TaskType        models.TaskType
+	APIType         models.TaskAPIType
 	Model           string
 	TaskArgsJSON    string
 	TaskVersion     *string
@@ -75,7 +76,7 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 		UserID:            in.Project.UserID,
 		PriorityGwei:      models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
 		TaskType:          in.TaskType,
-		APIType:           models.TaskAPITypeRaw,
+		APIType:           in.APIType,
 		Model:             in.Model,
 		BilledVram:        in.BilledVram,
 		TaskArgsJSON:      in.TaskArgsJSON,

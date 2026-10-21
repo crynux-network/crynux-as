@@ -276,6 +276,9 @@ func completeSuccessfulTaskJob(
 	job *models.TaskJob,
 ) error {
 	if job.TaskType == models.TaskTypeImage {
+		if err := downloadImageResultsToDisk(ctx, client, job); err != nil {
+			return fmt.Errorf("download image results: %w", err)
+		}
 		_, err := CompleteAndSettleImageTaskJob(ctx, db, job)
 		return err
 	}
@@ -369,6 +372,25 @@ func responsesObjectParamsFromJob(job *models.TaskJob, status string) llmadapter
 func failTaskJobWithRecord(ctx context.Context, db *gorm.DB, job *models.TaskJob, message string) error {
 	_, err := FailAndRecordTaskJob(ctx, db, job, message)
 	return err
+}
+
+func downloadImageResultsToDisk(ctx context.Context, client *bridge.RawTaskClient, job *models.TaskJob) error {
+	if job == nil || job.BridgeClientTaskID == nil {
+		return errors.New("bridge client task id is required")
+	}
+	count, err := ImageCountFromTaskArgs(job.TaskArgsJSON)
+	if err != nil {
+		return err
+	}
+	images := make(map[uint64][]byte, count)
+	for index := uint64(0); index < count; index++ {
+		result, err := client.DownloadImageResult(ctx, *job.BridgeClientTaskID, index)
+		if err != nil {
+			return fmt.Errorf("bridge image %d: %w", index, err)
+		}
+		images[index] = result.Body
+	}
+	return SaveImageResultPNGs(job.ID, images)
 }
 
 func loadProjectByID(ctx context.Context, db *gorm.DB, projectID uint) (*models.Project, error) {

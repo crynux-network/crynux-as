@@ -236,6 +236,9 @@ func checkLLMConfig() error {
 	if appConfig.LLM.JobRetentionDays == 0 {
 		return errors.New("llm.job_retention_days is not set")
 	}
+	if strings.TrimSpace(appConfig.LLM.TaskResultDir) == "" {
+		return errors.New("llm.task_result_dir is not set")
+	}
 	if appConfig.LLM.ProjectRecentRequestsLimit == 0 {
 		return errors.New("llm.project_recent_requests_limit is not set")
 	}

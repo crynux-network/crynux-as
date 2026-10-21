@@ -14,15 +14,53 @@ Implemented endpoints:
 * `POST /api/<endpoint_token>/v1/completions`
 * `POST /api/<endpoint_token>/v1/responses`
 * `GET /api/<endpoint_token>/v1/responses/<response_id>`
+* `POST /api/<endpoint_token>/v1/images/generations`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/responses`
 * `GET /api/<endpoint_token>/v1/models`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
-The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields.
+The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields. The Images generations request and response formats MUST be OpenAI-compatible for the supported fields specified in **Images Generations API**.
 
 Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. Chat Completions, Completions, and Responses MUST accept optional `dtype` and `quantization_config` body fields used to select a loaded-models row and to populate canonical TaskArgs. AS MUST map those public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
+
+## Images Generations API
+
+### `POST /api/<endpoint_token>/v1/images/generations`
+
+Creates one Image `task_jobs` row, waits for terminal settle, reads PNG files from `{llm.task_result_dir}/{task_jobs.id}/`, and returns an OpenAI Images response with `b64_json` values encoded from those files for the HTTP response only.
+
+AS MUST NOT expose `POST /images/edits`, `POST /images/variations`, streaming Images responses, or Crynux-only request fields on this endpoint. AS MUST NOT accept a `/:vram_limit/images/generations` path variant.
+
+Supported request fields:
+
+* `prompt` (required; maximum 32000 characters)
+* `model` (required; Hugging Face SD model id; normalized with trim and lowercase)
+* `n` (optional; 1–10; default 1)
+* `size` (optional; `auto`, a named size, or `WIDTHxHEIGHT`)
+* `quality` (optional; maps to internal denoising steps)
+* `response_format` (optional; only `b64_json` or omitted)
+* `output_format` (optional; only `png` or omitted)
+* `safety_identifier` and `user` (optional; accepted with no side effects)
+
+AS MUST reject unknown fields and the following values with HTTP 400 and the OpenAI invalid-request error shape: `response_format=url`; `output_format` other than `png`; `output_compression`; `background`; `moderation`; `style`; `stream=true`; `partial_images`; and any Crynux Raw Task fields such as `steps`, `negative_prompt`, `dtype`, `quantization_config`, or `vram_limit`.
+
+`size` mapping:
+
+* omitted or `auto` MUST become `1024x1024`
+* named sizes MUST accept `256x256`, `512x512`, `1024x1024`, `1024x1536`, `1536x1024`, `1792x1024`, and `1024x1792`
+* arbitrary `WIDTHxHEIGHT` MUST require positive integers divisible by 8, aspect ratio in `[1/3, 3]`, each edge at most `3840`, and pixel count at most `3840 * 2160`
+
+`quality` mapping to Image TaskArgs `task_config.steps`:
+
+* `low` → `20`
+* omitted, `auto`, `medium`, or `standard` → `40`
+* `high`, `hd`, `xhigh`, or `max` → `50`
+
+AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. AS MUST resolve default `min_vram`, `dtype`, and `quantization_config` from the Image loaded-models cache using the same rules as Raw Image create when those fields are omitted from TaskArgs. AS MUST estimate and settle Credits with the Image pixel-step rules in [credits-billing.md](./credits-billing.md) and [raw-task-api.md](./raw-task-api.md).
+
+The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, `quality`, and `output_format`. The response MUST omit `url`, `revised_prompt`, `usage`, `background`, and `safety_identifier`. AS MUST NOT persist the response body, PNG bytes, or base64 strings on the job row.
 
 ## Responses API
 
@@ -310,6 +348,7 @@ llm:
   max_task_price_cnx: "0.001"
   job_submit_timeout: 600
   job_retention_days: 30
+  task_result_dir: "data/task_results"
   project_recent_requests_limit: 50
 ```
 
@@ -326,7 +365,8 @@ llm:
 * `credits_per_gwei` is specified in [credits-billing.md](./credits-billing.md). It MUST be a positive decimal string.
 * `max_task_price_cnx` is specified in [credits-billing.md](./credits-billing.md). It MUST be a positive decimal string in CNX units. Configuration loading MUST fail when it is missing, non-positive, or does not convert to a positive Gwei amount. Every YAML configuration template MUST set it.
 * `job_submit_timeout` is the maximum age in seconds of a `pending_submit` LLM job before the worker stops Bridge submit retries and marks the job failed. Every YAML configuration template MUST set it to a positive integer.
-* `job_retention_days` is the number of days a terminal settled job remains readable for Responses lookup and `previous_response_id`. Every YAML configuration template MUST set it to a positive integer. Example configurations MUST use `30`.
+* `job_retention_days` is the number of days a terminal settled job remains readable for Responses lookup and `previous_response_id`. Every YAML configuration template MUST set it to a positive integer. Example configurations MUST use `30`. After that window, retention cleanup MUST delete the `task_jobs` row and the matching `{task_result_dir}/{id}` directory when present, and MUST NOT delete `task_call_records`, `credit_events`, or `credit_accounts`.
+* `task_result_dir` is the local directory root for Image task PNG files at `{task_result_dir}/{task_jobs.id}/{index}.png`. Every YAML configuration template MUST set it to a non-empty path. Example configurations MUST use `data/task_results`. Configuration loading MUST fail when it is missing or empty.
 * `project_recent_requests_limit` is the maximum number of Recent Requests rows returned for a project. Every YAML configuration template MUST set it to a positive integer.
 
 Configuration loading MUST fail when any required LLM configuration value is zero or missing, including the Credits and Cost Level bound fields required by [credits-billing.md](./credits-billing.md). Configuration MUST NOT include `reference_priority_gwei` or `max_token_ratio`.

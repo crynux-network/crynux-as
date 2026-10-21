@@ -78,9 +78,9 @@ The batch path MUST reserve each accepted item's estimated Credits in request or
 
 An LLM result request MUST succeed only for a successful LLM job owned by the authenticated project. AS MUST proxy the authenticated Bridge JSON result and return `Content-Type: application/json`.
 
-An Image result request MUST succeed only for a successful Image job owned by the authenticated project. AS MUST proxy the selected authenticated Bridge result and return `Content-Type: image/png` with a download `Content-Disposition`.
+An Image result request MUST succeed only for a successful Image job owned by the authenticated project. AS MUST read the PNG from the local task result directory at `{llm.task_result_dir}/{task_jobs.id}/{index}.png` and return `Content-Type: image/png` with a download `Content-Disposition`. A missing local file for a completed Image job MUST return HTTP 500.
 
-Image bytes MUST NOT be stored in MySQL. OpenAI-formatted results MAY remain on retained OpenAI jobs. Raw LLM clients MUST receive the raw Bridge JSON result.
+Image PNG bytes MUST be stored only on the local filesystem under `llm.task_result_dir`. Image PNG bytes, base64 encodings, and result directory paths MUST NOT be stored in MySQL. OpenAI Images API responses MUST encode PNG files from disk into the HTTP response body and MUST NOT persist that encoded body on the job row. Raw LLM clients MUST receive the raw Bridge JSON result.
 
 ## Models
 

@@ -54,6 +54,7 @@ llm:
   max_task_price_cnx: "0.001"
   job_submit_timeout: 600
   job_retention_days: 30
+  task_result_dir: "data/task_results"
 ```
 
 Configuration loading MUST fail when any of these values is missing or invalid:

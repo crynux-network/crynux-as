@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"encoding/json"
@@ -155,4 +156,30 @@ func ResolveImageDefaultMinVRAM(modelID string) (uint64, bool) {
 		return 0, false
 	}
 	return loaded.MinVRAM, true
+}
+
+// ApplyImageExecutionToTaskArgsJSON sets version and optional cache dtype/quantization on Image TaskArgs.
+func ApplyImageExecutionToTaskArgsJSON(taskArgsJSON string, modelID string) (string, uint64, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+		return "", 0, err
+	}
+	payload["version"] = models.GPTTaskArgsVersion
+	minVRAM := config.GetConfig().LLM.DefaultVramLimit
+	if loaded, ok := GetLoadedSDModel(modelID); ok {
+		if loaded.MinVRAM > 0 {
+			minVRAM = loaded.MinVRAM
+		}
+		if dtype := strings.TrimSpace(loaded.ExecutionDType); dtype != "" {
+			payload["dtype"] = strings.ToLower(dtype)
+		}
+		payload["quantization_config"] = QuantizationConfigForAPI(loaded.QuantizationConfig)
+	} else {
+		payload["quantization_config"] = nil
+	}
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return "", 0, err
+	}
+	return string(out), minVRAM, nil
 }

@@ -2,7 +2,7 @@
 
 ## Scope
 
-Crynux AS owns the public OpenAI-compatible contract for its Chat Completions, Completions, and Responses endpoints. It MUST convert accepted public fields to canonical `GPTTaskArgs`, persist that canonical JSON, submit it through the Bridge raw-task API, and convert raw `GPTTaskResponse` text to the public response.
+Crynux AS owns the public OpenAI-compatible contract for its Chat Completions, Completions, Responses, and Images generations endpoints. For Chat Completions, Completions, and Responses it MUST convert accepted public fields to canonical `GPTTaskArgs`, persist that canonical JSON, submit it through the Bridge raw-task API, and convert raw `GPTTaskResponse` text to the public response. For Images generations it MUST convert accepted OpenAI Images fields to Image TaskArgs, persist that TaskArgs JSON, submit it through the Bridge raw-task API, store PNG results under `llm.task_result_dir`, and encode those PNG files into the public Images HTTP response without persisting base64 image payloads in MySQL.
 
 Bridge, Relay, Node, and Worker MUST transport canonical task arguments and raw task results without interpreting structured-output or tool-call semantics. gpt-task owns prompt rendering and constrained token generation.
 
