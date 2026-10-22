@@ -352,7 +352,7 @@ Response shape:
 }
 ```
 
-Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public LLM catalog visibility of `GET /models`. It MUST NOT read the Image loaded-models cache. Each catalog row is a distinct candidate keyed by `(model_id, quantization_config, execution_dtype)`.
+Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public LLM catalog visibility of `GET /models`. It MUST NOT read the Image loaded-models cache. Each catalog row is a distinct candidate keyed by `(model_cache_hash, execution_dtype)`.
 
 1. Collect rows with a positive `min_vram`.
 2. Group by exact `min_vram`.

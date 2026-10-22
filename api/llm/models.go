@@ -32,6 +32,23 @@ func newModelObject(model service.LoadedLLMModel) modelObject {
 	}
 }
 
+// imageModelObject extends the model object with the Image cache identity fields.
+type imageModelObject struct {
+	modelObject
+	ModelCacheHash string         `json:"model_cache_hash"`
+	Components     map[string]any `json:"components"`
+	Lora           map[string]any `json:"lora"`
+}
+
+func newImageModelObject(model service.LoadedLLMModel) imageModelObject {
+	return imageModelObject{
+		modelObject:    newModelObject(model),
+		ModelCacheHash: model.ModelCacheHash,
+		Components:     model.Components,
+		Lora:           model.Lora,
+	}
+}
+
 // Models implements the OpenAI-compatible list models endpoint from the
 // in-memory loaded-models cache.
 func Models(c *gin.Context) {
@@ -48,9 +65,9 @@ func Models(c *gin.Context) {
 
 func ImageModels(c *gin.Context) {
 	loadedModels := service.ListLoadedSDModels()
-	data := make([]modelObject, 0, len(loadedModels))
+	data := make([]imageModelObject, 0, len(loadedModels))
 	for _, model := range loadedModels {
-		data = append(data, newModelObject(model))
+		data = append(data, newImageModelObject(model))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",

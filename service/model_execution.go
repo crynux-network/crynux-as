@@ -5,6 +5,8 @@ import (
 	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -80,35 +82,17 @@ func lookupExactOrMax(modelID string, quant any, dtype string, hasQuant, hasDtyp
 		}
 		llmModelsCache.mu.RLock()
 		defer llmModelsCache.mu.RUnlock()
-		var best LoadedLLMModel
-		found := false
-		for _, model := range llmModelsCache.models {
-			if model.ModelID != modelID || model.QuantizationKey != quantKey {
-				continue
-			}
-			if !found || betterMaxMinVRAM(model, best) {
-				best = model
-				found = true
-			}
-		}
-		return best, found
+		return pickBest(llmModelsCache.models, func(model LoadedLLMModel) bool {
+			return model.ModelID == modelID && model.QuantizationKey == quantKey
+		})
 	}
 	if hasDtype {
+		dtype = strings.ToLower(dtype)
 		llmModelsCache.mu.RLock()
 		defer llmModelsCache.mu.RUnlock()
-		var best LoadedLLMModel
-		found := false
-		dtype = strings.ToLower(dtype)
-		for _, model := range llmModelsCache.models {
-			if model.ModelID != modelID || model.ExecutionDType != dtype {
-				continue
-			}
-			if !found || betterMaxMinVRAM(model, best) {
-				best = model
-				found = true
-			}
-		}
-		return best, found
+		return pickBest(llmModelsCache.models, func(model LoadedLLMModel) bool {
+			return model.ModelID == modelID && model.ExecutionDType == dtype
+		})
 	}
 	return GetLoadedLLMModel(modelID)
 }
@@ -149,54 +133,113 @@ func ApplyLLMExecutionToTaskArgsJSON(taskArgsJSON string, sel ModelExecutionSele
 	return string(out), nil
 }
 
-// ResolveImageDefaultMinVRAM returns the max-min_vram loaded image row for modelID.
-func ResolveImageDefaultMinVRAM(modelID string) (uint64, bool) {
-	loaded, ok := GetLoadedSDModel(modelID)
-	if !ok || loaded.MinVRAM == 0 {
-		return 0, false
-	}
-	return loaded.MinVRAM, true
+// imageRequestIdentity selects Image loaded-models rows by cache identity.
+// A nil field matches any row; the LoRA key is always compared.
+type imageRequestIdentity struct {
+	modelID       string
+	dtype         *string
+	quantKey      *string
+	componentsKey *string
+	loraKey       string
 }
 
-// ApplyImageExecutionToTaskArgsJSON sets version and optional cache dtype/quantization on Image TaskArgs.
-// Client-supplied quantization_config and components are preserved. dtype is always taken from cache when present.
+func (i imageRequestIdentity) matches(row LoadedLLMModel) bool {
+	return row.ModelID == i.modelID &&
+		row.LoraKey == i.loraKey &&
+		(i.dtype == nil || row.ExecutionDType == *i.dtype) &&
+		(i.quantKey == nil || row.QuantizationKey == *i.quantKey) &&
+		(i.componentsKey == nil || row.ComponentsKey == *i.componentsKey)
+}
+
+// newImageRequestIdentity derives the cache identity of Image TaskArgs. When exact
+// is true, omitted dtype, quantization_config, and components take their TaskArgs
+// defaults; otherwise omitted fields match any row.
+func newImageRequestIdentity(modelID string, payload map[string]any, exact bool) (imageRequestIdentity, error) {
+	identity := imageRequestIdentity{modelID: llmadapter.NormalizeModelID(modelID)}
+
+	if dtype, ok := payload["dtype"]; ok {
+		dtypeStr, isString := dtype.(string)
+		if !isString {
+			return imageRequestIdentity{}, errors.New("dtype must be a string")
+		}
+		normalized := normalizeExecutionDType(dtypeStr)
+		identity.dtype = &normalized
+	} else if exact {
+		normalized := autoExecutionDType
+		identity.dtype = &normalized
+	}
+
+	if quant, ok := payload["quantization_config"]; ok || exact {
+		quantKey, err := models.QuantizationConfigKey(quant)
+		if err != nil {
+			return imageRequestIdentity{}, fmt.Errorf("invalid quantization_config: %w", err)
+		}
+		identity.quantKey = &quantKey
+	}
+
+	if components, ok := payload["components"]; ok || exact {
+		_, componentsKey, err := normalizeTaskArgsComponents(components)
+		if err != nil {
+			return imageRequestIdentity{}, err
+		}
+		identity.componentsKey = &componentsKey
+	}
+
+	_, loraKey, err := normalizeTaskArgsLora(payload["lora"])
+	if err != nil {
+		return imageRequestIdentity{}, err
+	}
+	identity.loraKey = loraKey
+	return identity, nil
+}
+
+// GetLoadedSDModelExact returns the Image row whose full cache identity (dtype,
+// quantization_config, components, and lora) equals that of taskArgsJSON.
+func GetLoadedSDModelExact(modelID string, taskArgsJSON string) (LoadedLLMModel, bool, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+		return LoadedLLMModel{}, false, err
+	}
+	identity, err := newImageRequestIdentity(modelID, payload, true)
+	if err != nil {
+		return LoadedLLMModel{}, false, err
+	}
+	loaded, ok := pickLoadedSD(identity)
+	return loaded, ok, nil
+}
+
+// ApplyImageExecutionToTaskArgsJSON sets version and cache execution fields on Image TaskArgs.
+// The selected row is the greatest-min_vram row whose cache identity agrees with every
+// client-supplied quantization_config, components, and lora; a request without lora never
+// selects a LoRA row. dtype and every omitted field are taken from that same row. When no
+// row matches, the client fields are kept and the default VRAM limit applies.
 func ApplyImageExecutionToTaskArgsJSON(taskArgsJSON string, modelID string) (string, uint64, error) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
 		return "", 0, err
 	}
 	payload["version"] = models.GPTTaskArgsVersion
-	modelID = llmadapter.NormalizeModelID(modelID)
 	minVRAM := config.GetConfig().LLM.DefaultVramLimit
 
-	_, hasUserQuant := payload["quantization_config"]
-	userQuant := payload["quantization_config"]
-
-	if hasUserQuant {
-		if loaded, ok := lookupSDExactOrMax(modelID, userQuant); ok {
-			if loaded.MinVRAM > 0 {
-				minVRAM = loaded.MinVRAM
-			}
-			if dtype := strings.TrimSpace(loaded.ExecutionDType); dtype != "" {
-				payload["dtype"] = strings.ToLower(dtype)
-			}
-		} else if loaded, ok := GetLoadedSDModel(modelID); ok {
-			if loaded.MinVRAM > 0 {
-				minVRAM = loaded.MinVRAM
-			}
-			if dtype := strings.TrimSpace(loaded.ExecutionDType); dtype != "" {
-				payload["dtype"] = strings.ToLower(dtype)
-			}
-		}
-	} else if loaded, ok := GetLoadedSDModel(modelID); ok {
+	identity, err := newImageRequestIdentity(modelID, payload, false)
+	if err != nil {
+		return "", 0, err
+	}
+	if loaded, ok := pickLoadedSD(identity); ok {
 		if loaded.MinVRAM > 0 {
 			minVRAM = loaded.MinVRAM
 		}
-		if dtype := strings.TrimSpace(loaded.ExecutionDType); dtype != "" {
-			payload["dtype"] = strings.ToLower(dtype)
+		payload["dtype"] = loaded.ExecutionDType
+		if _, ok := payload["quantization_config"]; !ok {
+			payload["quantization_config"] = QuantizationConfigForAPI(loaded.QuantizationConfig)
 		}
-		payload["quantization_config"] = QuantizationConfigForAPI(loaded.QuantizationConfig)
-	} else {
+		if _, ok := payload["components"]; !ok && len(loaded.Components) > 0 {
+			payload["components"] = loaded.Components
+		}
+		if _, ok := payload["lora"]; !ok && loaded.Lora != nil {
+			payload["lora"] = loaded.Lora
+		}
+	} else if _, ok := payload["quantization_config"]; !ok {
 		payload["quantization_config"] = nil
 	}
 
@@ -205,25 +248,4 @@ func ApplyImageExecutionToTaskArgsJSON(taskArgsJSON string, modelID string) (str
 		return "", 0, err
 	}
 	return string(out), minVRAM, nil
-}
-
-func lookupSDExactOrMax(modelID string, quant any) (LoadedLLMModel, bool) {
-	quantKey, err := models.QuantizationConfigKey(quant)
-	if err != nil {
-		return LoadedLLMModel{}, false
-	}
-	sdModelsCache.mu.RLock()
-	defer sdModelsCache.mu.RUnlock()
-	var best LoadedLLMModel
-	found := false
-	for _, model := range sdModelsCache.models {
-		if model.ModelID != modelID || model.QuantizationKey != quantKey {
-			continue
-		}
-		if !found || betterMaxMinVRAM(model, best) {
-			best = model
-			found = true
-		}
-	}
-	return best, found
 }

@@ -31,7 +31,8 @@ func NewClient(baseURL string) *Client {
 type LoadedModel struct {
 	ModelID            string          `json:"model_id"`
 	ModelType          string          `json:"model_type"`
-	Variant            string          `json:"variant"`
+	ModelCacheHash     string          `json:"model_cache_hash"`
+	ModelCacheConfig   json.RawMessage `json:"model_cache_config"`
 	ExecutionDType     string          `json:"execution_dtype"`
 	QuantizationConfig json.RawMessage `json:"quantization_config"`
 	MinVRAM            uint64          `json:"min_vram"`

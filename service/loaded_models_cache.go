@@ -8,6 +8,7 @@ import (
 	"crynux_as/relay"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -18,11 +19,19 @@ import (
 const loadedModelTypeLLM = "llm"
 const loadedModelTypeSD = "sd"
 
+// LoadedLLMModel is one Relay loaded-models row identified by its model cache
+// hash and execution dtype. Components and Lora use the Image TaskArgs shape.
 type LoadedLLMModel struct {
+	ModelCacheHash     string
+	TaskKind           string
 	ModelID            string
 	ExecutionDType     string
 	QuantizationConfig json.RawMessage
 	QuantizationKey    string
+	Components         map[string]any
+	ComponentsKey      string
+	Lora               map[string]any
+	LoraKey            string
 	MinVRAM            uint64
 	NodeCount          int64
 	OnDiskNodeCount    int64
@@ -45,8 +54,8 @@ var sdModelsCache = &loadedModelsCache{
 	catalogModels: map[string]LoadedLLMModel{},
 }
 
-func modelCacheKey(modelID, quantKey, executionDType string) string {
-	return strings.ToLower(modelID) + "\x00" + quantKey + "\x00" + strings.ToLower(executionDType)
+func modelCacheKey(modelCacheHash, executionDType string) string {
+	return modelCacheHash + "\x00" + strings.ToLower(executionDType)
 }
 
 func catalogVisible(model LoadedLLMModel, minOnDiskNodeCount uint64) bool {
@@ -77,6 +86,59 @@ func normalizeQuantizationConfig(raw json.RawMessage) (json.RawMessage, string, 
 	return json.RawMessage(key), key, nil
 }
 
+// newLoadedModel builds a cache row from a Relay row and verifies that the
+// top-level fields agree with the canonical model_cache_config.
+func newLoadedModel(loaded relay.LoadedModel) (LoadedLLMModel, error) {
+	modelID := strings.ToLower(strings.TrimSpace(loaded.ModelID))
+	if modelID == "" {
+		return LoadedLLMModel{}, errors.New("model_id is empty")
+	}
+	hash, err := normalizeModelCacheHash(loaded.ModelCacheHash)
+	if err != nil {
+		return LoadedLLMModel{}, err
+	}
+	cacheConfig, err := parseModelCacheConfig(loaded.ModelCacheConfig)
+	if err != nil {
+		return LoadedLLMModel{}, err
+	}
+	wantTaskKind := modelCacheTaskKindLLM
+	if loaded.ModelType == loadedModelTypeSD {
+		wantTaskKind = modelCacheTaskKindImage
+	}
+	if cacheConfig.TaskKind != wantTaskKind {
+		return LoadedLLMModel{}, fmt.Errorf("model_cache_config task_kind %q does not match model_type %q", cacheConfig.TaskKind, loaded.ModelType)
+	}
+	if cacheConfig.ModelID != modelID {
+		return LoadedLLMModel{}, fmt.Errorf("model_cache_config model %q does not match model_id %q", cacheConfig.ModelID, modelID)
+	}
+	executionDType := strings.ToLower(strings.TrimSpace(loaded.ExecutionDType))
+	if cacheConfig.DType != executionDType {
+		return LoadedLLMModel{}, fmt.Errorf("model_cache_config dtype %q does not match execution_dtype %q", cacheConfig.DType, executionDType)
+	}
+	_, quantKey, err := normalizeQuantizationConfig(loaded.QuantizationConfig)
+	if err != nil {
+		return LoadedLLMModel{}, fmt.Errorf("invalid quantization_config: %w", err)
+	}
+	if cacheConfig.QuantizationKey != quantKey {
+		return LoadedLLMModel{}, errors.New("model_cache_config quantization_config does not match quantization_config")
+	}
+	return LoadedLLMModel{
+		ModelCacheHash:     hash,
+		TaskKind:           cacheConfig.TaskKind,
+		ModelID:            modelID,
+		ExecutionDType:     executionDType,
+		QuantizationConfig: cacheConfig.QuantizationConfig,
+		QuantizationKey:    cacheConfig.QuantizationKey,
+		Components:         cacheConfig.Components,
+		ComponentsKey:      cacheConfig.ComponentsKey,
+		Lora:               cacheConfig.Lora,
+		LoraKey:            cacheConfig.LoraKey,
+		MinVRAM:            loaded.MinVRAM,
+		NodeCount:          loaded.InMemoryNodeCount,
+		OnDiskNodeCount:    loaded.OnDiskNodeCount,
+	}, nil
+}
+
 func betterMaxMinVRAM(candidate, existing LoadedLLMModel) bool {
 	if candidate.MinVRAM != existing.MinVRAM {
 		return candidate.MinVRAM > existing.MinVRAM
@@ -84,15 +146,18 @@ func betterMaxMinVRAM(candidate, existing LoadedLLMModel) bool {
 	if candidate.QuantizationKey != existing.QuantizationKey {
 		return candidate.QuantizationKey < existing.QuantizationKey
 	}
-	return candidate.ExecutionDType < existing.ExecutionDType
+	if candidate.ExecutionDType != existing.ExecutionDType {
+		return candidate.ExecutionDType < existing.ExecutionDType
+	}
+	return candidate.ModelCacheHash < existing.ModelCacheHash
 }
 
-func pickMaxMinVRAM(models map[string]LoadedLLMModel, modelID string) (LoadedLLMModel, bool) {
-	modelID = strings.ToLower(strings.TrimSpace(modelID))
+// pickBest returns the matching row with the greatest min_vram.
+func pickBest(models map[string]LoadedLLMModel, match func(LoadedLLMModel) bool) (LoadedLLMModel, bool) {
 	var best LoadedLLMModel
 	found := false
 	for _, model := range models {
-		if model.ModelID != modelID {
+		if !match(model) {
 			continue
 		}
 		if !found || betterMaxMinVRAM(model, best) {
@@ -103,6 +168,11 @@ func pickMaxMinVRAM(models map[string]LoadedLLMModel, modelID string) (LoadedLLM
 	return best, found
 }
 
+func pickMaxMinVRAM(models map[string]LoadedLLMModel, modelID string) (LoadedLLMModel, bool) {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	return pickBest(models, func(model LoadedLLMModel) bool { return model.ModelID == modelID })
+}
+
 func sortLoadedModels(models []LoadedLLMModel) {
 	sort.Slice(models, func(i, j int) bool {
 		if models[i].ModelID != models[j].ModelID {
@@ -111,7 +181,10 @@ func sortLoadedModels(models []LoadedLLMModel) {
 		if models[i].ExecutionDType != models[j].ExecutionDType {
 			return models[i].ExecutionDType < models[j].ExecutionDType
 		}
-		return models[i].QuantizationKey < models[j].QuantizationKey
+		if models[i].QuantizationKey != models[j].QuantizationKey {
+			return models[i].QuantizationKey < models[j].QuantizationKey
+		}
+		return models[i].ModelCacheHash < models[j].ModelCacheHash
 	})
 }
 
@@ -128,6 +201,7 @@ func InitLoadedModelsCache(client *relay.Client) {
 
 // RefreshLoadedModels fetches the loaded models from the Relay and replaces the
 // in-memory LLM and SD model snapshots. On failure the previous snapshots are kept.
+// Rows with a missing or inconsistent model_cache_hash or model_cache_config are skipped.
 func RefreshLoadedModels(ctx context.Context) error {
 	llmModelsCache.mu.RLock()
 	client := llmModelsCache.client
@@ -144,30 +218,18 @@ func RefreshLoadedModels(ctx context.Context) error {
 	llmSnapshot := make(map[string]LoadedLLMModel)
 	sdSnapshot := make(map[string]LoadedLLMModel)
 	for _, loadedModel := range loadedModels {
-		modelID := strings.ToLower(strings.TrimSpace(loadedModel.ModelID))
-		if modelID == "" {
+		if loadedModel.ModelType != loadedModelTypeLLM && loadedModel.ModelType != loadedModelTypeSD {
 			continue
 		}
-		quantRaw, quantKey, err := normalizeQuantizationConfig(loadedModel.QuantizationConfig)
+		entry, err := newLoadedModel(loadedModel)
 		if err != nil {
-			log.Warnf("skip loaded model %s: invalid quantization_config: %v", modelID, err)
+			log.Warnf("skip loaded model %q (type %s, cache hash %q): %v", loadedModel.ModelID, loadedModel.ModelType, loadedModel.ModelCacheHash, err)
 			continue
 		}
-		executionDType := strings.ToLower(strings.TrimSpace(loadedModel.ExecutionDType))
-		entry := LoadedLLMModel{
-			ModelID:            modelID,
-			ExecutionDType:     executionDType,
-			QuantizationConfig: quantRaw,
-			QuantizationKey:    quantKey,
-			MinVRAM:            loadedModel.MinVRAM,
-			NodeCount:          loadedModel.InMemoryNodeCount,
-			OnDiskNodeCount:    loadedModel.OnDiskNodeCount,
-		}
-		key := modelCacheKey(modelID, quantKey, executionDType)
-		switch loadedModel.ModelType {
-		case loadedModelTypeLLM:
+		key := modelCacheKey(entry.ModelCacheHash, entry.ExecutionDType)
+		if loadedModel.ModelType == loadedModelTypeLLM {
 			llmSnapshot[key] = entry
-		case loadedModelTypeSD:
+		} else {
 			sdSnapshot[key] = entry
 		}
 	}
@@ -195,22 +257,19 @@ func RefreshLoadedModels(ctx context.Context) error {
 	return nil
 }
 
+// GetLoadedSDModel returns the Image row of modelID with the greatest min_vram.
+// It is for model-level checks only; executable selection MUST use the full cache identity.
 func GetLoadedSDModel(modelID string) (LoadedLLMModel, bool) {
 	sdModelsCache.mu.RLock()
 	defer sdModelsCache.mu.RUnlock()
 	return pickMaxMinVRAM(sdModelsCache.models, modelID)
 }
 
-func GetLoadedSDModelExact(modelID string, quantizationConfig any, executionDType string) (LoadedLLMModel, bool) {
-	quantKey, err := models.QuantizationConfigKey(quantizationConfig)
-	if err != nil {
-		return LoadedLLMModel{}, false
-	}
-	key := modelCacheKey(modelID, quantKey, executionDType)
+// pickLoadedSD returns the Image row with the greatest min_vram among rows matching identity.
+func pickLoadedSD(identity imageRequestIdentity) (LoadedLLMModel, bool) {
 	sdModelsCache.mu.RLock()
 	defer sdModelsCache.mu.RUnlock()
-	model, ok := sdModelsCache.models[key]
-	return model, ok
+	return pickBest(sdModelsCache.models, identity.matches)
 }
 
 func ListLoadedSDModels() []LoadedLLMModel {
@@ -225,7 +284,7 @@ func ListLoadedSDModels() []LoadedLLMModel {
 }
 
 // GetLoadedLLMModel looks up cached LLM rows by model ID and returns the row
-// with the greatest min_vram (ties broken by quantization key then dtype).
+// with the greatest min_vram (ties broken by quantization key, dtype, then cache hash).
 func GetLoadedLLMModel(modelID string) (LoadedLLMModel, bool) {
 	llmModelsCache.mu.RLock()
 	defer llmModelsCache.mu.RUnlock()
@@ -237,11 +296,13 @@ func GetLoadedLLMModelExact(modelID string, quantizationConfig any, executionDTy
 	if err != nil {
 		return LoadedLLMModel{}, false
 	}
-	key := modelCacheKey(modelID, quantKey, executionDType)
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	executionDType = strings.ToLower(executionDType)
 	llmModelsCache.mu.RLock()
 	defer llmModelsCache.mu.RUnlock()
-	model, ok := llmModelsCache.models[key]
-	return model, ok
+	return pickBest(llmModelsCache.models, func(model LoadedLLMModel) bool {
+		return model.ModelID == modelID && model.QuantizationKey == quantKey && model.ExecutionDType == executionDType
+	})
 }
 
 // GetCatalogLLMModel returns the catalog row for modelID with the greatest min_vram.
@@ -267,7 +328,7 @@ func ListCatalogLLMModelsByID(modelID string) []LoadedLLMModel {
 }
 
 // ListLoadedLLMModels returns the catalog LLM models sorted by model ID,
-// execution dtype, and quantization key.
+// execution dtype, quantization key, and model cache hash.
 func ListLoadedLLMModels() []LoadedLLMModel {
 	llmModelsCache.mu.RLock()
 	models := make([]LoadedLLMModel, 0, len(llmModelsCache.catalogModels))

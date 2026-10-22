@@ -36,7 +36,7 @@ func TestValidateTaskModelSkipsHubWhenCached(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"message": "success",
 			"data": []map[string]interface{}{
-				{"model_id": "cached/llm", "model_type": "llm", "execution_dtype": "bfloat16", "quantization_config": nil, "min_vram": 24, "in_memory_node_count": 1, "on_disk_node_count": 1},
+				testLLMRow("cached-llm", "cached/llm", "bfloat16", nil, 24, 1, 1),
 			},
 		})
 	}))
