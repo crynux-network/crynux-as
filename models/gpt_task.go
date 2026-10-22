@@ -26,7 +26,7 @@ const (
 	DTypeAuto     DType = "auto"
 )
 
-const GPTTaskArgsVersion = "3.7.0"
+const GPTTaskArgsVersion = "3.7.1"
 
 type ToolCall struct {
 	Id       string       `json:"id"`

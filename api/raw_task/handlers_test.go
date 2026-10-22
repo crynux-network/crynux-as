@@ -11,7 +11,7 @@ import (
 func TestPrepareTaskRejectsClientTaskFee(t *testing.T) {
 	taskType := models.TaskTypeLLM
 	_, err := prepareTask(context.Background(), &models.Project{}, CreateTaskRequest{
-		TaskArgs: `{"version":"3.7.0","model":"example/model","messages":[]}`,
+		TaskArgs: `{"version":"3.7.1","model":"example/model","messages":[]}`,
 		TaskType: &taskType,
 		TaskFee:  []byte("null"),
 	})
@@ -23,8 +23,8 @@ func TestPrepareTaskRejectsClientTaskFee(t *testing.T) {
 func TestPrepareTaskValidatesHardwareSelection(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
-	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.0/schema/image-task.json"
-	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.0/schema/stable-diffusion-finetune-lora-task.json"
+	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
+	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() {
 		config.SetConfigForTest(nil)
@@ -34,7 +34,7 @@ func TestPrepareTaskValidatesHardwareSelection(t *testing.T) {
 	taskType := models.TaskTypeLLM
 	minVram := uint64(24)
 	_, err := prepareTask(context.Background(), &models.Project{}, CreateTaskRequest{
-		TaskArgs:    `{"version":"3.7.0","model":"example/model","messages":[]}`,
+		TaskArgs:    `{"version":"3.7.1","model":"example/model","messages":[]}`,
 		TaskType:    &taskType,
 		MinVram:     &minVram,
 		RequiredGPU: "GPU",
