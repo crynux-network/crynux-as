@@ -239,6 +239,11 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	} else if validationErr != nil {
 		return nil, fmt.Errorf("invalid task_args: %s", validationErr.Error())
 	}
+	if *request.TaskType == models.TaskTypeImage {
+		if err := models.ValidateImageTaskArgsImagesSize(request.TaskArgs); err != nil {
+			return nil, err
+		}
+	}
 	hasGPUName := strings.TrimSpace(request.RequiredGPU) != ""
 	hasGPUVram := request.RequiredGPUVram > 0
 	if request.MinVram != nil && (hasGPUName || hasGPUVram) {

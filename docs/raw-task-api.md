@@ -33,6 +33,8 @@ The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge Clien
 
 Before Credits reservation, AS MUST validate `task_args` against the configured JSON Schema for the task type (`task_schema.gpt_inference` for LLM, `task_schema.stable_diffusion_inference` for Image). A schema validation failure MUST return HTTP 400 with a validation error on field `task_args` and MUST NOT reserve Credits or create a job.
 
+For an Image task, after schema validation succeeds, AS MUST sum the byte lengths of every string in `task_args.images` as stored in the JSON (including any `data:image/...;base64,` prefix). AS MUST NOT decode base64 payloads to measure size. When that sum exceeds `1048576` (1mb), AS MUST return HTTP 400 with an invalid-request error whose message is exactly `task_args.images total size exceeds the 1mb limit`, and MUST NOT reserve Credits or create a job. An omitted or empty `images` array MUST pass this check.
+
 When the validated TaskArgs omit the generation seed, AS MUST set one before the job is persisted. An LLM task uses top-level `seed`. An Image task uses `task_config.seed`. The value MUST be a uniformly chosen integer from 0 through 2147483647. A seed present in the client JSON, including 0, MUST be stored unchanged. The persisted TaskArgs JSON is the JSON submitted to Bridge.
 
 Before Credits reservation, AS MUST also validate the task model:
