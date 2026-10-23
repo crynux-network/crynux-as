@@ -41,6 +41,10 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 	if in.Model == "" || in.TaskArgsJSON == "" {
 		return nil, errors.New("model and task_args are required")
 	}
+	taskArgsJSON, err := EnsureTaskSeed(in.TaskArgsJSON, in.TaskType)
+	if err != nil {
+		return nil, err
+	}
 	if in.PriorityGwei == nil || in.PriorityGwei.Sign() <= 0 {
 		return nil, errors.New("priority_gwei is required")
 	}
@@ -79,7 +83,7 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 		APIType:           in.APIType,
 		Model:             in.Model,
 		BilledVram:        in.BilledVram,
-		TaskArgsJSON:      in.TaskArgsJSON,
+		TaskArgsJSON:      taskArgsJSON,
 		TaskVersion:       in.TaskVersion,
 		MinVram:           in.MinVram,
 		RequiredGPU:       in.RequiredGPU,

@@ -15,12 +15,12 @@ type llmTaskArgsPayload struct {
 	ResponseFormat     map[string]interface{}      `json:"response_format,omitempty"`
 	GenerationConfig   *models.GPTGenerationConfig `json:"generation_config,omitempty"`
 	TemplateArgs       map[string]interface{}      `json:"template_args,omitempty"`
-	Seed               int                         `json:"seed"`
+	Seed               *int                        `json:"seed,omitempty"`
 	DType              models.DType                `json:"dtype,omitempty"`
 	QuantizationConfig any                         `json:"quantization_config"`
 }
 
-func buildLLMTaskArgsPayload(args models.GPTTaskArgs, messages any) llmTaskArgsPayload {
+func buildLLMTaskArgsPayload(args models.GPTTaskArgs, messages any, seed *int) llmTaskArgsPayload {
 	version := args.Version
 	if version == "" {
 		version = models.GPTTaskArgsVersion
@@ -34,7 +34,7 @@ func buildLLMTaskArgsPayload(args models.GPTTaskArgs, messages any) llmTaskArgsP
 		ResponseFormat:     args.ResponseFormat,
 		GenerationConfig:   args.GenerationConfig,
 		TemplateArgs:       args.TemplateArgs,
-		Seed:               args.Seed,
+		Seed:               seed,
 		DType:              args.DType,
 		QuantizationConfig: args.QuantizationConfig,
 	}

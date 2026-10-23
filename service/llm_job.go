@@ -52,6 +52,10 @@ func ReserveCreditsAndCreateTaskJob(ctx context.Context, db *gorm.DB, in CreateT
 	if in.TaskArgsJSON == "" {
 		return nil, errors.New("task args json is required")
 	}
+	taskArgsJSON, err := EnsureTaskSeed(in.TaskArgsJSON, models.TaskTypeLLM)
+	if err != nil {
+		return nil, err
+	}
 	if in.PriorityGwei == nil || in.PriorityGwei.Sign() <= 0 {
 		return nil, errors.New("priority_gwei is required")
 	}
@@ -94,7 +98,7 @@ func ReserveCreditsAndCreateTaskJob(ctx context.Context, db *gorm.DB, in CreateT
 		Background:        in.Background,
 		Stream:            in.Stream,
 		RequestBody:       in.RequestBody,
-		TaskArgsJSON:      in.TaskArgsJSON,
+		TaskArgsJSON:      taskArgsJSON,
 		Status:            models.TaskJobStatusPendingSubmit,
 		Phase:             "queued",
 		BillingData:       billingData,
@@ -314,15 +318,15 @@ func CompleteAndSettleTaskJob(
 		}
 
 		updates := map[string]interface{}{
-			"status":                   models.TaskJobStatusCompleted,
-			"phase":                    "success",
-			"estimated_completion_at":  nil,
-			"raw_result_json":          rawResultJSON,
-			"formatted_result_json":    formattedResultJSON,
-			"completed_at":             now,
-			"billing_status":           models.TaskJobBillingBilled,
-			"task_call_record_id":      recordID,
-			"credits_lock_status":      locked.CreditsLockStatus,
+			"status":                  models.TaskJobStatusCompleted,
+			"phase":                   "success",
+			"estimated_completion_at": nil,
+			"raw_result_json":         rawResultJSON,
+			"formatted_result_json":   formattedResultJSON,
+			"completed_at":            now,
+			"billing_status":          models.TaskJobBillingBilled,
+			"task_call_record_id":     recordID,
+			"credits_lock_status":     locked.CreditsLockStatus,
 		}
 		if err := tx.Model(&models.TaskJob{}).Where("id = ?", locked.ID).Updates(updates).Error; err != nil {
 			return err

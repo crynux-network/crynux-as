@@ -16,7 +16,7 @@ type CompletionsRequest struct {
 	MaxTokens           *int               `json:"max_tokens"`
 	MaxCompletionTokens *int               `json:"max_completion_tokens"`
 	Temperature         float64            `json:"temperature"`
-	Seed                int                `json:"seed"`
+	Seed                *int               `json:"seed"`
 	TopP                *float64           `json:"top_p"`
 	TopK                *int               `json:"top_k"`
 	FrequencyPenalty    *float64           `json:"frequency_penalty"`
@@ -128,14 +128,13 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 		Model:              req.Model,
 		Messages:           messages,
 		GenerationConfig:   generationConfig,
-		Seed:               req.Seed,
 		DType:              resolveDType(req.Model),
 		QuantizationConfig: req.QuantizationConfig,
 	}
 	if strings.TrimSpace(req.Dtype) != "" {
 		taskArgs.DType = models.DType(strings.ToLower(strings.TrimSpace(req.Dtype)))
 	}
-	taskArgsPayload := buildLLMTaskArgsPayload(taskArgs, messages)
+	taskArgsPayload := buildLLMTaskArgsPayload(taskArgs, messages, req.Seed)
 	taskArgsBytes, err := json.Marshal(taskArgsPayload)
 	if err != nil {
 		return "", CompletionsMeta{}, fmt.Errorf("failed to marshal task args: %w", err)

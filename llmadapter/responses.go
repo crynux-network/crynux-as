@@ -288,11 +288,6 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 		Stop:                req.Stop.Strings,
 	})
 
-	seed := 0
-	if req.Seed != nil {
-		seed = *req.Seed
-	}
-
 	reasoningEffort := ""
 	if req.Reasoning != nil {
 		reasoningEffort = req.Reasoning.Effort
@@ -307,7 +302,6 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 		ResponseFormat:     req.ResponseFormat,
 		GenerationConfig:   generationConfig,
 		TemplateArgs:       buildTemplateArgs(req.ChatTemplateKwargs, reasoningEffort),
-		Seed:               seed,
 		DType:              resolveDType(req.Model),
 		QuantizationConfig: req.QuantizationConfig,
 	}
@@ -319,7 +313,7 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 	if err != nil {
 		return "", newValidationError("input", err.Error())
 	}
-	taskArgsPayload := buildLLMTaskArgsPayload(taskArgs, taskMessages)
+	taskArgsPayload := buildLLMTaskArgsPayload(taskArgs, taskMessages, req.Seed)
 	taskArgsBytes, err := json.Marshal(taskArgsPayload)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal task args: %w", err)

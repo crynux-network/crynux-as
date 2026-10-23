@@ -33,6 +33,8 @@ The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge Clien
 
 Before Credits reservation, AS MUST validate `task_args` against the configured JSON Schema for the task type (`task_schema.gpt_inference` for LLM, `task_schema.stable_diffusion_inference` for Image). A schema validation failure MUST return HTTP 400 with a validation error on field `task_args` and MUST NOT reserve Credits or create a job.
 
+When the validated TaskArgs omit the generation seed, AS MUST set one before the job is persisted. An LLM task uses top-level `seed`. An Image task uses `task_config.seed`. The value MUST be a uniformly chosen integer from 0 through 2147483647. A seed present in the client JSON, including 0, MUST be stored unchanged. The persisted TaskArgs JSON is the JSON submitted to Bridge.
+
 Before Credits reservation, AS MUST also validate the task model:
 
 1. For an LLM task, the `task_args.model` value MUST be a Hugging Face model id. For an Image task, `task_args.base_model.name` MUST be a Hugging Face model id. Image model cache identity is the Relay `model_cache_hash` together with `execution_dtype`, derived from `base_model`, `components`, `lora`, `dtype`, and `quantization_config`.

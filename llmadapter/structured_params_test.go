@@ -153,3 +153,55 @@ func TestBuildChatCompletionsTaskArgsOmitsTemplateArgsWhenUnset(t *testing.T) {
 		t.Fatalf("expected template_args omitted, got %v", payload["template_args"])
 	}
 }
+
+func TestBuildTaskArgsOmitsSeedUntilClientSetsIt(t *testing.T) {
+	chat, _, err := BuildChatCompletionsTaskArgs([]byte(`{"model":"org/model","messages":[{"role":"user","content":"hi"}]}`), 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSeedAbsent(t, chat)
+
+	chatZero, _, err := BuildChatCompletionsTaskArgs([]byte(`{"model":"org/model","messages":[{"role":"user","content":"hi"}],"seed":0}`), 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSeed(t, chatZero, 0)
+
+	completion, _, err := BuildCompletionsTaskArgs([]byte(`{"model":"org/model","prompt":"hi"}`), 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSeedAbsent(t, completion)
+
+	req, err := ParseResponsesRequest([]byte(`{"model":"org/model","input":"hi","seed":7}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	responses, err := BuildResponsesTaskArgs(req, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSeed(t, responses, 7)
+}
+
+func assertSeedAbsent(t *testing.T, taskArgs string) {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(taskArgs), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["seed"]; exists {
+		t.Fatalf("seed = %v", payload["seed"])
+	}
+}
+
+func assertSeed(t *testing.T, taskArgs string, want float64) {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(taskArgs), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["seed"] != want {
+		t.Fatalf("seed = %v", payload["seed"])
+	}
+}
