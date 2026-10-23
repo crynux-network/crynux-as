@@ -198,6 +198,114 @@ func TestParseImagesEditsMultipartRequest(t *testing.T) {
 	}
 }
 
+func TestParseImagesEditsMultipartBracketNestedExtensions(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	_ = writer.WriteField("model", "Qwen/Qwen-Image-2.1")
+	_ = writer.WriteField("prompt", "edit me")
+	_ = writer.WriteField("vram_limit", "24")
+	_ = writer.WriteField("quantization_config[quant_method]", "bitsandbytes")
+	_ = writer.WriteField("quantization_config[components_to_quantize][]", "text_encoder")
+	_ = writer.WriteField("quantization_config[quant_kwargs][load_in_4bit]", "true")
+	_ = writer.WriteField("quantization_config[quant_kwargs][bnb_4bit_quant_type]", "nf4")
+	_ = writer.WriteField("quantization_config[quant_kwargs][bnb_4bit_compute_dtype]", "bfloat16")
+	_ = writer.WriteField("quantization_config[quant_kwargs][bnb_4bit_use_double_quant]", "false")
+	_ = writer.WriteField("components[transformer][format]", "gguf")
+	_ = writer.WriteField("components[transformer][repo]", "abenzerps/Qwen-Image-2.1-Uncensored-Quantized")
+	_ = writer.WriteField("components[transformer][format_kwargs][filename]", "qwen-image-2.1-UC-Q4_K_M.gguf")
+	imagePart, err := writer.CreateFormFile("image", "a.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	png := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}
+	if _, err := imagePart.Write(png); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader := multipart.NewReader(&buf, writer.Boundary())
+	form, err := reader.ReadForm(8 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer form.RemoveAll()
+
+	req, err := ParseImagesEditsMultipartRequest(form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.VramLimit == nil || *req.VramLimit != 24 {
+		t.Fatalf("vram_limit = %#v", req.VramLimit)
+	}
+	quantJSON, err := json.Marshal(req.QuantizationConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var quant map[string]any
+	if err := json.Unmarshal(quantJSON, &quant); err != nil {
+		t.Fatal(err)
+	}
+	if quant["quant_method"] != "bitsandbytes" {
+		t.Fatalf("quant_method = %#v", quant["quant_method"])
+	}
+	componentsToQuantize, ok := quant["components_to_quantize"].([]any)
+	if !ok || len(componentsToQuantize) != 1 || componentsToQuantize[0] != "text_encoder" {
+		t.Fatalf("components_to_quantize = %#v", quant["components_to_quantize"])
+	}
+	kwargs, ok := quant["quant_kwargs"].(map[string]any)
+	if !ok {
+		t.Fatalf("quant_kwargs = %#v", quant["quant_kwargs"])
+	}
+	if kwargs["load_in_4bit"] != true || kwargs["bnb_4bit_use_double_quant"] != false {
+		t.Fatalf("quant_kwargs = %#v", kwargs)
+	}
+	if kwargs["bnb_4bit_quant_type"] != "nf4" || kwargs["bnb_4bit_compute_dtype"] != "bfloat16" {
+		t.Fatalf("quant_kwargs = %#v", kwargs)
+	}
+
+	compJSON, err := json.Marshal(req.Components)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var components map[string]any
+	if err := json.Unmarshal(compJSON, &components); err != nil {
+		t.Fatal(err)
+	}
+	transformer, ok := components["transformer"].(map[string]any)
+	if !ok {
+		t.Fatalf("components = %#v", components)
+	}
+	if transformer["format"] != "gguf" {
+		t.Fatalf("format = %#v", transformer["format"])
+	}
+	formatKwargs, ok := transformer["format_kwargs"].(map[string]any)
+	if !ok || formatKwargs["filename"] != "qwen-image-2.1-UC-Q4_K_M.gguf" {
+		t.Fatalf("format_kwargs = %#v", transformer["format_kwargs"])
+	}
+}
+
+func TestParseImagesEditsMultipartRejectsMixedJSONAndBracketObject(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	_ = writer.WriteField("model", "org/m")
+	_ = writer.WriteField("prompt", "a")
+	_ = writer.WriteField("quantization_config", `{"quant_method":"bitsandbytes"}`)
+	_ = writer.WriteField("quantization_config[quant_method]", "bitsandbytes")
+	imagePart, _ := writer.CreateFormFile("image", "a.png")
+	_, _ = imagePart.Write([]byte{0x89, 0x50, 0x4e, 0x47})
+	_ = writer.Close()
+	reader := multipart.NewReader(&buf, writer.Boundary())
+	form, err := reader.ReadForm(8 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer form.RemoveAll()
+	if _, err := ParseImagesEditsMultipartRequest(form); err == nil {
+		t.Fatal("expected mixed JSON/bracket rejection")
+	}
+}
+
 func TestParseImagesEditsMultipartRejectsMask(t *testing.T) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)

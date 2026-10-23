@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -91,17 +92,14 @@ func ParseImagesEditsJSONRequest(body []byte) (ImagesEditsRequest, error) {
 }
 
 // ParseImagesEditsMultipartRequest parses an OpenAI Images edits multipart form.
+// Nested Crynux extension objects may arrive either as one JSON form field or as
+// OpenAI SDK bracket fields such as quantization_config[quant_kwargs][load_in_4bit].
 func ParseImagesEditsMultipartRequest(form *multipart.Form) (ImagesEditsRequest, error) {
 	if form == nil {
 		return ImagesEditsRequest{}, newValidationError("", "invalid multipart form")
 	}
 	if _, ok := form.File["mask"]; ok {
 		return ImagesEditsRequest{}, newValidationError("mask", "is not supported")
-	}
-	for field := range form.Value {
-		if _, ok := imagesEditsAllowedFields[field]; !ok {
-			return ImagesEditsRequest{}, newValidationError(field, "is not supported")
-		}
 	}
 	for field := range form.File {
 		switch field {
@@ -119,37 +117,211 @@ func ParseImagesEditsMultipartRequest(form *multipart.Form) (ImagesEditsRequest,
 		return ImagesEditsRequest{}, err
 	}
 
-	raw := map[string]json.RawMessage{}
-	for field, values := range form.Value {
-		if len(values) == 0 {
-			continue
-		}
-		value := values[len(values)-1]
-		switch field {
-		case "n", "vram_limit", "stream", "partial_images", "output_compression":
-			trimmed := strings.TrimSpace(value)
-			if trimmed == "" {
-				continue
-			}
-			raw[field] = json.RawMessage(trimmed)
-		case "quantization_config", "components":
-			trimmed := strings.TrimSpace(value)
-			if trimmed == "" {
-				continue
-			}
-			if !json.Valid([]byte(trimmed)) {
-				return ImagesEditsRequest{}, newValidationError(field, "must be an object or null")
-			}
-			raw[field] = json.RawMessage(trimmed)
-		default:
-			encoded, err := json.Marshal(value)
-			if err != nil {
-				return ImagesEditsRequest{}, newValidationError(field, "must be a string")
-			}
-			raw[field] = encoded
-		}
+	raw, err := multipartFormValuesToRaw(form.Value)
+	if err != nil {
+		return ImagesEditsRequest{}, err
 	}
 	return parseImagesEditsSharedFields(raw, images)
+}
+
+var imagesEditsNestedObjectFields = map[string]struct{}{
+	"quantization_config": {},
+	"components":          {},
+}
+
+type multipartPathSegment struct {
+	key       string
+	arrayLeaf bool
+}
+
+func multipartFormValuesToRaw(values map[string][]string) (map[string]json.RawMessage, error) {
+	raw := map[string]json.RawMessage{}
+	nested := map[string]any{}
+	nestedUsed := map[string]string{}
+
+	for field, fieldValues := range values {
+		if len(fieldValues) == 0 {
+			continue
+		}
+		root, segments, nestedField, err := parseMultipartBracketField(field)
+		if err != nil {
+			return nil, newValidationError(field, err.Error())
+		}
+		if !nestedField {
+			if _, ok := imagesEditsAllowedFields[field]; !ok {
+				return nil, newValidationError(field, "is not supported")
+			}
+			value := fieldValues[len(fieldValues)-1]
+			switch field {
+			case "n", "vram_limit", "stream", "partial_images", "output_compression":
+				trimmed := strings.TrimSpace(value)
+				if trimmed == "" {
+					continue
+				}
+				raw[field] = json.RawMessage(trimmed)
+			case "quantization_config", "components":
+				trimmed := strings.TrimSpace(value)
+				if trimmed == "" {
+					continue
+				}
+				if !json.Valid([]byte(trimmed)) {
+					return nil, newValidationError(field, "must be an object or null")
+				}
+				if other, ok := nestedUsed[field]; ok {
+					return nil, newValidationError(field, fmt.Sprintf("must not mix JSON form value with bracket fields such as %s", other))
+				}
+				raw[field] = json.RawMessage(trimmed)
+				nestedUsed[field] = field
+			default:
+				encoded, err := json.Marshal(value)
+				if err != nil {
+					return nil, newValidationError(field, "must be a string")
+				}
+				raw[field] = encoded
+			}
+			continue
+		}
+
+		if _, ok := imagesEditsAllowedFields[root]; !ok {
+			return nil, newValidationError(field, "is not supported")
+		}
+		if _, ok := imagesEditsNestedObjectFields[root]; !ok {
+			return nil, newValidationError(field, "is not supported")
+		}
+		if existing, ok := nestedUsed[root]; ok && existing == root {
+			return nil, newValidationError(root, fmt.Sprintf("must not mix JSON form value with bracket fields such as %s", field))
+		}
+		if err := setMultipartNestedValue(nested, root, segments, fieldValues); err != nil {
+			return nil, newValidationError(field, err.Error())
+		}
+		nestedUsed[root] = field
+	}
+
+	for root, value := range nested {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, newValidationError(root, "must be an object or null")
+		}
+		raw[root] = encoded
+	}
+	return raw, nil
+}
+
+func parseMultipartBracketField(field string) (root string, segments []multipartPathSegment, nested bool, err error) {
+	open := strings.IndexByte(field, '[')
+	if open < 0 {
+		return field, nil, false, nil
+	}
+	if open == 0 {
+		return "", nil, false, fmt.Errorf("is not supported")
+	}
+	root = field[:open]
+	rest := field[open:]
+	for len(rest) > 0 {
+		if rest[0] != '[' {
+			return "", nil, false, fmt.Errorf("is not supported")
+		}
+		closeIdx := strings.IndexByte(rest, ']')
+		if closeIdx < 0 {
+			return "", nil, false, fmt.Errorf("is not supported")
+		}
+		inner := rest[1:closeIdx]
+		rest = rest[closeIdx+1:]
+		if inner == "" {
+			if len(rest) != 0 {
+				return "", nil, false, fmt.Errorf("is not supported")
+			}
+			if len(segments) == 0 {
+				return "", nil, false, fmt.Errorf("is not supported")
+			}
+			segments[len(segments)-1].arrayLeaf = true
+			continue
+		}
+		segments = append(segments, multipartPathSegment{key: inner})
+	}
+	if len(segments) == 0 {
+		return "", nil, false, fmt.Errorf("is not supported")
+	}
+	return root, segments, true, nil
+}
+
+func setMultipartNestedValue(roots map[string]any, root string, segments []multipartPathSegment, values []string) error {
+	current, ok := roots[root]
+	if !ok {
+		current = map[string]any{}
+		roots[root] = current
+	}
+	obj, ok := current.(map[string]any)
+	if !ok {
+		return fmt.Errorf("must be an object or null")
+	}
+
+	for i, segment := range segments {
+		last := i == len(segments)-1
+		if last {
+			coerced := make([]any, 0, len(values))
+			for _, value := range values {
+				coerced = append(coerced, coerceMultipartScalar(value))
+			}
+			if segment.arrayLeaf {
+				existing, exists := obj[segment.key]
+				if !exists {
+					obj[segment.key] = coerced
+					return nil
+				}
+				arr, ok := existing.([]any)
+				if !ok {
+					return fmt.Errorf("must be an object or null")
+				}
+				obj[segment.key] = append(arr, coerced...)
+				return nil
+			}
+			if len(coerced) != 1 {
+				return fmt.Errorf("must be an object or null")
+			}
+			if _, exists := obj[segment.key]; exists {
+				return fmt.Errorf("is not supported")
+			}
+			obj[segment.key] = coerced[0]
+			return nil
+		}
+		if segment.arrayLeaf {
+			return fmt.Errorf("is not supported")
+		}
+		next, exists := obj[segment.key]
+		if !exists {
+			next = map[string]any{}
+			obj[segment.key] = next
+		}
+		child, ok := next.(map[string]any)
+		if !ok {
+			return fmt.Errorf("must be an object or null")
+		}
+		obj = child
+	}
+	return fmt.Errorf("is not supported")
+}
+
+func coerceMultipartScalar(value string) any {
+	trimmed := strings.TrimSpace(value)
+	switch trimmed {
+	case "true":
+		return true
+	case "false":
+		return false
+	case "null":
+		return nil
+	}
+	if trimmed == "" {
+		return value
+	}
+	if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
+		return f
+	}
+	return value
 }
 
 func parseImagesEditsSharedFields(raw map[string]json.RawMessage, images []string) (ImagesEditsRequest, error) {

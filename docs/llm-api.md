@@ -107,9 +107,16 @@ Supported request fields (JSON body fields, or the same names as multipart text 
 * `response_format` (optional; only `b64_json` or omitted)
 * `output_format` (optional; only `png` or omitted)
 * `safety_identifier` and `user` (optional; accepted with no side effects)
-* `quantization_config` (optional; object or `null`; written into Image TaskArgs; multipart MAY send the JSON object as a form string)
-* `components` (optional; object or `null`; written into Image TaskArgs; multipart MAY send the JSON object as a form string)
+* `quantization_config` (optional; object or `null`; written into Image TaskArgs)
+* `components` (optional; object or `null`; written into Image TaskArgs)
 * `vram_limit` (optional; unsigned integer GB; see VRAM Limit and Effective VRAM)
+
+For multipart `quantization_config` and `components`, AS MUST accept either:
+
+* one form field whose value is the JSON object or `null` string; or
+* OpenAI Python SDK bracket fields under that root, such as `quantization_config[quant_kwargs][load_in_4bit]` and `quantization_config[components_to_quantize][]`, and MUST reconstruct the nested object before TaskArgs conversion.
+
+Bracket array fields MUST use a final empty `[]` segment. Scalar form values `true`, `false`, and `null` under bracket fields MUST be coerced to JSON boolean or null; integer and floating-point digit strings MUST be coerced to JSON numbers; all other scalars MUST remain JSON strings. AS MUST reject a request that mixes a JSON object form value and bracket fields for the same root. AS MUST reject bracket fields whose root is not `quantization_config` or `components`.
 
 AS MUST reject unknown fields and the following values with HTTP 400 and the OpenAI invalid-request error shape: `mask`; `input_fidelity`; `response_format=url`; `output_format` other than `png`; `output_compression`; `background`; `moderation`; `stream=true`; `partial_images`; `file_id`; non-data-URL `image_url`; `dtype`; `strength`; and Crynux Raw Task fields such as `steps`, `negative_prompt`, or `lora`.
 
@@ -117,7 +124,7 @@ After building Image TaskArgs, AS MUST enforce the Raw Task `task_args.images` s
 
 AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, non-empty `images` as data URLs, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. The Images edits request does not accept `seed` or `strength`. AS MUST set `task_config.seed` to a uniformly chosen integer from 0 through 2147483647 before the job is persisted. When the request includes `quantization_config`, AS MUST copy that value into TaskArgs. When the request includes `components`, AS MUST copy that value into TaskArgs. AS MUST NOT accept client `dtype` or `lora` on this endpoint. Image loaded-models row selection, effective VRAM resolution, Credits estimation, and settlement MUST follow the same rules as Images Generations.
 
-Clients MAY send `quantization_config`, `components`, and `vram_limit` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body. Multipart clients MAY send those three fields as form values.
+Clients MAY send `quantization_config`, `components`, and `vram_limit` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body. Multipart clients MAY send `vram_limit` as a form value and MAY send `quantization_config` and `components` either as JSON form strings or as OpenAI SDK bracket-nested form fields.
 
 The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, `quality`, and `output_format`. The response MUST omit `url`, `revised_prompt`, `usage`, `background`, and `safety_identifier`. AS MUST NOT persist the response body, PNG bytes, or base64 strings on the job row.
 
