@@ -257,6 +257,25 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if err != nil {
 		return nil, err
 	}
+	taskArgs := request.TaskArgs
+	resolvedImageMinVRAM := config.GetConfig().LLM.DefaultVramLimit
+	if *request.TaskType == models.TaskTypeImage {
+		resolved, resolveErr := service.ResolveImageModelExecution(taskArgs, model)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		taskArgs = resolved.TaskArgsJSON
+		resolvedImageMinVRAM = resolved.MinVRAM
+		if validationErr, err := models.ValidateTaskArgsJsonStr(taskArgs, models.TaskTypeImage); err != nil {
+			return nil, err
+		} else if validationErr != nil {
+			return nil, fmt.Errorf("invalid task_args: %s", validationErr.Error())
+		}
+		model, dtype, quantConfig, _, err = parseTaskArgs(*request.TaskType, taskArgs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	kind := huggingface.ModelKindLLM
 	if *request.TaskType == models.TaskTypeImage {
 		kind = huggingface.ModelKindSD
@@ -271,13 +290,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if minVram == nil && !hasGPUName {
 		resolved := config.GetConfig().LLM.DefaultVramLimit
 		if *request.TaskType == models.TaskTypeImage {
-			loaded, ok, err := service.GetLoadedSDModelExact(model, request.TaskArgs)
-			if err != nil {
-				return nil, err
-			}
-			if ok && loaded.MinVRAM > 0 {
-				resolved = loaded.MinVRAM
-			}
+			resolved = resolvedImageMinVRAM
 		} else if loaded, ok := service.GetLoadedLLMModelExact(model, quantConfig, dtype); ok && loaded.MinVRAM > 0 {
 			resolved = loaded.MinVRAM
 		} else if loaded, ok := service.GetLoadedLLMModel(model); ok && loaded.MinVRAM > 0 {
@@ -307,11 +320,11 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	var llmBilling *models.LLMTaskBillingData
 	if *request.TaskType == models.TaskTypeImage {
 		estimate, err = service.EstimateImageTaskFee(ctx, service.CalcImageTaskFeeInput{
-			TaskArgs: request.TaskArgs, Query: query, PriorityGwei: priority,
+			TaskArgs: taskArgs, Query: query, PriorityGwei: priority,
 			EffectiveVram: billedVram,
 		})
 	} else {
-		promptTokens := uint64((utf8.RuneCountInString(request.TaskArgs) + 3) / 4)
+		promptTokens := uint64((utf8.RuneCountInString(taskArgs) + 3) / 4)
 		estimate, err = service.EstimateLLMTaskFeeWithQuery(ctx, query, billedVram, priority, promptTokens, maxTokens)
 		if err == nil {
 			llmBilling = &models.LLMTaskBillingData{
@@ -327,7 +340,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	}
 	taskFeeWei := new(big.Int).Mul(estimate.TaskFeeGwei, big.NewInt(weiPerGwei))
 	return &preparedTask{
-		request: request, model: model, taskArgs: request.TaskArgs, minVram: minVram,
+		request: request, model: model, taskArgs: taskArgs, minVram: minVram,
 		billedVram: billedVram, priority: priority.String(),
 		taskFeeWei: taskFeeWei.String(), credits: estimate.Credits.String(), llmBilling: llmBilling,
 	}, nil

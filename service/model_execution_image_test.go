@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -15,6 +16,11 @@ var (
 		"quant_method":           "bitsandbytes",
 		"components_to_quantize": []any{"text_encoder"},
 		"quant_kwargs":           map[string]any{"load_in_8bit": true},
+	}
+	testQuantGGUF4Bit = map[string]any{
+		"quant_method":           "gguf",
+		"components_to_quantize": []any{"transformer"},
+		"quant_kwargs":           map[string]any{"quant_type": "Q4_K"},
 	}
 )
 
@@ -35,6 +41,12 @@ func applyImage(t *testing.T, taskArgs string, model string) (map[string]any, ui
 		t.Fatal(err)
 	}
 	return payload, minVRAM
+}
+
+func applyImageErr(t *testing.T, taskArgs string, model string) error {
+	t.Helper()
+	_, _, err := ApplyImageExecutionToTaskArgsJSON(taskArgs, model)
+	return err
 }
 
 func transformerRepo(t *testing.T, payload map[string]any) any {
@@ -139,7 +151,7 @@ func TestApplyImageExecutionClientQuantizationSelectsMatchingRow(t *testing.T) {
 	}
 }
 
-func TestApplyImageExecutionDoesNotBorrowFromOtherIdentity(t *testing.T) {
+func TestApplyImageExecutionAutoMissDoesNotBorrowFromOtherIdentity(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
 		testImageRow("image-a", "org/image", "bfloat16", nil, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
 	)
@@ -150,18 +162,9 @@ func TestApplyImageExecutionDoesNotBorrowFromOtherIdentity(t *testing.T) {
 		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1},
 		"components": {"transformer": {"format": "gguf", "repo": "org/unknown", "format_kwargs": {"filename": "model.gguf"}}}
 	}`
-	payload, minVRAM := applyImage(t, taskArgs, "org/image")
-	if minVRAM != 24 {
-		t.Fatalf("minVRAM = %d, want default 24", minVRAM)
-	}
-	if _, ok := payload["dtype"]; ok {
-		t.Fatalf("dtype borrowed from another row: %#v", payload["dtype"])
-	}
-	if repo := transformerRepo(t, payload); repo != "org/unknown" {
-		t.Fatalf("components = %#v", repo)
-	}
-	if quant, ok := payload["quantization_config"]; !ok || quant != nil {
-		t.Fatalf("quantization_config = %#v", payload["quantization_config"])
+	err := applyImageErr(t, taskArgs, "org/image")
+	if !errors.Is(err, ErrImageExecutionUnresolved) {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -189,6 +192,96 @@ func TestApplyImageExecutionPlainRequestSkipsLoraRows(t *testing.T) {
 	payload, minVRAM = applyImage(t, loraArgs, "org/image")
 	if minVRAM != 40 || payload["dtype"] != "bfloat16" {
 		t.Fatalf("lora request: minVRAM = %d dtype = %#v", minVRAM, payload["dtype"])
+	}
+}
+
+func TestApplyImageExecutionConcreteDtypeKeepsFieldsOnCacheMiss(t *testing.T) {
+	refreshTestLoadedModels(t, 1, 24,
+		testImageRow("other", "org/other", "bfloat16", nil, nil, nil, 20, 1, 2),
+	)
+
+	for _, dtype := range []string{"float16", "bfloat16", "float32"} {
+		taskArgs := `{
+			"base_model": {"name": "org/new-image"},
+			"prompt": "a cat",
+			"dtype": "` + dtype + `",
+			"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1},
+			"components": {"transformer": {"format": "gguf", "repo": "org/quant-new", "format_kwargs": {"filename": "model.gguf"}}}
+		}`
+		payload, minVRAM := applyImage(t, taskArgs, "org/new-image")
+		if minVRAM != 24 {
+			t.Fatalf("dtype %s: minVRAM = %d, want default 24", dtype, minVRAM)
+		}
+		if payload["dtype"] != dtype {
+			t.Fatalf("dtype = %#v, want %s", payload["dtype"], dtype)
+		}
+		if repo := transformerRepo(t, payload); repo != "org/quant-new" {
+			t.Fatalf("components borrowed: %#v", repo)
+		}
+		if _, ok := payload["quantization_config"]; ok {
+			t.Fatalf("quantization_config injected on concrete miss: %#v", payload["quantization_config"])
+		}
+	}
+}
+
+func TestApplyImageExecutionAutoInjectsConcreteDtypeFromGGUFRow(t *testing.T) {
+	refreshTestLoadedModels(t, 1, 24,
+		testImageRow("gguf-4bit", "org/image", "bfloat16", testQuantGGUF4Bit, testTransformerComponents("org/gguf-4bit"), nil, 18, 1, 2),
+	)
+
+	taskArgs := `{
+		"base_model": {"name": "org/image"},
+		"prompt": "a cat",
+		"dtype": "auto",
+		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1},
+		"quantization_config": {"quant_method": "gguf", "components_to_quantize": ["transformer"], "quant_kwargs": {"quant_type": "Q4_K"}},
+		"components": {"transformer": {"format": "gguf", "repo": "org/gguf-4bit", "format_kwargs": {"filename": "model.gguf"}}}
+	}`
+	payload, minVRAM := applyImage(t, taskArgs, "org/image")
+	if minVRAM != 18 || payload["dtype"] != "bfloat16" {
+		t.Fatalf("minVRAM = %d dtype = %#v", minVRAM, payload["dtype"])
+	}
+}
+
+func TestApplyImageExecutionAutoQuantMismatchRejects(t *testing.T) {
+	refreshTestLoadedModels(t, 1, 24,
+		testImageRow("gguf-4bit", "org/image", "bfloat16", testQuantGGUF4Bit, testTransformerComponents("org/gguf-4bit"), nil, 18, 1, 2),
+	)
+
+	taskArgs := `{
+		"base_model": {"name": "org/image"},
+		"prompt": "a cat",
+		"dtype": "auto",
+		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1},
+		"quantization_config": {"quant_method": "gguf", "components_to_quantize": ["transformer"], "quant_kwargs": {"quant_type": "Q8_0"}},
+		"components": {"transformer": {"format": "gguf", "repo": "org/gguf-4bit", "format_kwargs": {"filename": "model.gguf"}}}
+	}`
+	err := applyImageErr(t, taskArgs, "org/image")
+	if !errors.Is(err, ErrImageExecutionUnresolved) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestApplyImageExecutionRejectsNonConcreteLoadedDtype(t *testing.T) {
+	refreshTestLoadedModels(t, 1, 24,
+		testImageRow("auto-row", "org/image", "auto", nil, nil, nil, 12, 1, 2),
+	)
+
+	err := applyImageErr(t, plainImageTaskArgs, "org/image")
+	if !errors.Is(err, ErrImageExecutionUnresolved) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestApplyImageExecutionAutoOnlyLoraRowsRejects(t *testing.T) {
+	lora := map[string]any{"model": "org/lora", "weight_file_name": "", "weight": 100}
+	refreshTestLoadedModels(t, 1, 24,
+		testImageRow("image-lora", "org/image", "bfloat16", nil, nil, lora, 40, 1, 2),
+	)
+
+	err := applyImageErr(t, plainImageTaskArgs, "org/image")
+	if !errors.Is(err, ErrImageExecutionUnresolved) {
+		t.Fatalf("error = %v", err)
 	}
 }
 

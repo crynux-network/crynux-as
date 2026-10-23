@@ -193,6 +193,17 @@ func newImageRequestIdentity(modelID string, payload map[string]any, exact bool)
 	return identity, nil
 }
 
+// ErrImageExecutionUnresolved means Image TaskArgs with omitted or auto dtype could not
+// be resolved to one coherent loaded-models row with a concrete execution dtype.
+var ErrImageExecutionUnresolved = errors.New("unresolved image execution configuration")
+
+// ImageExecutionResolution is the result of resolving Image TaskArgs execution fields.
+type ImageExecutionResolution struct {
+	TaskArgsJSON     string
+	MinVRAM          uint64
+	FromLoadedModels bool
+}
+
 // GetLoadedSDModelExact returns the Image row whose full cache identity (dtype,
 // quantization_config, components, and lora) equals that of taskArgsJSON.
 func GetLoadedSDModelExact(modelID string, taskArgsJSON string) (LoadedLLMModel, bool, error) {
@@ -208,44 +219,128 @@ func GetLoadedSDModelExact(modelID string, taskArgsJSON string) (LoadedLLMModel,
 	return loaded, ok, nil
 }
 
-// ApplyImageExecutionToTaskArgsJSON sets version and cache execution fields on Image TaskArgs.
-// The selected row is the greatest-min_vram row whose cache identity agrees with every
-// client-supplied quantization_config, components, and lora; a request without lora never
-// selects a LoRA row. dtype and every omitted field are taken from that same row. When no
-// row matches, the client fields are kept and the default VRAM limit applies.
-func ApplyImageExecutionToTaskArgsJSON(taskArgsJSON string, modelID string) (string, uint64, error) {
+func isConcreteExecutionDType(dtype string) bool {
+	switch strings.ToLower(strings.TrimSpace(dtype)) {
+	case string(models.DTypeFloat16), string(models.DTypeBFloat16), string(models.DTypeFloat32):
+		return true
+	default:
+		return false
+	}
+}
+
+func unresolvedImageExecution(msg string) error {
+	return fmt.Errorf("%w: %s", ErrImageExecutionUnresolved, msg)
+}
+
+// requestImageDType returns the normalized client dtype and whether the request is in
+// concrete mode. Omitted dtype and "auto" are auto mode.
+func requestImageDType(payload map[string]any) (dtype string, concrete bool, err error) {
+	raw, ok := payload["dtype"]
+	if !ok {
+		return autoExecutionDType, false, nil
+	}
+	dtypeStr, isString := raw.(string)
+	if !isString {
+		return "", false, errors.New("dtype must be a string")
+	}
+	normalized := normalizeExecutionDType(dtypeStr)
+	if isConcreteExecutionDType(normalized) {
+		return normalized, true, nil
+	}
+	if normalized == autoExecutionDType {
+		return autoExecutionDType, false, nil
+	}
+	return "", false, unresolvedImageExecution("dtype must be float16, bfloat16, float32, or auto")
+}
+
+// ResolveImageModelExecution resolves Image TaskArgs execution fields for Raw, generations,
+// and edits. Concrete dtype (float16, bfloat16, float32) is kept as submitted and does not
+// require a loaded-models hit; only an exact full-identity hit may supply min_vram.
+// Omitted or auto dtype must match one coherent loaded-models row; the selected row's
+// concrete execution_dtype and any omitted quantization_config/components are written from
+// that same row. A request without lora never selects a LoRA row.
+func ResolveImageModelExecution(taskArgsJSON string, modelID string) (ImageExecutionResolution, error) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
-		return "", 0, err
+		return ImageExecutionResolution{}, err
 	}
 	payload["version"] = models.GPTTaskArgsVersion
 	minVRAM := config.GetConfig().LLM.DefaultVramLimit
 
+	dtype, concrete, err := requestImageDType(payload)
+	if err != nil {
+		return ImageExecutionResolution{}, err
+	}
+
+	if concrete {
+		payload["dtype"] = dtype
+		identity, err := newImageRequestIdentity(modelID, payload, true)
+		if err != nil {
+			return ImageExecutionResolution{}, err
+		}
+		fromLoaded := false
+		if loaded, ok := pickLoadedSD(identity); ok {
+			fromLoaded = true
+			if loaded.MinVRAM > 0 {
+				minVRAM = loaded.MinVRAM
+			}
+		}
+		out, err := json.Marshal(payload)
+		if err != nil {
+			return ImageExecutionResolution{}, err
+		}
+		return ImageExecutionResolution{
+			TaskArgsJSON:     string(out),
+			MinVRAM:          minVRAM,
+			FromLoadedModels: fromLoaded,
+		}, nil
+	}
+
 	identity, err := newImageRequestIdentity(modelID, payload, false)
 	if err != nil {
-		return "", 0, err
+		return ImageExecutionResolution{}, err
 	}
-	if loaded, ok := pickLoadedSD(identity); ok {
-		if loaded.MinVRAM > 0 {
-			minVRAM = loaded.MinVRAM
-		}
-		payload["dtype"] = loaded.ExecutionDType
-		if _, ok := payload["quantization_config"]; !ok {
-			payload["quantization_config"] = QuantizationConfigForAPI(loaded.QuantizationConfig)
-		}
-		if _, ok := payload["components"]; !ok && len(loaded.Components) > 0 {
-			payload["components"] = loaded.Components
-		}
-		if _, ok := payload["lora"]; !ok && loaded.Lora != nil {
-			payload["lora"] = loaded.Lora
-		}
-	} else if _, ok := payload["quantization_config"]; !ok {
-		payload["quantization_config"] = nil
+	// Auto mode resolves dtype from the selected row; do not filter by client "auto".
+	identity.dtype = nil
+	loaded, ok := pickLoadedSD(identity)
+	if !ok {
+		return ImageExecutionResolution{}, unresolvedImageExecution(
+			"no matching loaded image model configuration for the requested execution settings",
+		)
+	}
+	if !isConcreteExecutionDType(loaded.ExecutionDType) {
+		return ImageExecutionResolution{}, unresolvedImageExecution(
+			"matched loaded image model configuration does not have a concrete execution dtype",
+		)
+	}
+	if loaded.MinVRAM > 0 {
+		minVRAM = loaded.MinVRAM
+	}
+	payload["dtype"] = loaded.ExecutionDType
+	if _, ok := payload["quantization_config"]; !ok {
+		payload["quantization_config"] = QuantizationConfigForAPI(loaded.QuantizationConfig)
+	}
+	if _, ok := payload["components"]; !ok && len(loaded.Components) > 0 {
+		payload["components"] = loaded.Components
 	}
 
 	out, err := json.Marshal(payload)
 	if err != nil {
+		return ImageExecutionResolution{}, err
+	}
+	return ImageExecutionResolution{
+		TaskArgsJSON:     string(out),
+		MinVRAM:          minVRAM,
+		FromLoadedModels: true,
+	}, nil
+}
+
+// ApplyImageExecutionToTaskArgsJSON resolves Image TaskArgs execution fields and returns
+// the canonical JSON with the default min_vram for billing when the user did not set one.
+func ApplyImageExecutionToTaskArgsJSON(taskArgsJSON string, modelID string) (string, uint64, error) {
+	resolved, err := ResolveImageModelExecution(taskArgsJSON, modelID)
+	if err != nil {
 		return "", 0, err
 	}
-	return string(out), minVRAM, nil
+	return resolved.TaskArgsJSON, resolved.MinVRAM, nil
 }

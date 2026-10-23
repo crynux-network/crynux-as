@@ -55,6 +55,10 @@ func ImagesGenerations(c *gin.Context) {
 	taskArgsJSON, billedVram, err := service.ApplyImageExecutionToTaskArgsJSON(taskArgsJSON, req.Model)
 	if err != nil {
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
+		if errors.Is(err, service.ErrImageExecutionUnresolved) {
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
 		return
 	}
@@ -114,16 +118,16 @@ func ImagesGenerations(c *gin.Context) {
 	taskFeeWei := new(big.Int).Mul(estimate.TaskFeeGwei, big.NewInt(imagesWeiPerGwei))
 	db := config.GetDB()
 	job, err := service.ReserveCreditsAndCreateRawTaskJob(c.Request.Context(), db, service.CreateRawTaskJobInput{
-		Project:      project,
-		TaskType:     models.TaskTypeImage,
-		APIType:      apiType,
-		Model:        req.Model,
-		TaskArgsJSON: taskArgsJSON,
-		MinVram:      &minVram,
-		PriorityGwei: priorityGwei,
-		BilledVram:   billedVram,
-		TaskFeeWei:   taskFeeWei,
-		ImageCredits: estimate.Credits,
+		Project:       project,
+		TaskType:      models.TaskTypeImage,
+		APIType:       apiType,
+		Model:         req.Model,
+		TaskArgsJSON:  taskArgsJSON,
+		MinVram:       &minVram,
+		PriorityGwei:  priorityGwei,
+		BilledVram:    billedVram,
+		TaskFeeWei:    taskFeeWei,
+		ImageCredits:  estimate.Credits,
 		CreditsToLock: estimate.Credits,
 	})
 	if err != nil {
@@ -204,6 +208,10 @@ func ImagesEdits(c *gin.Context) {
 	taskArgsJSON, billedVram, err := service.ApplyImageExecutionToTaskArgsJSON(taskArgsJSON, req.Model)
 	if err != nil {
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
+		if errors.Is(err, service.ErrImageExecutionUnresolved) {
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
 		return
 	}
