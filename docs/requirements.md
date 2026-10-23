@@ -89,6 +89,8 @@ Each project exposes the following endpoints under its private base URL:
 * `POST /api/<endpoint_token>/v1/completions`
 * `POST /api/<endpoint_token>/v1/images/generations`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/images/generations`
+* `POST /api/<endpoint_token>/v1/images/edits`
+* `POST /api/<endpoint_token>/v1/<vram_limit>/images/edits`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/responses`
@@ -118,7 +120,7 @@ Raw batch create and status requests MUST contain between 1 and 100 items and MU
 
 ### Forwarding to the Crynux Bridge
 
-The service executes LLM and Image jobs through the Crynux Bridge raw task APIs. AS parses OpenAI-compatible LLM requests into canonical `GPTTaskArgs`, submits Bridge ClientTasks, queries ClientTask status, downloads raw `GPTTaskResponse` JSON, and formats public LLM API responses locally. For Image jobs, including OpenAI Images generations and Raw Image tasks, AS downloads PNG results from Bridge into `llm.task_result_dir` before settle and serves or encodes those files from disk. See [llm-api.md](./llm-api.md) and [raw-task-api.md](./raw-task-api.md).
+The service executes LLM and Image jobs through the Crynux Bridge raw task APIs. AS parses OpenAI-compatible LLM requests into canonical `GPTTaskArgs`, submits Bridge ClientTasks, queries ClientTask status, downloads raw `GPTTaskResponse` JSON, and formats public LLM API responses locally. For Image jobs, including OpenAI Images generations, OpenAI Images edits, and Raw Image tasks, AS downloads PNG results from Bridge into `llm.task_result_dir` before settle and serves or encodes those files from disk. See [llm-api.md](./llm-api.md) and [raw-task-api.md](./raw-task-api.md).
 
 ### Charging
 

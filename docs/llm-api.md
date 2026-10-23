@@ -16,13 +16,15 @@ Implemented endpoints:
 * `GET /api/<endpoint_token>/v1/responses/<response_id>`
 * `POST /api/<endpoint_token>/v1/images/generations`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/images/generations`
+* `POST /api/<endpoint_token>/v1/images/edits`
+* `POST /api/<endpoint_token>/v1/<vram_limit>/images/edits`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/responses`
 * `GET /api/<endpoint_token>/v1/models`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
-The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields. The Images generations request and response formats MUST be OpenAI-compatible for the supported fields specified in **Images Generations API**.
+The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields. The Images generations and Images edits request and response formats MUST be OpenAI-compatible for the supported fields specified in **Images Generations API** and **Images Edits API**.
 
 Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. Chat Completions, Completions, and Responses MUST accept optional `dtype` and `quantization_config` body fields used to select a loaded-models row and to populate canonical TaskArgs. AS MUST map those public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
 
@@ -34,7 +36,7 @@ Creates one Image `task_jobs` row, waits for terminal settle, reads PNG files fr
 
 The same create operation is also available at `POST /api/<endpoint_token>/v1/<vram_limit>/images/generations`. The path segment and body field `vram_limit` follow the VRAM Limit and Effective VRAM rules for Images.
 
-AS MUST NOT expose `POST /images/edits`, `POST /images/variations`, or streaming Images responses.
+AS MUST NOT expose `POST /images/variations` or streaming Images responses.
 
 Supported request fields:
 
@@ -67,6 +69,55 @@ AS MUST reject unknown fields and the following values with HTTP 400 and the Ope
 AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. The Images request does not accept `seed`. AS MUST set `task_config.seed` to a uniformly chosen integer from 0 through 2147483647 before the job is persisted. When the request includes `quantization_config`, AS MUST copy that value into TaskArgs. When the request includes `components`, AS MUST copy that value into TaskArgs. AS MUST NOT accept client `dtype` or `lora` on this endpoint. AS MUST select one Image loaded-models row by cache identity: the row MUST have `model_id` equal to the request `model`, MUST have `lora` equal to `null`, MUST have `quantization_config` equal to the request value when the request includes `quantization_config`, and MUST have `components` equal to the request value when the request includes `components`. Component comparison MUST use `format`, lowercase `repo`, and `format_kwargs`, and MUST ignore `revision`. When several rows match, AS MUST select the row with the greatest `min_vram`, with ties broken by canonical `quantization_config` ascending, then `execution_dtype` ascending, then `model_cache_hash` ascending. AS MUST write the selected row's `execution_dtype` into TaskArgs `dtype`, and MUST write the selected row's `quantization_config` and `components` into TaskArgs when the request omits them. When no row matches, AS MUST NOT write `dtype`, MUST NOT take any field from another row, MUST keep the request fields, and MUST write `quantization_config` as `null` when the request omits it. When the user specified a `vram_limit`, the effective VRAM MUST be the user value and MUST override the selected row's `min_vram`. When the user did not specify a `vram_limit`, the effective VRAM MUST be the selected row's `min_vram`, or `llm.default_vram_limit` when no row matches. AS MUST estimate and settle Credits with the Image pixel-step rules in [credits-billing.md](./credits-billing.md) and [raw-task-api.md](./raw-task-api.md).
 
 Clients MAY send `quantization_config`, `components`, and `vram_limit` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body.
+
+The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, `quality`, and `output_format`. The response MUST omit `url`, `revised_prompt`, `usage`, `background`, and `safety_identifier`. AS MUST NOT persist the response body, PNG bytes, or base64 strings on the job row.
+
+## Images Edits API
+
+### `POST /api/<endpoint_token>/v1/images/edits`
+
+Creates one Image `task_jobs` row with non-empty Image TaskArgs `images`, waits for terminal settle, reads PNG files from `{llm.task_result_dir}/{task_jobs.id}/`, and returns an OpenAI Images response with `b64_json` values encoded from those files for the HTTP response only.
+
+The same create operation is also available at `POST /api/<endpoint_token>/v1/<vram_limit>/images/edits`. The path segment and body field `vram_limit` follow the VRAM Limit and Effective VRAM rules for Images.
+
+The request MUST use either `application/json` or `multipart/form-data`.
+
+JSON body input images:
+
+* The request MUST include `images` as a non-empty array of objects.
+* Each object MUST provide exactly one of `image_url` or `file_id`.
+* `image_url` MUST be a `data:image/<type>;base64,...` data URL. Absolute `http` and `https` URLs MUST be rejected.
+* `file_id` MUST be rejected.
+* The array MUST contain at least 1 and at most 16 entries.
+
+Multipart form input images:
+
+* The request MUST include one or more file parts named `image` or `image[]`.
+* AS MUST encode each uploaded file as a `data:image/<type>;base64,...` data URL using the part Content-Type when it is an `image/*` type, otherwise `image/png`.
+* The total number of uploaded image files MUST be at least 1 and at most 16.
+* A `mask` file part MUST be rejected.
+
+Supported request fields (JSON body fields, or the same names as multipart text fields):
+
+* `prompt` (required; maximum 32000 characters)
+* `model` (required; Hugging Face SD model id; normalized with trim and lowercase)
+* `n` (optional; 1–10; default 1)
+* `size` (optional; same mapping as Images Generations)
+* `quality` (optional; same mapping as Images Generations to `task_config.steps`)
+* `response_format` (optional; only `b64_json` or omitted)
+* `output_format` (optional; only `png` or omitted)
+* `safety_identifier` and `user` (optional; accepted with no side effects)
+* `quantization_config` (optional; object or `null`; written into Image TaskArgs; multipart MAY send the JSON object as a form string)
+* `components` (optional; object or `null`; written into Image TaskArgs; multipart MAY send the JSON object as a form string)
+* `vram_limit` (optional; unsigned integer GB; see VRAM Limit and Effective VRAM)
+
+AS MUST reject unknown fields and the following values with HTTP 400 and the OpenAI invalid-request error shape: `mask`; `input_fidelity`; `response_format=url`; `output_format` other than `png`; `output_compression`; `background`; `moderation`; `stream=true`; `partial_images`; `file_id`; non-data-URL `image_url`; `dtype`; `strength`; and Crynux Raw Task fields such as `steps`, `negative_prompt`, or `lora`.
+
+After building Image TaskArgs, AS MUST enforce the Raw Task `task_args.images` size limit: the sum of the byte lengths of every string in `images` as stored in the JSON (including any `data:image/...;base64,` prefix) MUST NOT exceed `1048576` (1mb). AS MUST NOT decode base64 payloads to measure size. When the sum exceeds the limit, AS MUST return HTTP 400 with an invalid-request error whose message is exactly `task_args.images total size exceeds the 1mb limit`, and MUST NOT reserve Credits or create a job.
+
+AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, non-empty `images` as data URLs, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. The Images edits request does not accept `seed` or `strength`. AS MUST set `task_config.seed` to a uniformly chosen integer from 0 through 2147483647 before the job is persisted. When the request includes `quantization_config`, AS MUST copy that value into TaskArgs. When the request includes `components`, AS MUST copy that value into TaskArgs. AS MUST NOT accept client `dtype` or `lora` on this endpoint. Image loaded-models row selection, effective VRAM resolution, Credits estimation, and settlement MUST follow the same rules as Images Generations.
+
+Clients MAY send `quantization_config`, `components`, and `vram_limit` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body. Multipart clients MAY send those three fields as form values.
 
 The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, `quality`, and `output_format`. The response MUST omit `url`, `revised_prompt`, `usage`, `background`, and `safety_identifier`. AS MUST NOT persist the response body, PNG bytes, or base64 strings on the job row.
 
@@ -264,9 +315,9 @@ The catalog snapshot used by `GET /models` MUST NOT be used as a create-time all
 
 ### User-specified `vram_limit`
 
-A chat, completions, responses, or images generations request specifies the VRAM limit in GB through either:
+A chat, completions, responses, images generations, or images edits request specifies the VRAM limit in GB through either:
 
-1. The URL path segment `<vram_limit>` (`POST .../v1/<vram_limit>/chat/completions`, `POST .../v1/<vram_limit>/completions`, `POST .../v1/<vram_limit>/responses`, or `POST .../v1/<vram_limit>/images/generations`).
+1. The URL path segment `<vram_limit>` (`POST .../v1/<vram_limit>/chat/completions`, `POST .../v1/<vram_limit>/completions`, `POST .../v1/<vram_limit>/responses`, `POST .../v1/<vram_limit>/images/generations`, or `POST .../v1/<vram_limit>/images/edits`).
 2. The body field `vram_limit` (unsigned integer).
 
 The path value MUST override the body value. A non-integer path value MUST be rejected with HTTP 400. When neither is set, the user has not specified a VRAM limit.
@@ -280,7 +331,7 @@ For chat, completions, and responses, the effective VRAM of a request MUST be re
 3. When the user did not specify a `vram_limit` and the model has one or more rows in the full loaded-models cache without an exact match above, the effective VRAM is the greatest `min_vram` among those rows. Ties MUST break by canonical `quantization_config` ascending, then `execution_dtype` ascending, then `model_cache_hash` ascending.
 4. When the user did not specify a `vram_limit` and the model is not in the cache, the effective VRAM is `llm.default_vram_limit`.
 
-For images generations, the effective VRAM MUST be resolved as:
+For images generations and images edits, the effective VRAM MUST be resolved as:
 
 1. When the user specified a `vram_limit`, the effective VRAM is the user value. A user value lower than the Image loaded-models cache `min_vram` MUST be accepted.
 2. When the user did not specify a `vram_limit`, the effective VRAM is the `min_vram` of the Image loaded-models row selected by the Images Generations cache-identity rules above, or `llm.default_vram_limit` when no row matches.

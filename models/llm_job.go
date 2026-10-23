@@ -22,6 +22,7 @@ const (
 	TaskAPITypeChatCompletions
 	TaskAPITypeCompletions
 	TaskAPITypeImagesGenerations
+	TaskAPITypeImagesEdits
 )
 
 type TaskJobStatus int8

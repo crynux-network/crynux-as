@@ -13,6 +13,8 @@ func InitRoutes(engine *gin.Engine) {
 	group.POST("/completions", Completions)
 	group.POST("/images/generations", ImagesGenerations)
 	group.POST("/:vram_limit/images/generations", ImagesGenerations)
+	group.POST("/images/edits", ImagesEdits)
+	group.POST("/:vram_limit/images/edits", ImagesEdits)
 	group.POST("/:vram_limit/chat/completions", ChatCompletions)
 	group.POST("/:vram_limit/completions", Completions)
 	group.POST("/responses", responses.CreateResponse)
