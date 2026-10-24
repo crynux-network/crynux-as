@@ -379,7 +379,7 @@ billable_gwei = Prio * estimated_node_seconds * vram_weight
 credits = floor(billable_gwei * G)
 ```
 
-with `Prio` equal to the project's current static `priority_gwei` when mode is `static`, or the project's `auto_max_priority_gwei` when mode is `auto`, `vram_weight = max(min_vram, base_vram) / base_vram` using `base_vram` from `billing_config` and the example row `min_vram`, and `G` from `billing_config`. Pricing-example Credits cells MUST use `floor(billable_gwei * G)` without raising a zero result to `1`. The per-request minimum of `1` Credit applies only to Credits precheck and settle for a real LLM request.
+with `Prio` equal to the project's current static `priority_gwei` when mode is `static`, or the project's `auto_max_priority_gwei` when mode is `auto`, `vram_weight = max(min_vram, base_vram) / base_vram` using `base_vram` from `billing_config` and the example row `min_vram`, and `G` from `billing_config`. Pricing-example Credits cells MUST use `floor(billable_gwei * G)` without raising a zero result to `1`. When that truncated value is `0`, the WebUI MUST display `<1` instead of `0`. The per-request minimum of `1` Credit applies only to Credits precheck and settle for a real LLM request.
 
 `time_prompt_tokens` MUST be `512`. `time_completion_tokens` MUST be `2048`. They are the token counts the UI MUST use when showing estimated execution seconds for a typical smaller call. The time example MUST include `constant_seconds`:
 
@@ -414,6 +414,12 @@ Response shape:
         "min_vram": 24,
         "execution_dtype": "bfloat16",
         "quantization_config": null,
+        "components": {
+          "transformer": {
+            "format": "hf_diffusers_unet",
+            "repo": "example/component-repo"
+          }
+        },
         "overhead_seconds": 5,
         "seconds_per_sd_pixel_step": 0.00000001
       }
@@ -421,6 +427,8 @@ Response shape:
   }
 }
 ```
+
+Each example row MUST include the selected row's `components` object (Image TaskArgs shape). When the selected row has no component replacements, `components` MUST be `null` or an empty object.
 
 Example selection MUST use the in-memory Image catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public Image catalog visibility of `GET /models/image`. It MUST NOT read the LLM loaded-models cache.
 
@@ -437,7 +445,7 @@ For each selected row, coefficients MUST come from Relay SD execution-time with 
 
 The WebUI Cost Level example tables MUST sit under Chat and Image tabs. Chat MUST use `GET /v1/llm/pricing_examples`. Image MUST use `GET /v1/llm/image_pricing_examples`.
 
-The Image Credits table title MUST be `Credits per image` in static mode and `Maximum Credits per image` in auto mode. Column headers MUST be `Model`, `Size`, `Steps`, and `Credits`. The Model cell MUST use the same compact model-id-plus-quantization-and-VRAM-tag layout as the Chat tables. `Size` MUST show `example_width×example_height`. `Steps` MUST show `example_steps`. The table description MUST state that the estimate is for `example_num_images` image.
+The Image Credits table title MUST be `Credits per image` in static mode and `Maximum Credits per image` in auto mode. Column headers MUST be `Model`, `Size`, `Steps`, and `Credits`. The Model cell MUST use the same compact model-id-plus-quantization-and-VRAM-tag layout as the Chat tables. When an Image example row's `components` include one or more `repo` values, the Model cell MUST also show those repository names as muted small text on a new line under the model-id line. The Model cell MUST NOT invent component names when no `repo` is present. `Size` MUST show `example_width×example_height`. `Steps` MUST show `example_steps`. The table description MUST state that the estimate is for `example_num_images` image.
 
 Image Credits example cells MUST include overhead:
 
@@ -448,7 +456,7 @@ billable_gwei = Prio * estimated_node_seconds * vram_weight
 credits = floor(billable_gwei * G)
 ```
 
-with the same `Prio`, `vram_weight`, and `G` rules as Chat Credits examples. Pricing-example Credits cells MUST use `floor(billable_gwei * G)` without raising a zero result to `1`.
+with the same `Prio`, `vram_weight`, and `G` rules as Chat Credits examples. Pricing-example Credits cells MUST use `floor(billable_gwei * G)` without raising a zero result to `1`. When that truncated value is `0`, the WebUI MUST display `<1` instead of `0`.
 
 The Image execution-time table title MUST be `Execution time examples`. Column headers MUST be `Model`, `Size`, `Steps`, and `Seconds`. `Size` and `Steps` MUST show the same fixed workload as the Credits table. Seconds MUST use the same `estimated_node_seconds` formula, including `overhead_seconds`.
 

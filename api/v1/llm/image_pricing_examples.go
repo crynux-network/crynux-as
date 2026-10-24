@@ -19,12 +19,13 @@ const (
 )
 
 type ImagePricingExampleRow struct {
-	Model                 string  `json:"model" description:"Selected model id"`
-	MinVRAM               uint64  `json:"min_vram" description:"Model minimum VRAM in GB"`
-	ExecutionDType        string  `json:"execution_dtype" description:"Selected execution dtype"`
-	QuantizationConfig    any     `json:"quantization_config" description:"Selected quantization_config"`
-	OverheadSeconds       float64 `json:"overhead_seconds" description:"Relay SD overhead seconds"`
-	SecondsPerSDPixelStep float64 `json:"seconds_per_sd_pixel_step" description:"Relay seconds per SD pixel-step unit"`
+	Model                 string         `json:"model" description:"Selected model id"`
+	MinVRAM               uint64         `json:"min_vram" description:"Model minimum VRAM in GB"`
+	ExecutionDType        string         `json:"execution_dtype" description:"Selected execution dtype"`
+	QuantizationConfig    any            `json:"quantization_config" description:"Selected quantization_config"`
+	Components            map[string]any `json:"components" description:"Executable component replacements for this Image row"`
+	OverheadSeconds       float64        `json:"overhead_seconds" description:"Relay SD overhead seconds"`
+	SecondsPerSDPixelStep float64        `json:"seconds_per_sd_pixel_step" description:"Relay seconds per SD pixel-step unit"`
 }
 
 type ImagePricingExamplesData struct {
@@ -60,6 +61,7 @@ func GetImagePricingExamples(c *gin.Context) (*GetImagePricingExamplesResponse, 
 			MinVRAM:               model.MinVRAM,
 			ExecutionDType:        model.ExecutionDType,
 			QuantizationConfig:    service.QuantizationConfigForAPI(model.QuantizationConfig),
+			Components:            model.Components,
 			OverheadSeconds:       coefficients.OverheadSeconds,
 			SecondsPerSDPixelStep: coefficients.SecondsPerSDPixelStep,
 		})
