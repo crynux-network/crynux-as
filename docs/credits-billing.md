@@ -352,12 +352,12 @@ Response shape:
 }
 ```
 
-Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public LLM catalog visibility of `GET /models`. It MUST NOT read the Image loaded-models cache. Each catalog row is a distinct candidate keyed by `(model_cache_hash, execution_dtype)`.
+Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public LLM catalog visibility of `GET /models`. It MUST NOT read the Image loaded-models cache.
 
 1. Collect rows with a positive `min_vram`.
-2. Group by exact `min_vram`.
-3. Within each group, choose the row with the greatest node count; ties break by model id ascending, then canonical `quantization_config` ascending, then `execution_dtype` ascending.
-4. Sort the chosen group representatives by `min_vram` ascending.
+2. Group by `(model_id, canonical quantization_config, min_vram)`. Different quantization configs or different `min_vram` values for the same model MUST remain separate candidates.
+3. Within each group, choose one row: greatest `in_memory_node_count`, then greatest `on_disk_node_count`, then `execution_dtype` ascending, then `model_cache_hash` ascending. `execution_dtype` MUST NOT create additional example rows for the same model, quantization config, and `min_vram`.
+4. Sort the chosen representatives by `min_vram` ascending, then `model_id` ascending, then canonical `quantization_config` ascending.
 5. If more than four representatives exist, keep exactly the representatives at indexes `0`, `floor((n-1)/3)`, `floor(2*(n-1)/3)`, and `n-1` in that sorted list, removing duplicates while preserving order.
 6. If fewer than one representative exists, `examples` MUST be an empty list.
 
@@ -365,7 +365,7 @@ For each selected row, coefficients MUST come from Relay execution-time with `mo
 
 `pricing_prompt_tokens` and `pricing_completion_tokens` MUST both be `1000000`. They are the token counts the UI MUST use for the Credits-per-1M-token Input and Output unit examples.
 
-The WebUI Credits table title MUST be `Credits per 1M tokens` in static mode and `Maximum Credits per 1M tokens` in auto mode. Column headers MUST be `Model`, `1M Input`, and `1M Output`. The Model cell MUST show the model id plus secondary tags for quantization when present (`<quant_method>-<bitwidth>` such as `bitsandbytes-4bit`; omit the quantization tag when there is no quantization) and `execution_dtype` when present. The WebUI MUST NOT present the sum of the Input and Output cells as the Credits for one combined request.
+The WebUI Credits table title MUST be `Credits per 1M tokens` in static mode and `Maximum Credits per 1M tokens` in auto mode. Column headers MUST be `Model`, `1M Input`, and `1M Output`. The Model cell MUST keep a single compact line: the model id followed by a small quantization tag (`4bit`, `8bit`, another `<n>bit`, or `full` when there is no quantization) and a small VRAM tag as `><n>GB` when `min_vram` is greater than zero. The Model cell MUST NOT show `quant_method`, `llm_int8_threshold`, or `execution_dtype`. The WebUI MUST NOT present the sum of the Input and Output cells as the Credits for one combined request.
 
 Credits example cells MUST use marginal token work only. They MUST NOT include `constant_seconds` (`T0`):
 
@@ -390,7 +390,7 @@ estimated_node_seconds =
     + seconds_per_output_token * time_completion_tokens
 ```
 
-The WebUI execution-time table title MUST be `Execution time examples`. Column headers MUST be `Model`, `Input`, `Output`, and `Seconds`. The Model cell MUST use the same quantization and dtype tags as the Credits table. The `Input` and `Output` cells MUST show `time_prompt_tokens` and `time_completion_tokens`.
+The WebUI execution-time table title MUST be `Execution time examples`. Column headers MUST be `Model`, `Input`, `Output`, and `Seconds`. The Model cell MUST use the same compact model-id-plus-quantization-and-VRAM-tag layout as the Credits table. The `Input` and `Output` cells MUST show `time_prompt_tokens` and `time_completion_tokens`.
 
 The pricing-examples API MUST NOT return queue wait estimates. Queue wait MUST NOT be estimated from `median_priority_gwei` for this UI. The WebUI MUST load `credits_per_gwei`, `base_vram`, `min_priority_gwei`, `max_priority_gwei`, and `median_priority_gwei` from `billing_config` when computing Credits examples and the cost-level queue position.
 

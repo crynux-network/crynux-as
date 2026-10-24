@@ -6,6 +6,7 @@ import (
 	"crynux_as/service"
 	"math"
 	"sort"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -77,28 +78,50 @@ func GetPricingExamples(c *gin.Context) (*GetPricingExamplesResponse, error) {
 	}, nil
 }
 
+func pricingExampleGroupKey(model service.LoadedLLMModel) string {
+	return model.ModelID + "\x00" + model.QuantizationKey + "\x00" + strconv.FormatUint(model.MinVRAM, 10)
+}
+
+func betterPricingExampleRow(candidate, existing service.LoadedLLMModel) bool {
+	if candidate.NodeCount != existing.NodeCount {
+		return candidate.NodeCount > existing.NodeCount
+	}
+	if candidate.OnDiskNodeCount != existing.OnDiskNodeCount {
+		return candidate.OnDiskNodeCount > existing.OnDiskNodeCount
+	}
+	if candidate.ExecutionDType != existing.ExecutionDType {
+		return candidate.ExecutionDType < existing.ExecutionDType
+	}
+	return candidate.ModelCacheHash < existing.ModelCacheHash
+}
+
 func selectPricingExampleModels(models []service.LoadedLLMModel) []service.LoadedLLMModel {
-	byVRAM := map[uint64]service.LoadedLLMModel{}
+	// Keep one row per (model_id, quantization_config, min_vram). Same identity
+	// with different execution_dtype collapses to the strongest node-count row.
+	byIdentity := map[string]service.LoadedLLMModel{}
 	for _, model := range models {
 		if model.MinVRAM == 0 {
 			continue
 		}
-		existing, ok := byVRAM[model.MinVRAM]
-		if !ok ||
-			model.NodeCount > existing.NodeCount ||
-			(model.NodeCount == existing.NodeCount && model.ModelID < existing.ModelID) ||
-			(model.NodeCount == existing.NodeCount && model.ModelID == existing.ModelID && model.QuantizationKey < existing.QuantizationKey) ||
-			(model.NodeCount == existing.NodeCount && model.ModelID == existing.ModelID && model.QuantizationKey == existing.QuantizationKey && model.ExecutionDType < existing.ExecutionDType) {
-			byVRAM[model.MinVRAM] = model
+		key := pricingExampleGroupKey(model)
+		existing, ok := byIdentity[key]
+		if !ok || betterPricingExampleRow(model, existing) {
+			byIdentity[key] = model
 		}
 	}
 
-	representatives := make([]service.LoadedLLMModel, 0, len(byVRAM))
-	for _, model := range byVRAM {
+	representatives := make([]service.LoadedLLMModel, 0, len(byIdentity))
+	for _, model := range byIdentity {
 		representatives = append(representatives, model)
 	}
 	sort.Slice(representatives, func(i, j int) bool {
-		return representatives[i].MinVRAM < representatives[j].MinVRAM
+		if representatives[i].MinVRAM != representatives[j].MinVRAM {
+			return representatives[i].MinVRAM < representatives[j].MinVRAM
+		}
+		if representatives[i].ModelID != representatives[j].ModelID {
+			return representatives[i].ModelID < representatives[j].ModelID
+		}
+		return representatives[i].QuantizationKey < representatives[j].QuantizationKey
 	})
 
 	n := len(representatives)
