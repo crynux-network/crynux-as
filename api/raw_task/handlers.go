@@ -5,6 +5,7 @@ import (
 	"crynux_as/api/llm"
 	"crynux_as/bridge"
 	"crynux_as/config"
+	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"crynux_as/relay"
 	"crynux_as/service"
@@ -253,11 +254,14 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		return nil, errors.New("required_gpu and required_gpu_vram must be provided together")
 	}
 
-	model, dtype, quantConfig, maxTokens, err := parseTaskArgs(*request.TaskType, request.TaskArgs)
+	taskArgs, err := service.NormalizeTaskArgsModelNames(request.TaskArgs, *request.TaskType)
 	if err != nil {
 		return nil, err
 	}
-	taskArgs := request.TaskArgs
+	model, dtype, quantConfig, maxTokens, err := parseTaskArgs(*request.TaskType, taskArgs)
+	if err != nil {
+		return nil, err
+	}
 	resolvedImageMinVRAM := config.GetConfig().LLM.DefaultVramLimit
 	if *request.TaskType == models.TaskTypeImage {
 		resolved, resolveErr := service.ResolveImageModelExecution(taskArgs, model)
@@ -352,7 +356,7 @@ func parseTaskArgs(taskType models.TaskType, raw string) (model, dtype string, q
 		if err = json.Unmarshal([]byte(raw), &args); err != nil {
 			return
 		}
-		model = strings.TrimSpace(args.Model)
+		model = llmadapter.NormalizeModelID(args.Model)
 		dtype = strings.ToLower(strings.TrimSpace(args.Dtype))
 		quantConfig = args.QuantizationConfig
 		if args.GenerationConfig != nil && args.GenerationConfig.MaxNewTokens > 0 {
@@ -369,16 +373,16 @@ func parseTaskArgs(taskType models.TaskType, raw string) (model, dtype string, q
 		quantConfig = args.QuantizationConfig
 		var name string
 		if json.Unmarshal(args.BaseModel, &name) == nil {
-			model = name
+			model = llmadapter.NormalizeModelID(name)
 		} else {
 			var base imageModelArg
 			if err = json.Unmarshal(args.BaseModel, &base); err != nil {
 				return
 			}
-			model = base.Name
+			model = llmadapter.NormalizeModelID(base.Name)
 		}
 	}
-	if strings.TrimSpace(model) == "" {
+	if model == "" {
 		err = errors.New("task_args model is required")
 	}
 	return

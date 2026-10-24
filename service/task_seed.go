@@ -12,10 +12,15 @@ import (
 // taskSeedExclusiveMax is one past the largest seed accepted by Image TaskArgs.
 const taskSeedExclusiveMax int64 = 2147483648
 
-// EnsureTaskSeed writes a random generation seed when the client omitted one.
+// EnsureTaskSeed normalizes Hugging Face model name fields in TaskArgs, then
+// writes a random generation seed when the client omitted one.
 // An LLM seed is the top-level seed field. An Image seed is task_config.seed.
 // A seed that is already present, including 0, is left unchanged.
 func EnsureTaskSeed(taskArgsJSON string, taskType models.TaskType) (string, error) {
+	taskArgsJSON, err := NormalizeTaskArgsModelNames(taskArgsJSON, taskType)
+	if err != nil {
+		return "", err
+	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil || payload == nil {
 		return "", errors.New("task_args must be a JSON object")

@@ -87,8 +87,8 @@ func TestApplyImageExecutionKeepsRowsWithDifferentComponentRepos(t *testing.T) {
 	if minVRAM != 16 || payload["dtype"] != "float16" {
 		t.Fatalf("row b: minVRAM = %d dtype = %#v", minVRAM, payload["dtype"])
 	}
-	if repo := transformerRepo(t, payload); repo != "Org/Quant-B" {
-		t.Fatalf("client component repo rewritten: %#v", repo)
+	if repo := transformerRepo(t, payload); repo != "org/quant-b" {
+		t.Fatalf("client component repo = %#v", repo)
 	}
 	quant, ok := payload["quantization_config"].(map[string]any)
 	if !ok || quant["quant_method"] != "bitsandbytes" {

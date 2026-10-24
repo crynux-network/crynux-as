@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"encoding/hex"
 	"encoding/json"
@@ -64,10 +65,7 @@ func normalizeModelCacheHash(raw string) (string, error) {
 
 // normalizeRepository lowercases Hugging Face repository names and keeps URLs unchanged.
 func normalizeRepository(name string) string {
-	if strings.HasPrefix(name, "http://") || strings.HasPrefix(name, "https://") {
-		return name
-	}
-	return strings.ToLower(name)
+	return llmadapter.NormalizeModelName(name)
 }
 
 func normalizeExecutionDType(dtype string) string {

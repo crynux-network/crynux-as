@@ -125,7 +125,7 @@ func TestPrepareTaskValidatesHardwareSelection(t *testing.T) {
 func TestParseTaskArgs(t *testing.T) {
 	model, dtype, quant, maxTokens, err := parseTaskArgs(
 		models.TaskTypeLLM,
-		`{"model":"example/llm","dtype":"float16","quantization_config":{"quant_method":"awq","quant_kwargs":{}},"generation_config":{"max_new_tokens":64}}`,
+		`{"model":"Example/LLM","dtype":"float16","quantization_config":{"quant_method":"awq","quant_kwargs":{}},"generation_config":{"max_new_tokens":64}}`,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestParseTaskArgs(t *testing.T) {
 
 	model, dtype, quant, _, err = parseTaskArgs(
 		models.TaskTypeImage,
-		`{"base_model":{"name":"example/image"},"dtype":"bfloat16"}`,
+		`{"base_model":{"name":"Example/Image"},"dtype":"bfloat16"}`,
 	)
 	if err != nil {
 		t.Fatal(err)

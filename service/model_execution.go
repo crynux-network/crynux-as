@@ -113,6 +113,10 @@ func resolveDefaultDType(modelID string) models.DType {
 
 // ApplyLLMExecutionToTaskArgsJSON sets version, dtype, and quantization_config on TaskArgs JSON.
 func ApplyLLMExecutionToTaskArgsJSON(taskArgsJSON string, sel ModelExecutionSelection) (string, error) {
+	taskArgsJSON, err := NormalizeTaskArgsModelNames(taskArgsJSON, models.TaskTypeLLM)
+	if err != nil {
+		return "", err
+	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
 		return "", err
@@ -260,6 +264,11 @@ func requestImageDType(payload map[string]any) (dtype string, concrete bool, err
 // concrete execution_dtype and any omitted quantization_config/components are written from
 // that same row. A request without lora never selects a LoRA row.
 func ResolveImageModelExecution(taskArgsJSON string, modelID string) (ImageExecutionResolution, error) {
+	taskArgsJSON, err := NormalizeTaskArgsModelNames(taskArgsJSON, models.TaskTypeImage)
+	if err != nil {
+		return ImageExecutionResolution{}, err
+	}
+	modelID = llmadapter.NormalizeModelID(modelID)
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
 		return ImageExecutionResolution{}, err
