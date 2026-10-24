@@ -268,7 +268,7 @@ When mode is `auto`, the panel MUST provide two separate setting groups. The gro
 
 ### Example tables
 
-The panel MUST NOT read model rows from `GET /v1/llm/pricing_examples` for queue comparison. `pricing_examples` is only for per-model Credits and execution-time example tables.
+The panel MUST NOT read model rows from `GET /v1/llm/pricing_examples` or `GET /v1/llm/image_pricing_examples` for queue comparison. Those endpoints are only for per-model Credits and execution-time example tables under the Chat and Image tabs.
 
 When mode is `static`, the WebUI Credits and execution-time example tables on the project page MUST recompute when the user changes `priority_gwei`. Credits example cells MUST use the current static `priority_gwei`.
 
@@ -393,6 +393,66 @@ estimated_node_seconds =
 The WebUI execution-time table title MUST be `Execution time examples`. Column headers MUST be `Model`, `Input`, `Output`, and `Seconds`. The Model cell MUST use the same compact model-id-plus-quantization-and-VRAM-tag layout as the Credits table. The `Input` and `Output` cells MUST show `time_prompt_tokens` and `time_completion_tokens`.
 
 The pricing-examples API MUST NOT return queue wait estimates. Queue wait MUST NOT be estimated from `median_priority_gwei` for this UI. The WebUI MUST load `credits_per_gwei`, `base_vram`, `min_priority_gwei`, `max_priority_gwei`, and `median_priority_gwei` from `billing_config` when computing Credits examples and the cost-level queue position.
+
+### Image pricing examples
+
+`GET /v1/llm/image_pricing_examples` requires a valid JWT. It MUST return only per-model Image example rows and the fixed image workload used by the Image example tables. It MUST NOT be the source for cost-level queue position.
+
+Response shape:
+
+```json
+{
+  "message": "success",
+  "data": {
+    "example_width": 512,
+    "example_height": 512,
+    "example_steps": 20,
+    "example_num_images": 1,
+    "examples": [
+      {
+        "model": "example/sd-model",
+        "min_vram": 24,
+        "execution_dtype": "bfloat16",
+        "quantization_config": null,
+        "overhead_seconds": 5,
+        "seconds_per_sd_pixel_step": 0.00000001
+      }
+    ]
+  }
+}
+```
+
+Example selection MUST use the in-memory Image catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public Image catalog visibility of `GET /models/image`. It MUST NOT read the LLM loaded-models cache.
+
+1. Collect rows with a positive `min_vram`.
+2. Group by `(model_id, canonical quantization_config, canonical components, min_vram)`. Different quantization configs, different component sets, or different `min_vram` values for the same model MUST remain separate candidates.
+3. Within each group, choose one row: greatest `in_memory_node_count`, then greatest `on_disk_node_count`, then `execution_dtype` ascending, then `model_cache_hash` ascending. `execution_dtype` MUST NOT create additional example rows for the same model, quantization config, components, and `min_vram`.
+4. Sort the chosen representatives by `min_vram` ascending, then `model_id` ascending, then canonical `quantization_config` ascending, then canonical components ascending.
+5. If more than four representatives exist, keep exactly the representatives at indexes `0`, `floor((n-1)/3)`, `floor(2*(n-1)/3)`, and `n-1` in that sorted list, removing duplicates while preserving order.
+6. If fewer than one representative exists, `examples` MUST be an empty list.
+
+For each selected row, coefficients MUST come from Relay SD execution-time with `model=<selected model>`, `min_vram=<selected min_vram>`, `dtype=<selected execution_dtype>`, and `quantization_config=<selected quantization_config>`.
+
+`example_width` MUST be `512`. `example_height` MUST be `512`. `example_steps` MUST be `20`. `example_num_images` MUST be `1`. They are the fixed Image workload the UI MUST use for both Credits and execution-time examples.
+
+The WebUI Cost Level example tables MUST sit under Chat and Image tabs. Chat MUST use `GET /v1/llm/pricing_examples`. Image MUST use `GET /v1/llm/image_pricing_examples`.
+
+The Image Credits table title MUST be `Credits per image` in static mode and `Maximum Credits per image` in auto mode. Column headers MUST be `Model`, `Size`, `Steps`, and `Credits`. The Model cell MUST use the same compact model-id-plus-quantization-and-VRAM-tag layout as the Chat tables. `Size` MUST show `example_width×example_height`. `Steps` MUST show `example_steps`. The table description MUST state that the estimate is for `example_num_images` image.
+
+Image Credits example cells MUST include overhead:
+
+```text
+pixel_step_units = example_num_images * example_width * example_height * example_steps
+estimated_node_seconds = overhead_seconds + seconds_per_sd_pixel_step * pixel_step_units
+billable_gwei = Prio * estimated_node_seconds * vram_weight
+credits = floor(billable_gwei * G)
+```
+
+with the same `Prio`, `vram_weight`, and `G` rules as Chat Credits examples. Pricing-example Credits cells MUST use `floor(billable_gwei * G)` without raising a zero result to `1`.
+
+The Image execution-time table title MUST be `Execution time examples`. Column headers MUST be `Model`, `Size`, `Steps`, and `Seconds`. `Size` and `Steps` MUST show the same fixed workload as the Credits table. Seconds MUST use the same `estimated_node_seconds` formula, including `overhead_seconds`.
+
+The image pricing-examples API MUST NOT return queue wait estimates.
 
 ## Failed Calls
 

@@ -543,4 +543,4 @@ When Task Fee Estimation fails, the service MUST:
 
 ## Billing Config Query API
 
-`GET /v1/llm/billing_config` and `GET /v1/llm/pricing_examples` are specified in [credits-billing.md](./credits-billing.md).
+`GET /v1/llm/billing_config`, `GET /v1/llm/pricing_examples`, and `GET /v1/llm/image_pricing_examples` are specified in [credits-billing.md](./credits-billing.md).

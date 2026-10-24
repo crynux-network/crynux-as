@@ -126,7 +126,7 @@ The service executes LLM and Image jobs through the Crynux Bridge raw task APIs.
 
 Each LLM call is charged from the Credits balance of the owning account using the Credits billing model in [credits-billing.md](./credits-billing.md). Insufficient available Credits (`balance - locked`) for the pre-forward estimate MUST be rejected with HTTP 402. Accepted jobs MUST soft-lock the estimate until success settle or failure recording releases it.
 
-`GET /v1/llm/billing_config` and `GET /v1/llm/pricing_examples` are JWT-authenticated management APIs specified in [credits-billing.md](./credits-billing.md).
+`GET /v1/llm/billing_config`, `GET /v1/llm/pricing_examples`, and `GET /v1/llm/image_pricing_examples` are JWT-authenticated management APIs specified in [credits-billing.md](./credits-billing.md).
 
 ### Call Records
 

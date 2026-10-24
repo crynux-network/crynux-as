@@ -125,4 +125,9 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(llm.GetPricingExamples, 200))
+	llmGroup.GET("/image_pricing_examples", []fizz.OperationOption{
+		fizz.Summary("Get Image model coefficient rows for Credits and execution-time examples"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(llm.GetImagePricingExamples, 200))
 }
