@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type TaskCallStatus int8
 
@@ -10,30 +13,38 @@ const (
 )
 
 type TaskCallRecord struct {
-	ID                    uint           `json:"id" gorm:"primarykey"`
-	CreatedAt             time.Time      `json:"created_at" gorm:"not null;index:idx_task_call_records_project_created,priority:2;index"`
-	UserID                uint           `json:"user_id" gorm:"not null;index"`
-	ProjectID             uint           `json:"project_id" gorm:"not null;index:idx_task_call_records_project_created,priority:1;index"`
-	TaskJobID             *uint          `json:"task_job_id" gorm:"uniqueIndex"`
-	TaskType              TaskType       `json:"task_type" gorm:"not null"`
-	APIType               TaskAPIType    `json:"api_type" gorm:"not null"`
-	Model                 string         `json:"model" gorm:"type:string;size:255;not null"`
-	PromptTokens          uint64         `json:"prompt_tokens" gorm:"not null;default:0"`
-	CompletionTokens      uint64         `json:"completion_tokens" gorm:"not null;default:0"`
-	TotalTokens           uint64         `json:"total_tokens" gorm:"not null;default:0"`
-	PriorityGwei          BigInt         `json:"priority_gwei" gorm:"type:string;size:255;not null"`
-	TokenUsageApplicable  int8           `json:"token_usage_applicable" gorm:"not null"`
-	Status                TaskCallStatus `json:"status" gorm:"not null;default:0;index"`
-	AcceptedAt            time.Time      `json:"accepted_at" gorm:"not null;index"`
-	CompletedAt           time.Time      `json:"completed_at" gorm:"not null;index"`
-	DurationMs            uint64         `json:"duration_ms" gorm:"not null;default:0"`
-	BilledVram            uint64         `json:"billed_vram" gorm:"not null;default:0"`
-	TaskFeeGwei           *BigInt        `json:"-" gorm:"-"`
-	MedianPriorityGwei    *BigInt        `json:"-" gorm:"-"`
-	EstimatedNodeSeconds  *float64       `json:"-" gorm:"-"`
-	VramWeight            *float64       `json:"-" gorm:"-"`
-	ConstantSeconds       *float64       `json:"-" gorm:"-"`
-	SecondsPerInputToken  *float64       `json:"-" gorm:"-"`
-	SecondsPerOutputToken *float64       `json:"-" gorm:"-"`
-	CreditsPerGwei        *string        `json:"-" gorm:"-"`
+	ID                    uint            `json:"id" gorm:"primarykey"`
+	CreatedAt             time.Time       `json:"created_at" gorm:"not null;index:idx_task_call_records_project_created,priority:2;index"`
+	UserID                uint            `json:"user_id" gorm:"not null;index"`
+	ProjectID             uint            `json:"project_id" gorm:"not null;index:idx_task_call_records_project_created,priority:1;index"`
+	TaskJobID             *uint           `json:"task_job_id" gorm:"uniqueIndex"`
+	TaskType              TaskType        `json:"task_type" gorm:"not null"`
+	APIType               TaskAPIType     `json:"api_type" gorm:"not null"`
+	Model                 string          `json:"model" gorm:"type:string;size:255;not null"`
+	ModelCacheHash        string          `json:"model_cache_hash" gorm:"column:model_cache_hash;type:string;size:64;not null;default:''"`
+	ExecutionDType        string          `json:"execution_dtype" gorm:"column:execution_dtype;type:string;size:64;not null;default:''"`
+	QuantizationConfig    json.RawMessage `json:"quantization_config" gorm:"type:longtext"`
+	Components            json.RawMessage `json:"components" gorm:"type:longtext"`
+	PromptTokens          uint64          `json:"prompt_tokens" gorm:"not null;default:0"`
+	CompletionTokens      uint64          `json:"completion_tokens" gorm:"not null;default:0"`
+	TotalTokens           uint64          `json:"total_tokens" gorm:"not null;default:0"`
+	ImageWidth            uint64          `json:"image_width" gorm:"not null;default:0"`
+	ImageHeight           uint64          `json:"image_height" gorm:"not null;default:0"`
+	ImageSteps            uint64          `json:"image_steps" gorm:"not null;default:0"`
+	ImageCount            uint64          `json:"image_count" gorm:"not null;default:0"`
+	PriorityGwei          BigInt          `json:"priority_gwei" gorm:"type:string;size:255;not null"`
+	TokenUsageApplicable  int8            `json:"token_usage_applicable" gorm:"not null"`
+	Status                TaskCallStatus  `json:"status" gorm:"not null;default:0;index"`
+	AcceptedAt            time.Time       `json:"accepted_at" gorm:"not null;index"`
+	CompletedAt           time.Time       `json:"completed_at" gorm:"not null;index"`
+	DurationMs            uint64          `json:"duration_ms" gorm:"not null;default:0"`
+	BilledVram            uint64          `json:"billed_vram" gorm:"not null;default:0"`
+	TaskFeeGwei           *BigInt         `json:"-" gorm:"-"`
+	MedianPriorityGwei    *BigInt         `json:"-" gorm:"-"`
+	EstimatedNodeSeconds  *float64        `json:"-" gorm:"-"`
+	VramWeight            *float64        `json:"-" gorm:"-"`
+	ConstantSeconds       *float64        `json:"-" gorm:"-"`
+	SecondsPerInputToken  *float64        `json:"-" gorm:"-"`
+	SecondsPerOutputToken *float64        `json:"-" gorm:"-"`
+	CreditsPerGwei        *string         `json:"-" gorm:"-"`
 }

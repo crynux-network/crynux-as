@@ -65,12 +65,12 @@ Configuration loading MUST fail with an error when a required item is missing. `
 | `blockchain_cursors` | Per-network scan cursor; unique by network |
 | `projects` | User projects; unique `endpoint_token` forms the private base URL; stores the project API key hash, public prefix, Cost Level mode (`static` or `auto`), static `priority_gwei`, auto `auto_queue_position` and `auto_max_priority_gwei`, `last_request_at`, current-Unix-day usage summary fields (`request_count_day`, `success_count_day`, `failure_count_day`, `credits_day`), and recent-failure-window counts (`recent_window_success_count`, `recent_window_failure_count`) |
 | `task_jobs` | Temporary execution rows for OpenAI-compatible and Raw LLM or Image tasks; stores ownership, task/API type, canonical task args, Bridge ID, status, LLM result metadata when applicable, versioned create-time billing data, and Credits hold fields (`credits_locked`, `credits_lock_status`); retained for `llm.job_retention_days` after terminal settle. Image PNG results live under `llm.task_result_dir` and MUST NOT be stored in this table |
-| `task_call_records` | Permanent finished-call rows with task/job ownership, model, applicable token usage, status, times, duration, Cost Level, and billed VRAM; MUST NOT store request bodies, result bodies, pricing coefficients, or charged Credits amounts |
+| `task_call_records` | Permanent finished-call rows with task/job ownership, model, Relay identity (`model_cache_hash`, `execution_dtype`), display `quantization_config` / `components`, Image workload fields (`image_width`, `image_height`, `image_steps`, `image_count`), applicable token usage, status, times, duration, Cost Level, and billed VRAM; MUST NOT store request bodies, result bodies, pricing coefficients, or charged Credits amounts |
 | `account_usage_hourly_stats` | Per-account Unix-hour aggregates of requests, success, failure, tokens, and charged Credits |
 | `project_usage_hourly_stats` | Per-project Unix-hour aggregates with the same metrics plus `user_id` |
-| `project_model_usage_10m_stats` | Per-project per-model Unix 10-minute aggregates |
+| `project_model_usage_10m_stats` | Per-project Unix 10-minute aggregates keyed by `(project_id, model_cache_hash, execution_dtype, period_start)` with display `model`, `task_type`, `quantization_config`, `components`, token totals, and `image_count` |
 | `project_duration_usage_10m_stats` | Per-project Unix 10-minute completion-duration small-bucket counts |
-| `project_model_usage_snapshots` | Per-project Top-10 model snapshots for `1h`, `1d`, and `7d` |
+| `project_model_usage_snapshots` | Per-project Top-10 model snapshots for `1h`, `1d`, and `7d`, keyed by the same Relay identity as the 10-minute table |
 | `project_duration_histogram_snapshots` | Per-project displayable completion-duration histogram snapshots for `1h`, `1d`, and `7d` |
 | `usage_stats_progress` | Base aggregation cursor (`project_id = 0`) and per-project snapshot dirty/claim generations |
 

@@ -117,6 +117,7 @@ type RecordTaskCallInput struct {
 	TaskType              models.TaskType
 	APIType               models.TaskAPIType
 	Model                 string
+	TaskArgsJSON          string
 	PromptTokens          uint64
 	CompletionTokens      uint64
 	TotalTokens           uint64
@@ -221,6 +222,7 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 		tokenUsageApplicable = 1
 	}
 
+	workload := ExtractTaskCallWorkloadFields(in.TaskType, in.Model, in.TaskArgsJSON)
 	record := models.TaskCallRecord{
 		UserID:               in.UserID,
 		ProjectID:            in.ProjectID,
@@ -228,9 +230,17 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 		TaskType:             in.TaskType,
 		APIType:              in.APIType,
 		Model:                in.Model,
+		ModelCacheHash:       workload.ModelCacheHash,
+		ExecutionDType:       workload.ExecutionDType,
+		QuantizationConfig:   workload.QuantizationConfig,
+		Components:           workload.Components,
 		PromptTokens:         in.PromptTokens,
 		CompletionTokens:     in.CompletionTokens,
 		TotalTokens:          in.TotalTokens,
+		ImageWidth:           workload.ImageWidth,
+		ImageHeight:          workload.ImageHeight,
+		ImageSteps:           workload.ImageSteps,
+		ImageCount:           workload.ImageCount,
 		TokenUsageApplicable: tokenUsageApplicable,
 		Status:               in.Status,
 		AcceptedAt:           in.AcceptedAt,
@@ -248,9 +258,17 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 		"TaskType",
 		"APIType",
 		"Model",
+		"ModelCacheHash",
+		"ExecutionDType",
+		"QuantizationConfig",
+		"Components",
 		"PromptTokens",
 		"CompletionTokens",
 		"TotalTokens",
+		"ImageWidth",
+		"ImageHeight",
+		"ImageSteps",
+		"ImageCount",
 		"PriorityGwei",
 		"TokenUsageApplicable",
 		"Status",

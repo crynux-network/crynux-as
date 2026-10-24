@@ -142,7 +142,7 @@ Requests MUST count only finished success and failure calls. Authenticated reque
 
 Credits in usage stats MUST equal processed `credit_events` rows of type LLM charge referenced by call record ID. Token metrics MUST include only calls with `token_usage_applicable = 1`.
 
-Project model Top-10 snapshots MUST use the normalized lowercase `model` stored on call records. Usage stats aggregation MUST NOT apply additional case folding or case-insensitive merging of model names.
+Project model 10-minute aggregates and Top-10 snapshots MUST key rows by Relay loaded-model identity `(model_cache_hash, execution_dtype)` together with `project_id` and the period start. Empty identity fields MUST participate in the unique key as empty strings; the normalized lowercase `model` on the call record MUST be stored for display and MUST NOT merge rows that differ by `model_cache_hash` or `execution_dtype`. Aggregates MUST also store `task_type`, `quantization_config`, `components`, and Image `image_count`. Usage stats aggregation MUST NOT apply additional case folding or case-insensitive merging of model names.
 
 Deleting a project MUST set project status to Deleted. Deleted projects MUST NOT appear in list or detail APIs and MUST NOT accept new LLM requests. Existing jobs MUST continue using create-time snapshots. Historical account usage MUST retain Deleted project consumption.
 

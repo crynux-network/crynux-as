@@ -40,11 +40,16 @@ Each row MUST contain:
 
 * account `user_id` snapshot, project, task type, API type, model, and optional unique `task_job_id`
 * final status (`success` or `failed`)
+* Relay loaded-model identity when resolved: `model_cache_hash` (lowercase hex) and `execution_dtype`; when no cache row matches, `model_cache_hash` MAY be empty while TaskArgs-derived `execution_dtype`, `quantization_config`, and `components` are still stored for display
+* display fields `quantization_config` and `components` (LLM `components` is null)
+* Image workload fields `image_width`, `image_height`, `image_steps`, and `image_count` (all zero for LLM)
 * prompt, completion, and total token counts when token usage applies
 * `token_usage_applicable`
 * `priority_gwei`
 * `accepted_at`, `completed_at`, and `duration_ms = completed_at - accepted_at`
 * billed effective VRAM
+
+Failed call records MUST store the same identity and workload fields when known. Historical rows created before these columns existed are not backfilled.
 
 `task_call_records` MUST NOT store request bodies, prompts, completions, result bodies, pricing coefficients, task fee, queue median, estimated seconds, or the actual Credits amount charged.
 
@@ -166,15 +171,19 @@ The handler MUST run one MySQL statement that:
 
 In-progress items MUST return null for tokens, duration, and credits. Finished items MUST return credits from the processed event amount, or `0` when no event exists. Finished items MUST return null for `prompt_tokens`, `completion_tokens`, and `total_tokens` when `token_usage_applicable` is unset or the call is an Image task. Image call records MUST store `token_usage_applicable = 0` for both success and failure.
 
+Each item MUST include `task_type` (`llm` or `image`), optional display `quantization_config` / `components`, and Image workload fields `image_width`, `image_height`, `image_steps`, and `image_count` (null for LLM or when unknown). Unfinished `job` rows MUST derive the same fields from `task_jobs.task_type` and `task_args_json`, with loaded-models lookup when available.
+
 Each item MUST include `source` (`job` or `call_record`) and numeric `id`. Clients MUST treat `(source, id)` as the stable row key.
 
 ### Charges
 
-`GET /v1/account/charges` MUST select processed task charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then in one SQL statement join only the selected page of event `ref_id` values to `task_call_records` and those call records to `projects`. The response `credits` field MUST equal the event amount. The response MUST include `project_name` from the current project row.
+`GET /v1/account/charges` MUST select processed task charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then in one SQL statement join only the selected page of event `ref_id` values to `task_call_records` and those call records to `projects`. The response `credits` field MUST equal the event amount. The response MUST include `project_name` from the current project row. Charge items MUST include the same `task_type`, display identity, and Image workload fields as Recent Requests finished rows.
 
 ### Usage stats
 
-Usage stats workers MUST read token counts and success/failure status from `task_call_records`, and MUST read charged Credits only from processed LLM `credit_events` referenced by call record ID.
+Usage stats workers MUST read token counts, Image `image_count`, Relay identity fields, and success/failure status from `task_call_records`, and MUST read charged Credits only from processed LLM `credit_events` referenced by call record ID.
+
+Project model 10-minute aggregates and Top-10 snapshots MUST key rows by `(project_id, model_cache_hash, execution_dtype, period_start)`, matching the Relay public loaded-model view identity. Empty `model_cache_hash` or `execution_dtype` MUST participate in the unique key as empty strings, with `model` retained for display; rows with different hashes MUST NOT merge. Aggregates MUST store redundant `model`, `task_type`, `quantization_config`, and `components` for API and UI. Image rows MUST accumulate `image_count`; LLM rows MUST keep `image_count` at zero. `GET /v1/projects/:project_id/stats/models` MUST return those fields together with token totals for Chat rows.
 
 ## Status Mapping
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crynux_as/config"
 	"crynux_as/models"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -142,7 +143,22 @@ func applyCallRecordToBaseStats(tx *gorm.DB, record models.TaskCallRecord, credi
 	if err := upsertProjectHourlyStat(tx, record.ProjectID, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, credits); err != nil {
 		return err
 	}
-	if err := upsertProjectModel10mStat(tx, record.ProjectID, record.UserID, record.Model, tenMinStart, successInc, failureInc, promptInc, completionInc, totalInc, credits); err != nil {
+	imageInc := uint64(0)
+	if record.TaskType == models.TaskTypeImage {
+		imageInc = record.ImageCount
+	}
+	if err := upsertProjectModel10mStat(
+		tx,
+		record,
+		tenMinStart,
+		successInc,
+		failureInc,
+		promptInc,
+		completionInc,
+		totalInc,
+		imageInc,
+		credits,
+	); err != nil {
 		return err
 	}
 	bucketID := DurationBucketID(record.DurationMs)
@@ -240,29 +256,41 @@ func upsertProjectHourlyStat(
 
 func upsertProjectModel10mStat(
 	tx *gorm.DB,
-	projectID, userID uint,
-	model string,
+	record models.TaskCallRecord,
 	periodStart int64,
-	successInc, failureInc, promptInc, completionInc, totalInc uint64,
+	successInc, failureInc, promptInc, completionInc, totalInc, imageInc uint64,
 	credits *big.Int,
 ) error {
 	var row models.ProjectModelUsage10mStat
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("project_id = ? AND model = ? AND period_start = ?", projectID, model, periodStart).
+		Where(
+			"project_id = ? AND model_cache_hash = ? AND execution_dtype = ? AND model = ? AND period_start = ?",
+			record.ProjectID,
+			record.ModelCacheHash,
+			record.ExecutionDType,
+			record.Model,
+			periodStart,
+		).
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		row = models.ProjectModelUsage10mStat{
-			ProjectID:        projectID,
-			UserID:           userID,
-			Model:            model,
-			PeriodStart:      periodStart,
-			RequestCount:     successInc + failureInc,
-			SuccessCount:     successInc,
-			FailureCount:     failureInc,
-			PromptTokens:     promptInc,
-			CompletionTokens: completionInc,
-			TotalTokens:      totalInc,
-			Credits:          models.BigInt{Int: *new(big.Int).Set(credits)},
+			ProjectID:          record.ProjectID,
+			UserID:             record.UserID,
+			ModelCacheHash:     record.ModelCacheHash,
+			ExecutionDType:     record.ExecutionDType,
+			Model:              record.Model,
+			PeriodStart:        periodStart,
+			TaskType:           record.TaskType,
+			QuantizationConfig: cloneRawOrNull(record.QuantizationConfig),
+			Components:         cloneRawOrNull(record.Components),
+			RequestCount:       successInc + failureInc,
+			SuccessCount:       successInc,
+			FailureCount:       failureInc,
+			PromptTokens:       promptInc,
+			CompletionTokens:   completionInc,
+			TotalTokens:        totalInc,
+			ImageCount:         imageInc,
+			Credits:            models.BigInt{Int: *new(big.Int).Set(credits)},
 		}
 		return tx.Create(&row).Error
 	}
@@ -275,6 +303,7 @@ func upsertProjectModel10mStat(
 	row.PromptTokens += promptInc
 	row.CompletionTokens += completionInc
 	row.TotalTokens += totalInc
+	row.ImageCount += imageInc
 	sum := new(big.Int).Add(&row.Credits.Int, credits)
 	row.Credits = models.BigInt{Int: *sum}
 	return tx.Save(&row).Error
@@ -617,21 +646,36 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 	}
 
 	type agg struct {
-		Model            string
-		RequestCount     uint64
-		SuccessCount     uint64
-		FailureCount     uint64
-		PromptTokens     uint64
-		CompletionTokens uint64
-		TotalTokens      uint64
-		Credits          *big.Int
+		Model              string
+		ModelCacheHash     string
+		ExecutionDType     string
+		TaskType           models.TaskType
+		QuantizationConfig json.RawMessage
+		Components         json.RawMessage
+		RequestCount       uint64
+		SuccessCount       uint64
+		FailureCount       uint64
+		PromptTokens       uint64
+		CompletionTokens   uint64
+		TotalTokens        uint64
+		ImageCount         uint64
+		Credits            *big.Int
 	}
-	byModel := make(map[string]*agg)
+	byIdentity := make(map[string]*agg)
 	for _, row := range rows {
-		item, ok := byModel[row.Model]
+		key := row.ModelCacheHash + "\x00" + row.ExecutionDType + "\x00" + row.Model
+		item, ok := byIdentity[key]
 		if !ok {
-			item = &agg{Model: row.Model, Credits: big.NewInt(0)}
-			byModel[row.Model] = item
+			item = &agg{
+				Model:              row.Model,
+				ModelCacheHash:     row.ModelCacheHash,
+				ExecutionDType:     row.ExecutionDType,
+				TaskType:           row.TaskType,
+				QuantizationConfig: cloneRawOrNull(row.QuantizationConfig),
+				Components:         cloneRawOrNull(row.Components),
+				Credits:            big.NewInt(0),
+			}
+			byIdentity[key] = item
 		}
 		item.RequestCount += row.RequestCount
 		item.SuccessCount += row.SuccessCount
@@ -639,11 +683,12 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 		item.PromptTokens += row.PromptTokens
 		item.CompletionTokens += row.CompletionTokens
 		item.TotalTokens += row.TotalTokens
+		item.ImageCount += row.ImageCount
 		item.Credits.Add(item.Credits, &row.Credits.Int)
 	}
 
-	list := make([]*agg, 0, len(byModel))
-	for _, item := range byModel {
+	list := make([]*agg, 0, len(byIdentity))
+	for _, item := range byIdentity {
 		list = append(list, item)
 	}
 	sort.Slice(list, func(i, j int) bool {
@@ -654,7 +699,13 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 		if list[i].RequestCount != list[j].RequestCount {
 			return list[i].RequestCount > list[j].RequestCount
 		}
-		return list[i].Model < list[j].Model
+		if list[i].Model != list[j].Model {
+			return list[i].Model < list[j].Model
+		}
+		if list[i].ModelCacheHash != list[j].ModelCacheHash {
+			return list[i].ModelCacheHash < list[j].ModelCacheHash
+		}
+		return list[i].ExecutionDType < list[j].ExecutionDType
 	})
 	if len(list) > 10 {
 		list = list[:10]
@@ -662,19 +713,25 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 
 	for i, item := range list {
 		snap := models.ProjectModelUsageSnapshot{
-			ProjectID:        projectID,
-			RangeType:        rangeType,
-			Rank:             uint(i + 1),
-			Model:            item.Model,
-			RequestCount:     item.RequestCount,
-			SuccessCount:     item.SuccessCount,
-			FailureCount:     item.FailureCount,
-			PromptTokens:     item.PromptTokens,
-			CompletionTokens: item.CompletionTokens,
-			TotalTokens:      item.TotalTokens,
-			Credits:          models.BigInt{Int: *new(big.Int).Set(item.Credits)},
-			WindowStart:      windowStart,
-			WindowEnd:        windowEnd,
+			ProjectID:          projectID,
+			RangeType:          rangeType,
+			Rank:               uint(i + 1),
+			Model:              item.Model,
+			ModelCacheHash:     item.ModelCacheHash,
+			ExecutionDType:     item.ExecutionDType,
+			TaskType:           item.TaskType,
+			QuantizationConfig: item.QuantizationConfig,
+			Components:         item.Components,
+			RequestCount:       item.RequestCount,
+			SuccessCount:       item.SuccessCount,
+			FailureCount:       item.FailureCount,
+			PromptTokens:       item.PromptTokens,
+			CompletionTokens:   item.CompletionTokens,
+			TotalTokens:        item.TotalTokens,
+			ImageCount:         item.ImageCount,
+			Credits:            models.BigInt{Int: *new(big.Int).Set(item.Credits)},
+			WindowStart:        windowStart,
+			WindowEnd:          windowEnd,
 		}
 		if err := tx.Create(&snap).Error; err != nil {
 			return err

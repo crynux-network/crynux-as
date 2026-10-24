@@ -145,6 +145,7 @@ func CompleteAndSettleImageTaskJob(ctx context.Context, db *gorm.DB, job *models
 			TaskType:             locked.TaskType,
 			APIType:              locked.APIType,
 			Model:                locked.Model,
+			TaskArgsJSON:         locked.TaskArgsJSON,
 			PriorityGwei:         priority,
 			TokenUsageApplicable: false,
 			Status:               models.TaskCallStatusSuccess,

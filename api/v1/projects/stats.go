@@ -5,6 +5,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/service"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -202,13 +203,19 @@ type GetProjectModelStatsInput struct {
 }
 
 type ProjectModelStatsItem struct {
-	Rank             uint    `json:"rank"`
-	Model            string  `json:"model"`
-	RequestCount     uint64  `json:"request_count"`
-	PromptTokens     uint64  `json:"prompt_tokens"`
-	CompletionTokens uint64  `json:"completion_tokens"`
-	SuccessRate      float64 `json:"success_rate"`
-	Credits          string  `json:"credits"`
+	Rank               uint    `json:"rank"`
+	Model              string  `json:"model"`
+	ModelCacheHash     string  `json:"model_cache_hash"`
+	ExecutionDType     string  `json:"execution_dtype"`
+	TaskType           string  `json:"task_type"`
+	QuantizationConfig any     `json:"quantization_config"`
+	Components         any     `json:"components"`
+	RequestCount       uint64  `json:"request_count"`
+	PromptTokens       uint64  `json:"prompt_tokens"`
+	CompletionTokens   uint64  `json:"completion_tokens"`
+	ImageCount         uint64  `json:"image_count"`
+	SuccessRate        float64 `json:"success_rate"`
+	Credits            string  `json:"credits"`
 }
 
 type GetProjectModelStatsData struct {
@@ -264,15 +271,27 @@ func GetProjectModelStats(c *gin.Context, in *GetProjectModelStatsInput) (*GetPr
 		if row.RequestCount > 0 {
 			successRate = float64(row.SuccessCount) / float64(row.RequestCount)
 		}
-		modelsData = append(modelsData, ProjectModelStatsItem{
-			Rank:             row.Rank,
-			Model:            row.Model,
-			RequestCount:     row.RequestCount,
-			PromptTokens:     row.PromptTokens,
-			CompletionTokens: row.CompletionTokens,
-			SuccessRate:      successRate,
-			Credits:          row.Credits.String(),
-		})
+		item := ProjectModelStatsItem{
+			Rank:               row.Rank,
+			Model:              row.Model,
+			ModelCacheHash:     row.ModelCacheHash,
+			ExecutionDType:     row.ExecutionDType,
+			TaskType:           service.TaskTypeAPIString(row.TaskType),
+			QuantizationConfig: service.QuantizationConfigForAPI(row.QuantizationConfig),
+			RequestCount:       row.RequestCount,
+			PromptTokens:       row.PromptTokens,
+			CompletionTokens:   row.CompletionTokens,
+			ImageCount:         row.ImageCount,
+			SuccessRate:        successRate,
+			Credits:            row.Credits.String(),
+		}
+		if len(row.Components) > 0 {
+			var components any
+			if err := json.Unmarshal(row.Components, &components); err == nil {
+				item.Components = components
+			}
+		}
+		modelsData = append(modelsData, item)
 	}
 
 	return &GetProjectModelStatsResponse{

@@ -6,7 +6,9 @@ import (
 	"crynux_as/api/v1/response"
 	"crynux_as/config"
 	"crynux_as/models"
+	"crynux_as/service"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"time"
@@ -22,19 +24,26 @@ type GetChargesInput struct {
 }
 
 type ChargeData struct {
-	ID               uint                  `json:"id" description:"The LLM call record ID"`
-	CreatedAt        time.Time             `json:"created_at" description:"When the call was recorded"`
-	ProjectID        uint                  `json:"project_id" description:"The project that made the call"`
-	ProjectName      string                `json:"project_name" description:"The current project name"`
-	Model            string                `json:"model" description:"The model ID used for the call"`
-	PromptTokens     uint64                `json:"prompt_tokens" description:"Billed prompt token count"`
-	CompletionTokens uint64                `json:"completion_tokens" description:"Billed completion token count"`
-	TotalTokens      uint64                `json:"total_tokens" description:"Billed total token count"`
-	PriorityGwei     string                `json:"priority_gwei" description:"Project Cost Level priority in Gwei used for the charge"`
-	Credits          models.BigInt         `json:"credits" description:"Credits charged for the call"`
-	BilledVram       uint64                `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
-	DurationMs       uint64                `json:"duration_ms" description:"Call duration in milliseconds"`
-	Status           models.TaskCallStatus `json:"status" description:"Call status (success or failed)"`
+	ID                 uint                  `json:"id" description:"The task call record ID"`
+	CreatedAt          time.Time             `json:"created_at" description:"When the call was recorded"`
+	ProjectID          uint                  `json:"project_id" description:"The project that made the call"`
+	ProjectName        string                `json:"project_name" description:"The current project name"`
+	Model              string                `json:"model" description:"The model ID used for the call"`
+	TaskType           string                `json:"task_type" description:"llm or image"`
+	QuantizationConfig any                   `json:"quantization_config" description:"Selected quantization_config when known"`
+	Components         any                   `json:"components" description:"Image component replacements when known"`
+	PromptTokens       *uint64               `json:"prompt_tokens" description:"Billed prompt token count; null for Image tasks"`
+	CompletionTokens   *uint64               `json:"completion_tokens" description:"Billed completion token count; null for Image tasks"`
+	TotalTokens        *uint64               `json:"total_tokens" description:"Billed total token count; null for Image tasks"`
+	ImageWidth         *uint64               `json:"image_width" description:"Image width for Image tasks; null for LLM"`
+	ImageHeight        *uint64               `json:"image_height" description:"Image height for Image tasks; null for LLM"`
+	ImageSteps         *uint64               `json:"image_steps" description:"Diffusion steps for Image tasks; null for LLM"`
+	ImageCount         *uint64               `json:"image_count" description:"Generated image count for Image tasks; null for LLM"`
+	PriorityGwei       string                `json:"priority_gwei" description:"Project Cost Level priority in Gwei used for the charge"`
+	Credits            models.BigInt         `json:"credits" description:"Credits charged for the call"`
+	BilledVram         uint64                `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
+	DurationMs         uint64                `json:"duration_ms" description:"Call duration in milliseconds"`
+	Status             models.TaskCallStatus `json:"status" description:"Call status (success or failed)"`
 }
 
 type GetChargesData struct {
@@ -48,19 +57,27 @@ type GetChargesResponse struct {
 }
 
 type chargeRow struct {
-	ID               uint
-	CreatedAt        time.Time
-	ProjectID        uint
-	ProjectName      sql.NullString
-	Model            string
-	PromptTokens     uint64
-	CompletionTokens uint64
-	TotalTokens      uint64
-	PriorityGwei     string
-	Credits          models.BigInt
-	BilledVram       uint64
-	DurationMs       uint64
-	Status           models.TaskCallStatus
+	ID                   uint
+	CreatedAt            time.Time
+	ProjectID            uint
+	ProjectName          sql.NullString
+	Model                string
+	TaskType             models.TaskType
+	TokenUsageApplicable int8
+	QuantizationConfig   []byte
+	Components           []byte
+	PromptTokens         uint64
+	CompletionTokens     uint64
+	TotalTokens          uint64
+	ImageWidth           uint64
+	ImageHeight          uint64
+	ImageSteps           uint64
+	ImageCount           uint64
+	PriorityGwei         string
+	Credits              models.BigInt
+	BilledVram           uint64
+	DurationMs           uint64
+	Status               models.TaskCallStatus
 }
 
 func GetCharges(c *gin.Context, in *GetChargesInput) (*GetChargesResponse, error) {
@@ -124,9 +141,17 @@ SELECT
 	r.project_id AS project_id,
 	p.name AS project_name,
 	r.model AS model,
+	r.task_type AS task_type,
+	r.token_usage_applicable AS token_usage_applicable,
+	r.quantization_config AS quantization_config,
+	r.components AS components,
 	r.prompt_tokens AS prompt_tokens,
 	r.completion_tokens AS completion_tokens,
 	r.total_tokens AS total_tokens,
+	r.image_width AS image_width,
+	r.image_height AS image_height,
+	r.image_steps AS image_steps,
+	r.image_count AS image_count,
 	r.priority_gwei AS priority_gwei,
 	e.amount AS credits,
 	r.billed_vram AS billed_vram,
@@ -166,21 +191,52 @@ ORDER BY e.id DESC
 		if row.ProjectName.Valid {
 			projectName = row.ProjectName.String
 		}
-		charges = append(charges, ChargeData{
-			ID:               row.ID,
-			CreatedAt:        row.CreatedAt,
-			ProjectID:        row.ProjectID,
-			ProjectName:      projectName,
-			Model:            row.Model,
-			PromptTokens:     row.PromptTokens,
-			CompletionTokens: row.CompletionTokens,
-			TotalTokens:      row.TotalTokens,
-			PriorityGwei:     row.PriorityGwei,
-			Credits:          amount,
-			BilledVram:       row.BilledVram,
-			DurationMs:       row.DurationMs,
-			Status:           row.Status,
-		})
+		item := ChargeData{
+			ID:                 row.ID,
+			CreatedAt:          row.CreatedAt,
+			ProjectID:          row.ProjectID,
+			ProjectName:        projectName,
+			Model:              row.Model,
+			TaskType:           service.TaskTypeAPIString(row.TaskType),
+			QuantizationConfig: service.QuantizationConfigForAPI(json.RawMessage(row.QuantizationConfig)),
+			PriorityGwei:       row.PriorityGwei,
+			Credits:            amount,
+			BilledVram:         row.BilledVram,
+			DurationMs:         row.DurationMs,
+			Status:             row.Status,
+		}
+		if len(row.Components) > 0 {
+			var components any
+			if err := json.Unmarshal(row.Components, &components); err == nil {
+				item.Components = components
+			}
+		}
+		if row.TaskType == models.TaskTypeImage {
+			if row.ImageWidth > 0 {
+				w := row.ImageWidth
+				item.ImageWidth = &w
+			}
+			if row.ImageHeight > 0 {
+				h := row.ImageHeight
+				item.ImageHeight = &h
+			}
+			if row.ImageSteps > 0 {
+				s := row.ImageSteps
+				item.ImageSteps = &s
+			}
+			if row.ImageCount > 0 {
+				n := row.ImageCount
+				item.ImageCount = &n
+			}
+		} else if row.TokenUsageApplicable != 0 {
+			p := row.PromptTokens
+			cTok := row.CompletionTokens
+			t := row.TotalTokens
+			item.PromptTokens = &p
+			item.CompletionTokens = &cTok
+			item.TotalTokens = &t
+		}
+		charges = append(charges, item)
 	}
 
 	return &GetChargesResponse{

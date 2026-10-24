@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const UsageStatsBaseProjectID uint = 0
 
@@ -53,22 +56,29 @@ func (ProjectUsageHourlyStat) TableName() string {
 	return "project_usage_hourly_stats"
 }
 
-// ProjectModelUsage10mStat stores per-project per-model usage for one Unix 10-minute period.
+// ProjectModelUsage10mStat stores per-project per Relay loaded-model identity usage
+// for one Unix 10-minute period. Identity matches Relay (model_cache_hash, execution_dtype).
 type ProjectModelUsage10mStat struct {
-	ID               uint      `json:"id" gorm:"primarykey"`
-	CreatedAt        time.Time `json:"created_at" gorm:"not null"`
-	UpdatedAt        time.Time `json:"updated_at" gorm:"not null"`
-	ProjectID        uint      `json:"project_id" gorm:"not null;uniqueIndex:idx_project_model_usage_10m_project_model_period"`
-	UserID           uint      `json:"user_id" gorm:"not null;index"`
-	Model            string    `json:"model" gorm:"type:string;size:255;not null;uniqueIndex:idx_project_model_usage_10m_project_model_period"`
-	PeriodStart      int64     `json:"period_start" gorm:"not null;uniqueIndex:idx_project_model_usage_10m_project_model_period;index"`
-	RequestCount     uint64    `json:"request_count" gorm:"not null;default:0"`
-	SuccessCount     uint64    `json:"success_count" gorm:"not null;default:0"`
-	FailureCount     uint64    `json:"failure_count" gorm:"not null;default:0"`
-	PromptTokens     uint64    `json:"prompt_tokens" gorm:"not null;default:0"`
-	CompletionTokens uint64    `json:"completion_tokens" gorm:"not null;default:0"`
-	TotalTokens      uint64    `json:"total_tokens" gorm:"not null;default:0"`
-	Credits          BigInt    `json:"credits" gorm:"type:string;size:255;not null"`
+	ID                 uint            `json:"id" gorm:"primarykey"`
+	CreatedAt          time.Time       `json:"created_at" gorm:"not null"`
+	UpdatedAt          time.Time       `json:"updated_at" gorm:"not null"`
+	ProjectID          uint            `json:"project_id" gorm:"not null;uniqueIndex:idx_project_model_usage_10m_identity_period,priority:1"`
+	UserID             uint            `json:"user_id" gorm:"not null;index"`
+	ModelCacheHash     string          `json:"model_cache_hash" gorm:"column:model_cache_hash;type:string;size:64;not null;default:'';uniqueIndex:idx_project_model_usage_10m_identity_period,priority:2"`
+	ExecutionDType     string          `json:"execution_dtype" gorm:"column:execution_dtype;type:string;size:64;not null;default:'';uniqueIndex:idx_project_model_usage_10m_identity_period,priority:3"`
+	Model              string          `json:"model" gorm:"type:string;size:255;not null;uniqueIndex:idx_project_model_usage_10m_identity_period,priority:4"`
+	PeriodStart        int64           `json:"period_start" gorm:"not null;uniqueIndex:idx_project_model_usage_10m_identity_period,priority:5;index"`
+	TaskType           TaskType        `json:"task_type" gorm:"not null;default:0"`
+	QuantizationConfig json.RawMessage `json:"quantization_config" gorm:"type:longtext"`
+	Components         json.RawMessage `json:"components" gorm:"type:longtext"`
+	RequestCount       uint64          `json:"request_count" gorm:"not null;default:0"`
+	SuccessCount       uint64          `json:"success_count" gorm:"not null;default:0"`
+	FailureCount       uint64          `json:"failure_count" gorm:"not null;default:0"`
+	PromptTokens       uint64          `json:"prompt_tokens" gorm:"not null;default:0"`
+	CompletionTokens   uint64          `json:"completion_tokens" gorm:"not null;default:0"`
+	TotalTokens        uint64          `json:"total_tokens" gorm:"not null;default:0"`
+	ImageCount         uint64          `json:"image_count" gorm:"not null;default:0"`
+	Credits            BigInt          `json:"credits" gorm:"type:string;size:255;not null"`
 }
 
 func (ProjectModelUsage10mStat) TableName() string {
@@ -91,24 +101,30 @@ func (ProjectDurationUsage10mStat) TableName() string {
 	return "project_duration_usage_10m_stats"
 }
 
-// ProjectModelUsageSnapshot stores Top-10 model rows for a project and range.
+// ProjectModelUsageSnapshot stores Top-10 model identity rows for a project and range.
 type ProjectModelUsageSnapshot struct {
-	ID               uint                `json:"id" gorm:"primarykey"`
-	CreatedAt        time.Time           `json:"created_at" gorm:"not null"`
-	UpdatedAt        time.Time           `json:"updated_at" gorm:"not null"`
-	ProjectID        uint                `json:"project_id" gorm:"not null;uniqueIndex:idx_project_model_usage_snapshots_project_range_rank"`
-	RangeType        UsageStatsRangeType `json:"range_type" gorm:"type:string;size:8;not null;uniqueIndex:idx_project_model_usage_snapshots_project_range_rank"`
-	Rank             uint                `json:"rank" gorm:"not null;uniqueIndex:idx_project_model_usage_snapshots_project_range_rank"`
-	Model            string              `json:"model" gorm:"type:string;size:255;not null"`
-	RequestCount     uint64              `json:"request_count" gorm:"not null;default:0"`
-	SuccessCount     uint64              `json:"success_count" gorm:"not null;default:0"`
-	FailureCount     uint64              `json:"failure_count" gorm:"not null;default:0"`
-	PromptTokens     uint64              `json:"prompt_tokens" gorm:"not null;default:0"`
-	CompletionTokens uint64              `json:"completion_tokens" gorm:"not null;default:0"`
-	TotalTokens      uint64              `json:"total_tokens" gorm:"not null;default:0"`
-	Credits          BigInt              `json:"credits" gorm:"type:string;size:255;not null"`
-	WindowStart      int64               `json:"window_start" gorm:"not null"`
-	WindowEnd        int64               `json:"window_end" gorm:"not null"`
+	ID                 uint                `json:"id" gorm:"primarykey"`
+	CreatedAt          time.Time           `json:"created_at" gorm:"not null"`
+	UpdatedAt          time.Time           `json:"updated_at" gorm:"not null"`
+	ProjectID          uint                `json:"project_id" gorm:"not null;uniqueIndex:idx_project_model_usage_snapshots_project_range_rank"`
+	RangeType          UsageStatsRangeType `json:"range_type" gorm:"type:string;size:8;not null;uniqueIndex:idx_project_model_usage_snapshots_project_range_rank"`
+	Rank               uint                `json:"rank" gorm:"not null;uniqueIndex:idx_project_model_usage_snapshots_project_range_rank"`
+	Model              string              `json:"model" gorm:"type:string;size:255;not null"`
+	ModelCacheHash     string              `json:"model_cache_hash" gorm:"column:model_cache_hash;type:string;size:64;not null;default:''"`
+	ExecutionDType     string              `json:"execution_dtype" gorm:"column:execution_dtype;type:string;size:64;not null;default:''"`
+	TaskType           TaskType            `json:"task_type" gorm:"not null;default:0"`
+	QuantizationConfig json.RawMessage     `json:"quantization_config" gorm:"type:longtext"`
+	Components         json.RawMessage     `json:"components" gorm:"type:longtext"`
+	RequestCount       uint64              `json:"request_count" gorm:"not null;default:0"`
+	SuccessCount       uint64              `json:"success_count" gorm:"not null;default:0"`
+	FailureCount       uint64              `json:"failure_count" gorm:"not null;default:0"`
+	PromptTokens       uint64              `json:"prompt_tokens" gorm:"not null;default:0"`
+	CompletionTokens   uint64              `json:"completion_tokens" gorm:"not null;default:0"`
+	TotalTokens        uint64              `json:"total_tokens" gorm:"not null;default:0"`
+	ImageCount         uint64              `json:"image_count" gorm:"not null;default:0"`
+	Credits            BigInt              `json:"credits" gorm:"type:string;size:255;not null"`
+	WindowStart        int64               `json:"window_start" gorm:"not null"`
+	WindowEnd          int64               `json:"window_end" gorm:"not null"`
 }
 
 func (ProjectModelUsageSnapshot) TableName() string {
