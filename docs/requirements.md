@@ -140,7 +140,7 @@ Finished task-creating calls from OpenAI-compatible and Raw Task endpoints MUST 
 
 Requests MUST count only finished success and failure calls. Authenticated request validation failures, insufficient balance, estimation failures, and task execution failures MUST count as failures. HTTP 401 responses MUST NOT enter usage stats. `GET /responses/:id` and other non-creating GET requests MUST NOT enter usage stats.
 
-Credits in usage stats MUST equal processed `credit_events` rows of type LLM charge referenced by call record ID. Token metrics MUST include only calls with `token_usage_applicable = 1`.
+Credits in usage stats MUST equal processed `credit_events` rows of type LLM charge referenced by call record ID. Token metrics MUST include only calls with `token_usage_applicable = 1`. Account and project hourly aggregates MUST accumulate Image `image_count` for Image task call records and MUST keep `image_count` at zero for LLM call records.
 
 Project model 10-minute aggregates and Top-10 snapshots MUST key rows by Relay loaded-model identity `(model_cache_hash, execution_dtype)` together with `project_id` and the period start. Empty identity fields MUST participate in the unique key as empty strings; the normalized lowercase `model` on the call record MUST be stored for display and MUST NOT merge rows that differ by `model_cache_hash` or `execution_dtype`. Aggregates MUST also store `task_type`, `quantization_config`, `components`, and Image `image_count`. Usage stats aggregation MUST NOT apply additional case folding or case-insensitive merging of model names.
 
@@ -158,8 +158,8 @@ Configuration:
 
 Management APIs:
 
-* `GET /v1/account/stats?range=1d|7d|1m`
-* `GET /v1/projects/:project_id/stats?range=1d|1m`
+* `GET /v1/account/stats?range=1d|7d|1m` MUST return request and Credits series plus totals for `request_count`, `prompt_tokens`, `completion_tokens`, `image_count`, charged Credits, and `success_rate`.
+* `GET /v1/projects/:project_id/stats?range=1d|1m` MUST return `request_series`, `credits_series`, and `token_series`. Each `token_series` point MUST include `prompt_tokens`, `completion_tokens`, and `image_count` for that period.
 * `GET /v1/projects/:project_id/stats/completion-duration?range=1h|1d|7d`
 * `GET /v1/projects/:project_id/stats/models?range=1h|1d|7d`
 

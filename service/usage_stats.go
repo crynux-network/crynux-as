@@ -137,15 +137,15 @@ func applyCallRecordToBaseStats(tx *gorm.DB, record models.TaskCallRecord, credi
 		totalInc = record.TotalTokens
 	}
 
-	if err := upsertAccountHourlyStat(tx, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, credits); err != nil {
-		return err
-	}
-	if err := upsertProjectHourlyStat(tx, record.ProjectID, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, credits); err != nil {
-		return err
-	}
 	imageInc := uint64(0)
 	if record.TaskType == models.TaskTypeImage {
 		imageInc = record.ImageCount
+	}
+	if err := upsertAccountHourlyStat(tx, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, imageInc, credits); err != nil {
+		return err
+	}
+	if err := upsertProjectHourlyStat(tx, record.ProjectID, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, imageInc, credits); err != nil {
+		return err
 	}
 	if err := upsertProjectModel10mStat(
 		tx,
@@ -179,7 +179,7 @@ func upsertAccountHourlyStat(
 	tx *gorm.DB,
 	userID uint,
 	periodStart int64,
-	successInc, failureInc, promptInc, completionInc, totalInc uint64,
+	successInc, failureInc, promptInc, completionInc, totalInc, imageInc uint64,
 	credits *big.Int,
 ) error {
 	var row models.AccountUsageHourlyStat
@@ -196,6 +196,7 @@ func upsertAccountHourlyStat(
 			PromptTokens:     promptInc,
 			CompletionTokens: completionInc,
 			TotalTokens:      totalInc,
+			ImageCount:       imageInc,
 			Credits:          models.BigInt{Int: *new(big.Int).Set(credits)},
 		}
 		return tx.Create(&row).Error
@@ -209,6 +210,7 @@ func upsertAccountHourlyStat(
 	row.PromptTokens += promptInc
 	row.CompletionTokens += completionInc
 	row.TotalTokens += totalInc
+	row.ImageCount += imageInc
 	sum := new(big.Int).Add(&row.Credits.Int, credits)
 	row.Credits = models.BigInt{Int: *sum}
 	return tx.Save(&row).Error
@@ -218,7 +220,7 @@ func upsertProjectHourlyStat(
 	tx *gorm.DB,
 	projectID, userID uint,
 	periodStart int64,
-	successInc, failureInc, promptInc, completionInc, totalInc uint64,
+	successInc, failureInc, promptInc, completionInc, totalInc, imageInc uint64,
 	credits *big.Int,
 ) error {
 	var row models.ProjectUsageHourlyStat
@@ -236,6 +238,7 @@ func upsertProjectHourlyStat(
 			PromptTokens:     promptInc,
 			CompletionTokens: completionInc,
 			TotalTokens:      totalInc,
+			ImageCount:       imageInc,
 			Credits:          models.BigInt{Int: *new(big.Int).Set(credits)},
 		}
 		return tx.Create(&row).Error
@@ -249,6 +252,7 @@ func upsertProjectHourlyStat(
 	row.PromptTokens += promptInc
 	row.CompletionTokens += completionInc
 	row.TotalTokens += totalInc
+	row.ImageCount += imageInc
 	sum := new(big.Int).Add(&row.Credits.Int, credits)
 	row.Credits = models.BigInt{Int: *sum}
 	return tx.Save(&row).Error

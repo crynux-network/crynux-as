@@ -73,6 +73,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	success := models.TaskCallRecord{
 		UserID:               user.ID,
 		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeLLM,
 		Model:                "model-a",
 		PromptTokens:         10,
 		CompletionTokens:     5,
@@ -101,6 +102,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	failed := models.TaskCallRecord{
 		UserID:               user.ID,
 		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeLLM,
 		Model:                "model-a",
 		TokenUsageApplicable: 1,
 		Status:               models.TaskCallStatusFailed,
@@ -115,10 +117,12 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	noToken := models.TaskCallRecord{
 		UserID:               user.ID,
 		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeImage,
 		Model:                "image-model",
 		PromptTokens:         99,
 		CompletionTokens:     99,
 		TotalTokens:          198,
+		ImageCount:           4,
 		TokenUsageApplicable: 0,
 		Status:               models.TaskCallStatusSuccess,
 		AcceptedAt:           now,
@@ -154,8 +158,39 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	if account.PromptTokens != 10 || account.CompletionTokens != 5 {
 		t.Fatalf("token applicable filter failed: %+v", account)
 	}
+	if account.ImageCount != 4 {
+		t.Fatalf("account image_count=%d want 4", account.ImageCount)
+	}
 	if account.Credits.Cmp(big.NewInt(42)) != 0 {
 		t.Fatalf("credits=%s", account.Credits.String())
+	}
+
+	var projectHourly models.ProjectUsageHourlyStat
+	if err := db.Where("project_id = ?", project.ID).First(&projectHourly).Error; err != nil {
+		t.Fatal(err)
+	}
+	if projectHourly.ImageCount != 4 {
+		t.Fatalf("project hourly image_count=%d want 4", projectHourly.ImageCount)
+	}
+
+	accountStats, err := GetAccountUsageStats(ctx, db, user.ID, AccountStatsRange1d, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accountStats.ImageCount != 4 {
+		t.Fatalf("account stats image_count=%d want 4", accountStats.ImageCount)
+	}
+
+	projectStats, err := GetProjectUsageStats(ctx, db, project.ID, ProjectStatsRange1d, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seriesImage uint64
+	for _, point := range projectStats.TokenSeries {
+		seriesImage += point.ImageCount
+	}
+	if seriesImage != 4 {
+		t.Fatalf("project token_series image_count sum=%d want 4", seriesImage)
 	}
 
 	claimed, err := ClaimDirtyProjectsForSnapshot(ctx, db, 10)

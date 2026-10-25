@@ -36,6 +36,7 @@ type ProjectStatsTokenPoint struct {
 	Timestamp        int64  `json:"timestamp"`
 	PromptTokens     uint64 `json:"prompt_tokens"`
 	CompletionTokens uint64 `json:"completion_tokens"`
+	ImageCount       uint64 `json:"image_count"`
 	Complete         bool   `json:"complete"`
 }
 
@@ -102,6 +103,7 @@ func GetProjectStats(c *gin.Context, in *GetProjectStatsInput) (*GetProjectStats
 			Timestamp:        point.Timestamp,
 			PromptTokens:     point.PromptTokens,
 			CompletionTokens: point.CompletionTokens,
+			ImageCount:       point.ImageCount,
 			Complete:         point.Complete,
 		})
 	}

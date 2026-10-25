@@ -28,6 +28,7 @@ type AccountUsageHourlyStat struct {
 	PromptTokens     uint64    `json:"prompt_tokens" gorm:"not null;default:0"`
 	CompletionTokens uint64    `json:"completion_tokens" gorm:"not null;default:0"`
 	TotalTokens      uint64    `json:"total_tokens" gorm:"not null;default:0"`
+	ImageCount       uint64    `json:"image_count" gorm:"not null;default:0"`
 	Credits          BigInt    `json:"credits" gorm:"type:string;size:255;not null"`
 }
 
@@ -49,6 +50,7 @@ type ProjectUsageHourlyStat struct {
 	PromptTokens     uint64    `json:"prompt_tokens" gorm:"not null;default:0"`
 	CompletionTokens uint64    `json:"completion_tokens" gorm:"not null;default:0"`
 	TotalTokens      uint64    `json:"total_tokens" gorm:"not null;default:0"`
+	ImageCount       uint64    `json:"image_count" gorm:"not null;default:0"`
 	Credits          BigInt    `json:"credits" gorm:"type:string;size:255;not null"`
 }
 

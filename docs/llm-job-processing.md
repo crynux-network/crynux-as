@@ -192,6 +192,8 @@ Each item MUST include `source` (`job` or `call_record`) and numeric `id`. Clien
 
 Usage stats workers MUST read token counts, Image `image_count`, Relay identity fields, and success/failure status from `task_call_records`, and MUST read charged Credits only from processed LLM `credit_events` referenced by call record ID.
 
+Account and project hourly aggregates MUST accumulate Image `image_count` for Image task call records and MUST keep `image_count` at zero for LLM call records. `GET /v1/account/stats` MUST return the summed `image_count` for the selected range. `GET /v1/projects/:project_id/stats` MUST include `image_count` on each `token_series` point.
+
 Project model 10-minute aggregates and Top-10 snapshots MUST key rows by `(project_id, model_cache_hash, execution_dtype, period_start)`, matching the Relay public loaded-model view identity. Empty `model_cache_hash` or `execution_dtype` MUST participate in the unique key as empty strings, with `model` retained for display; rows with different hashes MUST NOT merge. Aggregates MUST store redundant `model`, `task_type`, `quantization_config`, and `components` for API and UI. Image rows MUST accumulate `image_count`; LLM rows MUST keep `image_count` at zero. `GET /v1/projects/:project_id/stats/models` MUST return those fields together with token totals for Chat rows.
 
 ## Status Mapping
