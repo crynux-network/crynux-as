@@ -19,13 +19,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const taskJobWaitTimeout = 10 * time.Minute
-
 type parsedTaskJobRequest struct {
 	model               string
 	stream              bool
 	background          bool
 	vramLimit           *uint64
+	queueTimeout        *uint64
 	maxTokens           *int
 	maxCompletionTokens *int
 	taskArgsJSON        string
@@ -117,6 +116,12 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 
+	if err := service.ValidateOptionalQueueTimeout(parsed.queueTimeout); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	jobInput := service.CreateTaskJobInput{
 		Project:               project,
 		APIType:               apiType,
@@ -135,6 +140,7 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		SecondsPerInputToken:  float64Ptr(taskFee.SecondsPerInputToken),
 		SecondsPerOutputToken: float64Ptr(taskFee.SecondsPerOutputToken),
 		CreditsToLock:         taskFee.Credits,
+		QueueTimeout:          parsed.queueTimeout,
 	}
 
 	job, err := service.ReserveCreditsAndCreateTaskJob(c.Request.Context(), db, jobInput)
@@ -149,7 +155,7 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 
-	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, taskJobWaitTimeout)
+	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, service.ResolveTaskJobWaitTimeout(c.Request.Header))
 	if err != nil {
 		if errors.Is(err, service.ErrTaskJobWaitTimeout) {
 			writeClientError(c, http.StatusGatewayTimeout, "request timed out waiting for task completion")
@@ -190,6 +196,7 @@ func parseTaskJobRequest(body []byte, apiType models.TaskAPIType, defaultMaxToke
 			model:               meta.Model,
 			stream:              meta.Stream,
 			vramLimit:           meta.VramLimit,
+			queueTimeout:        meta.QueueTimeout,
 			maxTokens:           meta.MaxTokens,
 			maxCompletionTokens: meta.MaxCompletionTokens,
 			taskArgsJSON:        taskArgsJSON,
@@ -210,6 +217,7 @@ func parseTaskJobRequest(body []byte, apiType models.TaskAPIType, defaultMaxToke
 			model:               meta.Model,
 			stream:              meta.Stream,
 			vramLimit:           meta.VramLimit,
+			queueTimeout:        meta.QueueTimeout,
 			maxTokens:           meta.MaxTokens,
 			maxCompletionTokens: meta.MaxCompletionTokens,
 			taskArgsJSON:        taskArgsJSON,

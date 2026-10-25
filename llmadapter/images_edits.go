@@ -34,6 +34,7 @@ var imagesEditsAllowedFields = map[string]struct{}{
 	"quantization_config": {},
 	"components":          {},
 	"vram_limit":          {},
+	"queue_timeout":       {},
 	"images":              {},
 	"image":               {},
 	"mask":                {},
@@ -66,6 +67,7 @@ type ImagesEditsRequest struct {
 	Components            any
 	HasComponents         bool
 	VramLimit             *uint64
+	QueueTimeout          *uint64
 	Images                []string
 }
 
@@ -475,6 +477,17 @@ func parseImagesEditsSharedFields(raw map[string]json.RawMessage, images []strin
 		}
 		vramLimit = &parsed
 	}
+	var queueTimeout *uint64
+	if value, ok := raw["queue_timeout"]; ok && !isJSONNull(value) {
+		var parsed uint64
+		if err := json.Unmarshal(value, &parsed); err != nil {
+			return ImagesEditsRequest{}, newValidationError("queue_timeout", "must be an unsigned integer")
+		}
+		if parsed == 0 {
+			return ImagesEditsRequest{}, newValidationError("queue_timeout", "must be greater than 0")
+		}
+		queueTimeout = &parsed
+	}
 
 	return ImagesEditsRequest{
 		Prompt:                prompt,
@@ -497,6 +510,7 @@ func parseImagesEditsSharedFields(raw map[string]json.RawMessage, images []strin
 		Components:            components,
 		HasComponents:         hasComponents,
 		VramLimit:             vramLimit,
+		QueueTimeout:          queueTimeout,
 		Images:                images,
 	}, nil
 }

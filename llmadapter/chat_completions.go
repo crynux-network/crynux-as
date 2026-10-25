@@ -45,6 +45,7 @@ type ChatCompletionsRequest struct {
 	User                string                   `json:"user"`
 	WebSearchOptions    json.RawMessage          `json:"web_search_options"`
 	VramLimit           *uint64                  `json:"vram_limit"`
+	QueueTimeout        *uint64                  `json:"queue_timeout"`
 	Dtype               string                   `json:"dtype"`
 	QuantizationConfig  any                      `json:"quantization_config"`
 }
@@ -193,6 +194,7 @@ type ChatCompletionsMeta struct {
 	MaxTokens           *int
 	MaxCompletionTokens *int
 	VramLimit           *uint64
+	QueueTimeout        *uint64
 	StreamOptions       *StreamOptionsMeta
 	N                   int
 	Dtype               string
@@ -292,6 +294,7 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 		MaxTokens:           req.MaxTokens,
 		MaxCompletionTokens: req.MaxCompletionTokens,
 		VramLimit:           req.VramLimit,
+		QueueTimeout:        req.QueueTimeout,
 		N:                   req.N,
 		Dtype:               strings.ToLower(strings.TrimSpace(req.Dtype)),
 		QuantizationConfig:  req.QuantizationConfig,

@@ -70,6 +70,7 @@ type TaskJob struct {
 	MinVram               *uint64
 	RequiredGPU           string                   `gorm:"type:string;size:255"`
 	RequiredGPUVram       uint64                   `gorm:"not null;default:0"`
+	QueueTimeout          uint64                   `gorm:"not null;default:0"`
 	BridgeClientTaskID    *uint                    `gorm:"index"`
 	Status                TaskJobStatus            `gorm:"not null;default:0;index:idx_task_jobs_project_status_created,priority:2;index:idx_task_jobs_terminal_cleanup,priority:1;index"`
 	Phase                 string                   `gorm:"type:string;size:32;not null;default:queued"`

@@ -35,6 +35,7 @@ type CompletionsRequest struct {
 	Suffix              string             `json:"suffix"`
 	User                string             `json:"user"`
 	VramLimit           *uint64            `json:"vram_limit"`
+	QueueTimeout        *uint64            `json:"queue_timeout"`
 	Dtype               string             `json:"dtype"`
 	QuantizationConfig  any                `json:"quantization_config"`
 }
@@ -85,6 +86,7 @@ type CompletionsMeta struct {
 	MaxTokens           *int
 	MaxCompletionTokens *int
 	VramLimit           *uint64
+	QueueTimeout        *uint64
 	StreamOptions       *StreamOptionsMeta
 	N                   int
 	Dtype               string
@@ -146,6 +148,7 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 		MaxTokens:           req.MaxTokens,
 		MaxCompletionTokens: req.MaxCompletionTokens,
 		VramLimit:           req.VramLimit,
+		QueueTimeout:        req.QueueTimeout,
 		N:                   req.N,
 		Dtype:               strings.ToLower(strings.TrimSpace(req.Dtype)),
 		QuantizationConfig:  req.QuantizationConfig,

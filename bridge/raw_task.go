@@ -34,6 +34,7 @@ type CreateRawTaskRequest struct {
 	RequiredGPU     string  `json:"required_gpu,omitempty"`
 	RequiredGPUVram uint64  `json:"required_gpu_vram,omitempty"`
 	TaskFee         string  `json:"task_fee"`
+	QueueTimeout    *uint64 `json:"queue_timeout,omitempty"`
 }
 
 type RawClientTask struct {

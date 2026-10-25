@@ -135,7 +135,7 @@ func submitPendingTaskJobs(
 			minVram = *job.MinVram
 		}
 		validJobs = append(validJobs, job)
-		requests = append(requests, bridge.CreateRawTaskRequest{
+		req := bridge.CreateRawTaskRequest{
 			TaskArgs:        job.TaskArgsJSON,
 			TaskType:        int(job.TaskType),
 			TaskVersion:     job.TaskVersion,
@@ -143,7 +143,12 @@ func submitPendingTaskJobs(
 			RequiredGPU:     job.RequiredGPU,
 			RequiredGPUVram: job.RequiredGPUVram,
 			TaskFee:         taskFeeWei.String(),
-		})
+		}
+		if job.QueueTimeout > 0 {
+			queueTimeout := job.QueueTimeout
+			req.QueueTimeout = &queueTimeout
+		}
+		requests = append(requests, req)
 	}
 	if len(requests) == 0 {
 		return nil

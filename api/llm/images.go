@@ -129,6 +129,7 @@ func ImagesGenerations(c *gin.Context) {
 		TaskFeeWei:    taskFeeWei,
 		ImageCredits:  estimate.Credits,
 		CreditsToLock: estimate.Credits,
+		QueueTimeout:  req.QueueTimeout,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientBalance) {
@@ -141,7 +142,7 @@ func ImagesGenerations(c *gin.Context) {
 		return
 	}
 
-	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, taskJobWaitTimeout)
+	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, service.ResolveTaskJobWaitTimeout(c.Request.Header))
 	if err != nil {
 		if errors.Is(err, service.ErrTaskJobWaitTimeout) {
 			writeClientError(c, http.StatusGatewayTimeout, "request timed out waiting for task completion")
@@ -287,6 +288,7 @@ func ImagesEdits(c *gin.Context) {
 		TaskFeeWei:    taskFeeWei,
 		ImageCredits:  estimate.Credits,
 		CreditsToLock: estimate.Credits,
+		QueueTimeout:  req.QueueTimeout,
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientBalance) {
@@ -299,7 +301,7 @@ func ImagesEdits(c *gin.Context) {
 		return
 	}
 
-	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, taskJobWaitTimeout)
+	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, service.ResolveTaskJobWaitTimeout(c.Request.Header))
 	if err != nil {
 		if errors.Is(err, service.ErrTaskJobWaitTimeout) {
 			writeClientError(c, http.StatusGatewayTimeout, "request timed out waiting for task completion")

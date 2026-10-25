@@ -26,7 +26,7 @@ Implemented endpoints:
 
 The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields. The Images generations and Images edits request and response formats MUST be OpenAI-compatible for the supported fields specified in **Images Generations API** and **Images Edits API**.
 
-Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. Chat Completions, Completions, and Responses MUST accept optional `dtype` and `quantization_config` body fields used to select a loaded-models row and to populate canonical TaskArgs. AS MUST map those public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
+Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. Chat Completions, Completions, and Responses MUST accept optional `dtype` and `quantization_config` body fields used to select a loaded-models row and to populate canonical TaskArgs. Chat Completions, Completions, Responses, Images generations, and Images edits MUST accept optional top-level `queue_timeout` as specified in Queue Timeout. AS MUST map those public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
 
 ## Images Generations API
 
@@ -51,6 +51,7 @@ Supported request fields:
 * `quantization_config` (optional; object or `null`; written into Image TaskArgs)
 * `components` (optional; object or `null`; written into Image TaskArgs)
 * `vram_limit` (optional; unsigned integer GB; see VRAM Limit and Effective VRAM)
+* `queue_timeout` (optional; unsigned integer seconds; see Queue Timeout)
 
 AS MUST reject unknown fields and the following values with HTTP 400 and the OpenAI invalid-request error shape: `response_format=url`; `output_format` other than `png`; `output_compression`; `background`; `moderation`; `style`; `stream=true`; `partial_images`; `dtype`; and Crynux Raw Task fields such as `steps` or `negative_prompt`.
 
@@ -68,7 +69,7 @@ AS MUST reject unknown fields and the following values with HTTP 400 and the Ope
 
 AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. The Images request does not accept `seed`. AS MUST set `task_config.seed` to a uniformly chosen integer from 0 through 2147483647 before the job is persisted. When the request includes `quantization_config`, AS MUST copy that value into TaskArgs. When the request includes `components`, AS MUST copy that value into TaskArgs. Before execution resolution, AS MUST lowercase Hugging Face repository names in TaskArgs (`base_model.name` and every `components.*.repo`) with the same rules as Raw Task create. AS MUST NOT accept client `dtype` or `lora` on this endpoint. After building TaskArgs, AS MUST resolve execution fields through the shared Image loaded-models resolver in auto mode: the selected row MUST have `model_id` equal to the request `model`, MUST have `lora` equal to `null`, MUST have `quantization_config` equal to the request value when the request includes `quantization_config`, and MUST have `components` equal to the request value when the request includes `components`. Component comparison MUST use `format`, lowercase `repo`, and `format_kwargs`, and MUST ignore `revision`. When several rows match, AS MUST select the row with the greatest `min_vram`, with ties broken by canonical `quantization_config` ascending, then `execution_dtype` ascending, then `model_cache_hash` ascending. AS MUST write the selected row's concrete `execution_dtype` into TaskArgs `dtype`, and MUST write the selected row's `quantization_config` and `components` into TaskArgs when the request omits them. When no row matches, or the matched row's `execution_dtype` is not concrete (`float16`, `bfloat16`, or `float32`), AS MUST return HTTP 400 with the OpenAI invalid-request error shape and MUST NOT reserve Credits or create a job. When the user specified a `vram_limit`, the effective VRAM MUST be the user value and MUST override the selected row's `min_vram`. When the user did not specify a `vram_limit`, the effective VRAM MUST be the selected row's `min_vram`. AS MUST estimate and settle Credits with the Image pixel-step rules in [credits-billing.md](./credits-billing.md) and [raw-task-api.md](./raw-task-api.md).
 
-Clients MAY send `quantization_config`, `components`, and `vram_limit` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body.
+Clients MAY send `quantization_config`, `components`, `vram_limit`, and `queue_timeout` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body.
 
 The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, `quality`, and `output_format`. The response MUST omit `url`, `revised_prompt`, `usage`, `background`, and `safety_identifier`. AS MUST NOT persist the response body, PNG bytes, or base64 strings on the job row.
 
@@ -110,6 +111,7 @@ Supported request fields (JSON body fields, or the same names as multipart text 
 * `quantization_config` (optional; object or `null`; written into Image TaskArgs)
 * `components` (optional; object or `null`; written into Image TaskArgs)
 * `vram_limit` (optional; unsigned integer GB; see VRAM Limit and Effective VRAM)
+* `queue_timeout` (optional; unsigned integer seconds; see Queue Timeout)
 
 For multipart `quantization_config` and `components`, AS MUST accept either:
 
@@ -124,7 +126,7 @@ After building Image TaskArgs, AS MUST enforce the Raw Task `task_args.images` s
 
 AS MUST build Image TaskArgs with `version` matching the configured stable-diffusion inference schema, `base_model.name` from `model`, `prompt`, non-empty `images` as data URLs, and `task_config` containing `image_width`, `image_height`, `steps`, and `num_images_per_prompt`. The Images edits request does not accept `seed` or `strength`. AS MUST set `task_config.seed` to a uniformly chosen integer from 0 through 2147483647 before the job is persisted. When the request includes `quantization_config`, AS MUST copy that value into TaskArgs. When the request includes `components`, AS MUST copy that value into TaskArgs. AS MUST NOT accept client `dtype` or `lora` on this endpoint. Image loaded-models row selection, effective VRAM resolution, Credits estimation, and settlement MUST follow the same rules as Images Generations.
 
-Clients MAY send `quantization_config`, `components`, and `vram_limit` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body. Multipart clients MAY send `vram_limit` as a form value and MAY send `quantization_config` and `components` either as JSON form strings or as OpenAI SDK bracket-nested form fields.
+Clients MAY send `quantization_config`, `components`, `vram_limit`, and `queue_timeout` through the official OpenAI Python SDK `extra_body` merge or by placing the same top-level fields in the official OpenAI JavaScript SDK request body. Multipart clients MAY send `vram_limit` and `queue_timeout` as form values and MAY send `quantization_config` and `components` either as JSON form strings or as OpenAI SDK bracket-nested form fields.
 
 The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, `quality`, and `output_format`. The response MUST omit `url`, `revised_prompt`, `usage`, `background`, and `safety_identifier`. AS MUST NOT persist the response body, PNG bytes, or base64 strings on the job row.
 
@@ -149,7 +151,7 @@ Supported request fields in the first version:
 * function `tools`
 * function-call and function-call-output history in `input`
 * `background` (`true` returns immediately with `queued` or `in_progress`; `false` waits for completion)
-* `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, `text.format`, and `vram_limit`
+* `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, `text.format`, `vram_limit`, and `queue_timeout`
 * `dtype` and `quantization_config` (optional; select a loaded-models row when present)
 * `chat_template_kwargs`
 * `reasoning.effort`
@@ -202,11 +204,17 @@ For every LLM request, the service MUST:
 5. For responses with `background=false`, wait synchronously on the HTTP request until the job reaches a terminal state.
 6. For responses with `background=true`, return immediately after persistence and expose status through `GET /responses/<response_id>`.
 
+A synchronous wait MUST use the following HTTP hold duration:
+
+1. When the request includes a positive `X-Stainless-Timeout` header value in seconds, AS MUST wait that duration plus 15 seconds.
+2. Otherwise, when the request includes a positive `X-Stainless-Read-Timeout` header value in seconds, AS MUST wait that duration plus 15 seconds.
+3. Otherwise AS MUST wait 10 minutes.
+
+That hold duration controls only when AS stops holding the client HTTP response. It MUST NOT set Relay queue wait, Relay execution timeout, or cancel the persisted job. Client disconnect during a synchronous wait MUST NOT cancel the persisted job or settlement.
+
 The worker MUST keep one loop. Each tick MUST load a bounded batch of unfinished jobs (`pending_submit`, `submitted`, `in_progress`), advance every job in that batch by at most one step, sleep a fixed interval, and start the next tick. The worker MUST NOT wait inside one job until that job reaches a terminal Bridge status while other unfinished jobs remain unprocessed.
 
 A `pending_submit` job whose age since `created_at` is greater than or equal to `llm.job_submit_timeout` seconds MUST be marked `failed` with a failed call record. The worker MUST NOT submit that job to Bridge after the timeout.
-
-Client disconnect during a synchronous wait MUST NOT cancel the persisted job or settlement.
 
 The stable `llm_jobs.id` MUST be the billing settlement source while the job exists. Repeated polling, synchronous waits, and worker retries MUST NOT create duplicate Credits charges. After retention deletes the job, the permanent call record and any Credits event remain.
 
@@ -227,6 +235,8 @@ Single-task create and status endpoints MUST remain available on Bridge. The AS 
 Each raw task submission MUST create a new Bridge ClientTask. AS MUST NOT send `request_id`. After Bridge returns a client task ID, AS MUST persist it on the LLM job and MUST use that ID for all later status queries and result downloads.
 
 The resolved effective VRAM MUST be sent as `min_vram` on raw task creation.
+
+When the request includes `queue_timeout`, AS MUST persist that value on the job and MUST send it as Bridge raw task `queue_timeout`. When omitted, AS MUST omit the field so Relay applies its configured default queue wait. `queue_timeout` MUST NOT enter TaskArgs. It is independent of project Cost Level / `priority_gwei`.
 
 The LLM job's `task_fee_gwei` MUST be multiplied by `1,000,000,000` with integer arithmetic and sent as the required raw task `task_fee` in Wei. AS MUST NOT send the stored GWei value directly. Bridge MUST treat this value as the final task fee and MUST NOT apply task-size multiplication or unit conversion.
 
@@ -319,6 +329,12 @@ Chat Completions, Completions, and Responses create requests MUST validate the r
 The catalog snapshot used by `GET /models` MUST NOT be used as a create-time allowlist.
 
 ## VRAM Limit and Effective VRAM
+
+### Queue Timeout
+
+Chat completions, completions, responses, images generations, and images edits MAY include top-level `queue_timeout` as an unsigned integer number of seconds. When present, the value MUST be greater than zero. Clients MAY send it through the official OpenAI Python SDK `extra_body` merge or as a top-level field in the official OpenAI JavaScript SDK request body.
+
+`queue_timeout` sets only the Relay queue wait budget for the submitted task. It MUST NOT change Cost Level, Credits estimation, or Relay-owned execution timeout after node assignment.
 
 ### User-specified `vram_limit`
 

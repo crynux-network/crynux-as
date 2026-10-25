@@ -245,6 +245,9 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 			return nil, err
 		}
 	}
+	if err := service.ValidateOptionalQueueTimeout(request.QueueTimeout); err != nil {
+		return nil, err
+	}
 	hasGPUName := strings.TrimSpace(request.RequiredGPU) != ""
 	hasGPUVram := request.RequiredGPUVram > 0
 	if request.MinVram != nil && (hasGPUName || hasGPUVram) {
@@ -399,6 +402,7 @@ func createPreparedTask(ctx context.Context, project *models.Project, prepared *
 		RequiredGPUVram: prepared.request.RequiredGPUVram,
 		PriorityGwei: priority, BilledVram: prepared.billedVram, TaskFeeWei: fee,
 		LLMBilling: prepared.llmBilling, ImageCredits: credits, CreditsToLock: credits,
+		QueueTimeout: prepared.request.QueueTimeout,
 	})
 }
 

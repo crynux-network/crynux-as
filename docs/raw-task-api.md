@@ -25,11 +25,14 @@ The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge Clien
   "task_args": "{\"model\":\"example/model\",\"messages\":[]}",
   "task_type": 1,
   "task_version": "2.0.0",
-  "min_vram": 24
+  "min_vram": 24,
+  "queue_timeout": 43200
 }
 ```
 
 `task_type` MUST be `0` for an Image task or `1` for an LLM task. `task_args` MUST be a JSON string valid for the selected task type.
+
+The request MAY include optional `queue_timeout` as an unsigned integer number of seconds. When present, the value MUST be greater than zero. AS MUST persist it on the job and MUST forward it to Bridge as raw task `queue_timeout`. When omitted, AS MUST omit the field so Relay applies its configured default queue wait. `queue_timeout` MUST NOT be placed inside `task_args` and MUST NOT change Cost Level or Credits estimation.
 
 Before Credits reservation, AS MUST validate `task_args` against the configured JSON Schema for the task type (`task_schema.gpt_inference` for LLM, `task_schema.stable_diffusion_inference` for Image). A schema validation failure MUST return HTTP 400 with a validation error on field `task_args` and MUST NOT reserve Credits or create a job.
 

@@ -16,6 +16,7 @@ type CreateTaskRequest struct {
 	RequiredGPU     string          `json:"required_gpu,omitempty"`
 	RequiredGPUVram uint64          `json:"required_gpu_vram,omitempty"`
 	TaskFee         json.RawMessage `json:"task_fee,omitempty"`
+	QueueTimeout    *uint64         `json:"queue_timeout,omitempty"`
 }
 
 type TaskView struct {

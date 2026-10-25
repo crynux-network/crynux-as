@@ -27,6 +27,7 @@ type CreateRawTaskJobInput struct {
 	LLMBilling      *models.LLMTaskBillingData
 	ImageCredits    *big.Int
 	CreditsToLock   *big.Int
+	QueueTimeout    *uint64
 }
 
 // ReserveCreditsAndCreateRawTaskJob locks estimated Credits and creates the raw
@@ -56,6 +57,9 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 	}
 	if in.CreditsToLock == nil || in.CreditsToLock.Sign() <= 0 {
 		return nil, errors.New("credits_to_lock must be positive")
+	}
+	if err := ValidateOptionalQueueTimeout(in.QueueTimeout); err != nil {
+		return nil, err
 	}
 	billing := models.TaskBillingData{
 		Version:       models.TaskBillingDataVersion,
@@ -94,6 +98,9 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 		BillingData:       billingJSON,
 		CreditsLocked:     models.BigInt{Int: *new(big.Int).Set(in.CreditsToLock)},
 		CreditsLockStatus: models.TaskJobCreditsLockHeld,
+	}
+	if in.QueueTimeout != nil {
+		job.QueueTimeout = *in.QueueTimeout
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

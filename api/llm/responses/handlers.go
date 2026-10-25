@@ -22,10 +22,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const (
-	projectContextKey  = "llm_project"
-	taskJobWaitTimeout = 10 * time.Minute
-)
+const projectContextKey = "llm_project"
 
 var estimateTaskFeeFn = service.EstimateTaskFee
 
@@ -151,6 +148,12 @@ func CreateResponse(c *gin.Context) {
 		return
 	}
 
+	if err := service.ValidateOptionalQueueTimeout(req.QueueTimeout); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	jobInput := service.CreateTaskJobInput{
 		Project:               project,
 		APIType:               models.TaskAPITypeResponses,
@@ -168,6 +171,7 @@ func CreateResponse(c *gin.Context) {
 		SecondsPerInputToken:  float64Ptr(taskFee.SecondsPerInputToken),
 		SecondsPerOutputToken: float64Ptr(taskFee.SecondsPerOutputToken),
 		CreditsToLock:         taskFee.Credits,
+		QueueTimeout:          req.QueueTimeout,
 	}
 
 	job, err := service.ReserveCreditsAndCreateTaskJob(c.Request.Context(), db, jobInput)
@@ -187,7 +191,7 @@ func CreateResponse(c *gin.Context) {
 		return
 	}
 
-	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, taskJobWaitTimeout)
+	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, service.ResolveTaskJobWaitTimeout(c.Request.Header))
 	if err != nil {
 		if errors.Is(err, service.ErrTaskJobWaitTimeout) {
 			writeClientError(c, http.StatusGatewayTimeout, "request timed out waiting for task completion")

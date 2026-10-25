@@ -41,6 +41,7 @@ type ResponsesRequest struct {
 	ChatTemplateKwargs map[string]interface{}   `json:"chat_template_kwargs"`
 	Reasoning          *ResponsesReasoning      `json:"reasoning"`
 	VramLimit          *uint64                  `json:"vram_limit"`
+	QueueTimeout       *uint64                  `json:"queue_timeout"`
 	Dtype              string                   `json:"dtype"`
 	QuantizationConfig any                      `json:"quantization_config"`
 }

@@ -37,6 +37,7 @@ var imagesAllowedFields = map[string]struct{}{
 	"quantization_config": {},
 	"components":          {},
 	"vram_limit":          {},
+	"queue_timeout":       {},
 }
 
 var imagesNamedSizes = map[string][2]int{
@@ -70,6 +71,7 @@ type ImagesGenerationsRequest struct {
 	Components            any
 	HasComponents         bool
 	VramLimit             *uint64
+	QueueTimeout          *uint64
 }
 
 type ImagesGenerationsResponse struct {
@@ -237,6 +239,17 @@ func ParseImagesGenerationsRequest(body []byte) (ImagesGenerationsRequest, error
 		}
 		vramLimit = &parsed
 	}
+	var queueTimeout *uint64
+	if value, ok := raw["queue_timeout"]; ok && !isJSONNull(value) {
+		var parsed uint64
+		if err := json.Unmarshal(value, &parsed); err != nil {
+			return ImagesGenerationsRequest{}, newValidationError("queue_timeout", "must be an unsigned integer")
+		}
+		if parsed == 0 {
+			return ImagesGenerationsRequest{}, newValidationError("queue_timeout", "must be greater than 0")
+		}
+		queueTimeout = &parsed
+	}
 
 	return ImagesGenerationsRequest{
 		Prompt:                prompt,
@@ -259,6 +272,7 @@ func ParseImagesGenerationsRequest(body []byte) (ImagesGenerationsRequest, error
 		Components:            components,
 		HasComponents:         hasComponents,
 		VramLimit:             vramLimit,
+		QueueTimeout:          queueTimeout,
 	}, nil
 }
 

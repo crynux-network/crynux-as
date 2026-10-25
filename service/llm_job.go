@@ -38,6 +38,7 @@ type CreateTaskJobInput struct {
 	SecondsPerInputToken  *float64
 	SecondsPerOutputToken *float64
 	CreditsToLock         *big.Int
+	QueueTimeout          *uint64
 }
 
 // ReserveCreditsAndCreateTaskJob locks estimated Credits on the account and creates
@@ -67,6 +68,9 @@ func ReserveCreditsAndCreateTaskJob(ctx context.Context, db *gorm.DB, in CreateT
 	}
 	if in.CreditsToLock == nil || in.CreditsToLock.Sign() <= 0 {
 		return nil, errors.New("credits_to_lock must be positive")
+	}
+	if err := ValidateOptionalQueueTimeout(in.QueueTimeout); err != nil {
+		return nil, err
 	}
 	taskFeeWei := new(big.Int).Mul(in.TaskFeeGwei, big.NewInt(1_000_000_000))
 	billingData, err := models.EncodeTaskBillingData(models.TaskBillingData{
@@ -104,6 +108,9 @@ func ReserveCreditsAndCreateTaskJob(ctx context.Context, db *gorm.DB, in CreateT
 		BillingData:       billingData,
 		CreditsLocked:     models.BigInt{Int: *new(big.Int).Set(in.CreditsToLock)},
 		CreditsLockStatus: models.TaskJobCreditsLockHeld,
+	}
+	if in.QueueTimeout != nil {
+		job.QueueTimeout = *in.QueueTimeout
 	}
 	if in.TaskFeeGwei != nil {
 		job.TaskFeeGwei = &models.BigInt{Int: *new(big.Int).Set(in.TaskFeeGwei)}
