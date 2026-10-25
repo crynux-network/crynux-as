@@ -41,6 +41,8 @@ type ProjectRequestData struct {
 	BilledVram         uint64          `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
 	DurationMs         *uint64         `json:"duration_ms" description:"Call duration in milliseconds, null while in progress"`
 	Status             string          `json:"status" description:"queued, in_progress, success, or failed"`
+	Phase              string          `json:"phase" description:"Logical execution phase; unfinished jobs use Bridge/AS phase, finished rows use success or failed"`
+	ErrorMessage       *string         `json:"error_message" description:"Failure reason when a failed call record still has a retained task_jobs row; otherwise null"`
 }
 
 type GetProjectRequestsData struct {
@@ -76,6 +78,8 @@ type projectRequestRow struct {
 	BilledVram           uint64
 	DurationMs           sql.NullInt64
 	Status               string
+	Phase                string
+	ErrorMessage         sql.NullString
 }
 
 func GetProjectRequests(c *gin.Context, in *GetProjectRequestsInput) (*GetProjectRequestsResponse, error) {
@@ -122,7 +126,9 @@ SELECT
 	credits,
 	billed_vram,
 	duration_ms,
-	status
+	status,
+	phase,
+	error_message
 FROM (
 	SELECT
 		j.id AS id,
@@ -150,9 +156,11 @@ FROM (
 		CASE
 			WHEN j.status = ? THEN 'queued'
 			ELSE 'in_progress'
-		END AS status
+		END AS status,
+		COALESCE(NULLIF(j.phase, ''), 'queued') AS phase,
+		CAST(NULL AS CHAR) AS error_message
 	FROM (
-		SELECT id, created_at, model, task_type, task_args_json, priority_gwei, billed_vram, status
+		SELECT id, created_at, model, task_type, task_args_json, priority_gwei, billed_vram, status, phase
 		FROM task_jobs
 		WHERE project_id = ?
 			AND status IN (?, ?, ?)
@@ -188,7 +196,15 @@ FROM (
 		CASE
 			WHEN r.status = ? THEN 'success'
 			ELSE 'failed'
-		END AS status
+		END AS status,
+		CASE
+			WHEN r.status = ? THEN 'success'
+			ELSE 'failed'
+		END AS phase,
+		CASE
+			WHEN r.status = ? THEN CAST(NULL AS CHAR)
+			ELSE j.error_message
+		END AS error_message
 	FROM (
 		SELECT
 			id,
@@ -210,7 +226,8 @@ FROM (
 			priority_gwei,
 			billed_vram,
 			duration_ms,
-			status
+			status,
+			task_job_id
 		FROM task_call_records
 		WHERE project_id = ?
 		ORDER BY created_at DESC, id DESC
@@ -220,6 +237,8 @@ FROM (
 		ON e.type = ?
 		AND e.status = ?
 		AND e.ref_id = r.id
+	LEFT JOIN task_jobs AS j
+		ON j.id = r.task_job_id
 ) AS combined
 ORDER BY created_at DESC, source DESC, id DESC
 LIMIT ?
@@ -234,6 +253,8 @@ LIMIT ?
 		models.TaskJobStatusSubmitted,
 		models.TaskJobStatusInProgress,
 		limit,
+		models.TaskCallStatusSuccess,
+		models.TaskCallStatusSuccess,
 		models.TaskCallStatusSuccess,
 		in.ProjectID,
 		limit,
@@ -255,7 +276,12 @@ LIMIT ?
 			PriorityGwei: row.PriorityGwei,
 			BilledVram:   row.BilledVram,
 			Status:       row.Status,
+			Phase:        row.Phase,
 			TaskType:     "llm",
+		}
+		if row.ErrorMessage.Valid && row.ErrorMessage.String != "" {
+			msg := row.ErrorMessage.String
+			item.ErrorMessage = &msg
 		}
 		taskType := models.TaskTypeLLM
 		if row.TaskType.Valid {

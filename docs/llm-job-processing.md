@@ -167,11 +167,20 @@ The handler MUST run one MySQL statement that:
 1. selects at most `llm.project_recent_requests_limit` unfinished jobs through the project/status/created index
 2. selects at most `llm.project_recent_requests_limit` call records through the project/created index
 3. left-joins processed task charge events only to that bounded call-record candidate set
-4. unions the two candidate sets and applies the final limit with deterministic descending order by accepted/created time, source, and id
+4. left-joins `task_jobs` to that bounded call-record candidate set on `task_call_records.task_job_id = task_jobs.id` so a retained job can supply `error_message` for failed finished rows
+5. unions the two candidate sets and applies the final limit with deterministic descending order by accepted/created time, source, and id
 
 In-progress items MUST return null for tokens, duration, and credits. Finished items MUST return credits from the processed event amount, or `0` when no event exists. Finished items MUST return null for `prompt_tokens`, `completion_tokens`, and `total_tokens` when `token_usage_applicable` is unset or the call is an Image task. Image call records MUST store `token_usage_applicable = 0` for both success and failure.
 
 Each item MUST include `task_type` (`llm` or `image`), optional display `quantization_config` / `components`, and Image workload fields `image_width`, `image_height`, `image_steps`, and `image_count` (null for LLM or when unknown). Unfinished `job` rows MUST derive the same fields from `task_jobs.task_type` and `task_args_json`, with loaded-models lookup when available.
+
+Each item MUST include `phase` and optional `error_message`:
+
+* For `source = job`, `phase` MUST be `task_jobs.phase` (or `queued` when empty). `error_message` MUST be null.
+* For `source = call_record` with status `success`, `phase` MUST be `success` and `error_message` MUST be null.
+* For `source = call_record` with status `failed`, `phase` MUST be `failed`. `error_message` MUST be `task_jobs.error_message` when the left-joined job row still exists and that field is non-empty; otherwise `error_message` MUST be null.
+
+`task_call_records` MUST NOT store `error_message`. Failure diagnostics remain on `task_jobs` for the job retention window only.
 
 Each item MUST include `source` (`job` or `call_record`) and numeric `id`. Clients MUST treat `(source, id)` as the stable row key.
 
