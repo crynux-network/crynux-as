@@ -83,8 +83,6 @@ func EnsureUserWithReferral(ctx context.Context, db *gorm.DB, address string, in
 	cfg := config.GetConfig()
 	signupBonus := cfg.Credits.SignupBonus
 	inviteeBonus := cfg.Credits.Referral.InviteeBonus
-	milestoneCount := cfg.Credits.Referral.MilestoneInviteCount
-	milestoneBonus := cfg.Credits.Referral.MilestoneBonus
 	inviteCode = strings.TrimSpace(inviteCode)
 
 	dbCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -173,47 +171,7 @@ func EnsureUserWithReferral(ctx context.Context, db *gorm.DB, address string, in
 				return err
 			}
 		}
-
-		var inviteCount int64
-		if err := tx.Model(&models.ReferralBinding{}).
-			Where("referrer_user_id = ?", codeRow.UserID).
-			Count(&inviteCount).Error; err != nil {
-			return err
-		}
-
-		if milestoneCount == 0 || milestoneBonus == 0 {
-			return nil
-		}
-		if uint64(inviteCount) != milestoneCount {
-			return nil
-		}
-
-		referrerID := codeRow.UserID
-		amount := new(big.Int).SetUint64(milestoneBonus)
-		reward := models.ReferralReward{
-			ReferrerUserID:          referrerID,
-			Kind:                    models.ReferralRewardKindMilestoneBonus,
-			Amount:                  models.BigInt{Int: *amount},
-			MilestoneReferrerUserID: &referrerID,
-			DepositCredits:          models.BigInt{Int: *big.NewInt(0)},
-		}
-		if err := tx.Create(&reward).Error; err != nil {
-			if errors.Is(err, gorm.ErrDuplicatedKey) {
-				return nil
-			}
-			return err
-		}
-		event := models.CreditEvent{
-			UserID: referrerID,
-			Amount: models.BigInt{Int: *amount},
-			Type:   models.CreditEventTypeReferralReward,
-			RefID:  reward.ID,
-			Status: models.CreditEventStatusProcessed,
-		}
-		if err := tx.Create(&event).Error; err != nil {
-			return err
-		}
-		return creditAccountLocked(tx, referrerID, amount)
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -289,17 +247,46 @@ func ResetReferralCode(ctx context.Context, db *gorm.DB, userID uint) (*models.R
 	return created, nil
 }
 
-func applyDepositReferralReward(tx *gorm.DB, deposit *models.Deposit, ratio *big.Rat) error {
-	if ratio == nil || ratio.Sign() <= 0 {
-		return nil
+// CountInviteePurchases returns the number of deposits made by users bound to
+// referrerUserID. When excludeDepositID is non-zero, that deposit row is omitted.
+func CountInviteePurchases(tx *gorm.DB, referrerUserID uint, excludeDepositID uint) (int64, error) {
+	inviteeIDs := tx.Model(&models.ReferralBinding{}).
+		Select("invitee_user_id").
+		Where("referrer_user_id = ?", referrerUserID)
+	q := tx.Model(&models.Deposit{}).Where("user_id IN (?)", inviteeIDs)
+	if excludeDepositID > 0 {
+		q = q.Where("id != ?", excludeDepositID)
 	}
+	var count int64
+	if err := q.Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
 
+func applyDepositReferralReward(tx *gorm.DB, deposit *models.Deposit) error {
 	var binding models.ReferralBinding
 	if err := tx.Where("invitee_user_id = ?", deposit.UserID).First(&binding).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		return err
+	}
+
+	priorCount, err := CountInviteePurchases(tx, binding.ReferrerUserID, deposit.ID)
+	if err != nil {
+		return err
+	}
+	if priorCount < 0 {
+		return errors.New("invitee purchase count is negative")
+	}
+
+	ratio, err := config.GetConfig().EffectiveDepositRewardRatio(uint64(priorCount))
+	if err != nil {
+		return err
+	}
+	if ratio == nil || ratio.Sign() <= 0 {
+		return nil
 	}
 
 	rewardRat := new(big.Rat).SetInt(&deposit.Credits.Int)

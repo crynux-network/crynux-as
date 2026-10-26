@@ -270,11 +270,8 @@ func checkCreditsConfig(v *viper.Viper) error {
 	if !v.IsSet("credits.referral.invitee_bonus") {
 		return errors.New("credits.referral.invitee_bonus is not set")
 	}
-	if !v.IsSet("credits.referral.milestone_invite_count") {
-		return errors.New("credits.referral.milestone_invite_count is not set")
-	}
-	if !v.IsSet("credits.referral.milestone_bonus") {
-		return errors.New("credits.referral.milestone_bonus is not set")
+	if !v.IsSet("credits.referral.purchase_bonus_tiers") {
+		return errors.New("credits.referral.purchase_bonus_tiers is not set")
 	}
 	ratio, err := appConfig.ParseDepositRewardRatio()
 	if err != nil {
@@ -284,13 +281,35 @@ func checkCreditsConfig(v *viper.Viper) error {
 	if ratio.Cmp(one) > 0 {
 		return errors.New("credits.referral.deposit_reward_ratio must be less than or equal to 1")
 	}
+
+	total := new(big.Rat).Set(ratio)
+	seenMinPurchases := make(map[uint64]struct{}, len(appConfig.Credits.Referral.PurchaseBonusTiers))
+	for i, tier := range appConfig.Credits.Referral.PurchaseBonusTiers {
+		if tier.MinPurchases == 0 {
+			return fmt.Errorf("credits.referral.purchase_bonus_tiers[%d].min_purchases must be greater than 0", i)
+		}
+		if _, exists := seenMinPurchases[tier.MinPurchases]; exists {
+			return fmt.Errorf("credits.referral.purchase_bonus_tiers[%d].min_purchases is duplicated", i)
+		}
+		seenMinPurchases[tier.MinPurchases] = struct{}{}
+
+		extra, err := parseNonNegativeRatio(tier.ExtraRatio)
+		if err != nil {
+			return fmt.Errorf("credits.referral.purchase_bonus_tiers[%d].extra_ratio is invalid: %w", i, err)
+		}
+		if extra.Cmp(one) > 0 {
+			return fmt.Errorf("credits.referral.purchase_bonus_tiers[%d].extra_ratio must be less than or equal to 1", i)
+		}
+		total.Add(total, extra)
+	}
+	if total.Cmp(one) > 0 {
+		return errors.New("credits.referral.deposit_reward_ratio plus all purchase_bonus_tiers extra_ratio values must be less than or equal to 1")
+	}
 	return nil
 }
 
-// ParseDepositRewardRatio parses credits.referral.deposit_reward_ratio as a non-negative decimal.
-// Zero disables deposit referral rewards.
-func (cfg *AppConfig) ParseDepositRewardRatio() (*big.Rat, error) {
-	trimmed := strings.TrimSpace(cfg.Credits.Referral.DepositRewardRatio)
+func parseNonNegativeRatio(value string) (*big.Rat, error) {
+	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return nil, errors.New("must be a non-negative decimal")
 	}
@@ -302,6 +321,33 @@ func (cfg *AppConfig) ParseDepositRewardRatio() (*big.Rat, error) {
 		return nil, errors.New("must be a non-negative decimal")
 	}
 	return rate, nil
+}
+
+// ParseDepositRewardRatio parses credits.referral.deposit_reward_ratio as a non-negative decimal.
+// Zero disables the base deposit referral reward.
+func (cfg *AppConfig) ParseDepositRewardRatio() (*big.Rat, error) {
+	return parseNonNegativeRatio(cfg.Credits.Referral.DepositRewardRatio)
+}
+
+// EffectiveDepositRewardRatio returns base deposit_reward_ratio plus the sum of
+// extra_ratio for every purchase_bonus_tier whose min_purchases is at most priorCount.
+func (cfg *AppConfig) EffectiveDepositRewardRatio(priorCount uint64) (*big.Rat, error) {
+	base, err := cfg.ParseDepositRewardRatio()
+	if err != nil {
+		return nil, err
+	}
+	total := new(big.Rat).Set(base)
+	for _, tier := range cfg.Credits.Referral.PurchaseBonusTiers {
+		if priorCount < tier.MinPurchases {
+			continue
+		}
+		extra, err := parseNonNegativeRatio(tier.ExtraRatio)
+		if err != nil {
+			return nil, err
+		}
+		total.Add(total, extra)
+	}
+	return total, nil
 }
 
 func (cfg *AppConfig) ParseEmptyQueueMedianPriorityGwei() (*big.Int, error) {

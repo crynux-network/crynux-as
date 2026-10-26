@@ -15,14 +15,18 @@ import (
 	"gorm.io/gorm"
 )
 
+type PurchaseBonusTierData struct {
+	MinPurchases uint64 `json:"min_purchases" description:"Invitee purchase count that must already be reached before this tier applies"`
+	ExtraRatio   string `json:"extra_ratio" description:"Additional deposit reward ratio granted after min_purchases is reached"`
+}
+
 type GetReferralData struct {
-	InviteCode           string `json:"invite_code" description:"The active invite code of the account"`
-	InviteeCount         int64  `json:"invitee_count" description:"Number of users bound through this account's invite codes"`
-	MilestoneReached     bool   `json:"milestone_reached" description:"Whether the milestone bonus has been granted"`
-	DepositRewardRatio   string `json:"deposit_reward_ratio" description:"Configured deposit reward ratio"`
-	InviteeBonus         uint64 `json:"invitee_bonus" description:"Configured invitee signup bonus Credits"`
-	MilestoneInviteCount uint64 `json:"milestone_invite_count" description:"Configured invite count required for the milestone bonus"`
-	MilestoneBonus       uint64 `json:"milestone_bonus" description:"Configured milestone bonus Credits"`
+	InviteCode           string                  `json:"invite_code" description:"The active invite code of the account"`
+	InviteeCount         int64                   `json:"invitee_count" description:"Number of users bound through this account's invite codes"`
+	InviteePurchaseCount int64                   `json:"invitee_purchase_count" description:"Number of deposits made by bound invitees"`
+	DepositRewardRatio   string                  `json:"deposit_reward_ratio" description:"Configured base deposit reward ratio"`
+	InviteeBonus         uint64                  `json:"invitee_bonus" description:"Configured invitee signup bonus Credits"`
+	PurchaseBonusTiers   []PurchaseBonusTierData `json:"purchase_bonus_tiers" description:"Configured purchase-count bonus tiers"`
 }
 
 type GetReferralResponse struct {
@@ -65,25 +69,29 @@ func GetReferral(c *gin.Context) (*GetReferralResponse, error) {
 		return nil, response.NewExceptionResponse(err)
 	}
 
-	var milestone models.ReferralReward
-	milestoneErr := db.WithContext(dbCtx).
-		Where("referrer_user_id = ? AND kind = ?", user.ID, models.ReferralRewardKindMilestoneBonus).
-		First(&milestone).Error
-	if milestoneErr != nil && !errors.Is(milestoneErr, gorm.ErrRecordNotFound) {
-		log.Errorf("Error loading milestone reward for user %d: %v", user.ID, milestoneErr)
-		return nil, response.NewExceptionResponse(milestoneErr)
+	purchaseCount, err := service.CountInviteePurchases(db.WithContext(dbCtx), user.ID, 0)
+	if err != nil {
+		log.Errorf("Error counting invitee purchases for user %d: %v", user.ID, err)
+		return nil, response.NewExceptionResponse(err)
 	}
 
 	cfg := config.GetConfig().Credits.Referral
+	tiers := make([]PurchaseBonusTierData, 0, len(cfg.PurchaseBonusTiers))
+	for _, tier := range cfg.PurchaseBonusTiers {
+		tiers = append(tiers, PurchaseBonusTierData{
+			MinPurchases: tier.MinPurchases,
+			ExtraRatio:   tier.ExtraRatio,
+		})
+	}
+
 	return &GetReferralResponse{
 		Data: &GetReferralData{
 			InviteCode:           codeRow.Code,
 			InviteeCount:         inviteeCount,
-			MilestoneReached:     milestoneErr == nil,
+			InviteePurchaseCount: purchaseCount,
 			DepositRewardRatio:   cfg.DepositRewardRatio,
 			InviteeBonus:         cfg.InviteeBonus,
-			MilestoneInviteCount: cfg.MilestoneInviteCount,
-			MilestoneBonus:       cfg.MilestoneBonus,
+			PurchaseBonusTiers:   tiers,
 		},
 	}, nil
 }

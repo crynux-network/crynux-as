@@ -89,8 +89,11 @@ credits:
   referral:
     deposit_reward_ratio: "0.10"
     invitee_bonus: 500
-    milestone_invite_count: 10
-    milestone_bonus: 5000
+    purchase_bonus_tiers:
+      - min_purchases: 50
+        extra_ratio: "0.05"
+      - min_purchases: 200
+        extra_ratio: "0.10"
 task_schema:
   stable_diffusion_inference: "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
   gpt_inference: "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"

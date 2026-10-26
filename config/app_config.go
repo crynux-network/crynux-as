@@ -24,6 +24,11 @@ type BlockchainNetworkConfig struct {
 	Tokens             map[string]TokenConfig `mapstructure:"tokens"`
 }
 
+type PurchaseBonusTierConfig struct {
+	MinPurchases uint64 `mapstructure:"min_purchases"`
+	ExtraRatio   string `mapstructure:"extra_ratio"`
+}
+
 type AppConfig struct {
 	Environment string `mapstructure:"environment"`
 
@@ -104,10 +109,9 @@ type AppConfig struct {
 	Credits struct {
 		SignupBonus uint64 `mapstructure:"signup_bonus"`
 		Referral    struct {
-			DepositRewardRatio   string `mapstructure:"deposit_reward_ratio"`
-			InviteeBonus         uint64 `mapstructure:"invitee_bonus"`
-			MilestoneInviteCount uint64 `mapstructure:"milestone_invite_count"`
-			MilestoneBonus       uint64 `mapstructure:"milestone_bonus"`
+			DepositRewardRatio string                    `mapstructure:"deposit_reward_ratio"`
+			InviteeBonus       uint64                    `mapstructure:"invitee_bonus"`
+			PurchaseBonusTiers []PurchaseBonusTierConfig `mapstructure:"purchase_bonus_tiers"`
 		} `mapstructure:"referral"`
 	} `mapstructure:"credits"`
 

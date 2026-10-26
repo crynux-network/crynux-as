@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crynux_as/config"
 	"crynux_as/models"
 	"errors"
 	"fmt"
@@ -102,10 +101,6 @@ func ProcessDeposit(ctx context.Context, db *gorm.DB, in ProcessDepositInput) er
 			return err
 		}
 
-		ratio, err := config.GetConfig().ParseDepositRewardRatio()
-		if err != nil {
-			return err
-		}
-		return applyDepositReferralReward(tx, &deposit, ratio)
+		return applyDepositReferralReward(tx, &deposit)
 	})
 }
