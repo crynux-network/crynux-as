@@ -15,15 +15,16 @@ import (
 )
 
 type ReferralRewardItem struct {
-	ID               uint           `json:"id" description:"Referral reward ID"`
-	CreatedAt        time.Time      `json:"created_at" description:"When the reward was granted"`
-	Kind             string         `json:"kind" description:"deposit_reward or milestone_bonus"`
-	Amount           models.BigInt  `json:"amount" description:"Total Credits granted to the referrer"`
-	InviteeAddress   *string        `json:"invitee_address" description:"Invitee wallet address for deposit rewards"`
-	DepositCredits   *models.BigInt `json:"deposit_credits" description:"Invitee deposit Credits for deposit rewards"`
-	TierMinPurchases *uint64        `json:"tier_min_purchases" description:"Highest purchase-bonus tier min_purchases applied to this reward"`
-	ExtraRatio       string         `json:"extra_ratio" description:"Sum of applied purchase-bonus tier extra ratios"`
-	ExtraAmount      models.BigInt  `json:"extra_amount" description:"Credits from applied purchase-bonus tiers"`
+	ID                 uint           `json:"id" description:"Referral reward ID"`
+	CreatedAt          time.Time      `json:"created_at" description:"When the reward was granted"`
+	Kind               string         `json:"kind" description:"deposit_reward or milestone_bonus"`
+	Amount             models.BigInt  `json:"amount" description:"Total Credits granted to the referrer"`
+	InviteeAddress     *string        `json:"invitee_address" description:"Invitee wallet address for deposit rewards"`
+	DepositCredits     *models.BigInt `json:"deposit_credits" description:"Invitee deposit Credits for deposit rewards"`
+	PriorPurchaseCount uint64         `json:"prior_purchase_count" description:"Invitee purchase count before this deposit"`
+	TierMinPurchases   *uint64        `json:"tier_min_purchases" description:"Highest purchase-bonus tier min_purchases applied to this reward"`
+	ExtraRatio         string         `json:"extra_ratio" description:"Sum of applied purchase-bonus tier extra ratios"`
+	ExtraAmount        models.BigInt  `json:"extra_amount" description:"Credits from applied purchase-bonus tiers"`
 }
 
 type GetReferralRewardsData struct {
@@ -134,13 +135,14 @@ func GetReferralRewards(c *gin.Context, in *GetReferralRewardsInput) (*GetReferr
 	items := make([]ReferralRewardItem, 0, len(rewards))
 	for _, reward := range rewards {
 		item := ReferralRewardItem{
-			ID:               reward.ID,
-			CreatedAt:        reward.CreatedAt,
-			Kind:             referralRewardKindString(reward.Kind),
-			Amount:           reward.Amount,
-			TierMinPurchases: reward.TierMinPurchases,
-			ExtraRatio:       reward.ExtraRatio,
-			ExtraAmount:      reward.ExtraAmount,
+			ID:                 reward.ID,
+			CreatedAt:          reward.CreatedAt,
+			Kind:               referralRewardKindString(reward.Kind),
+			Amount:             reward.Amount,
+			PriorPurchaseCount: reward.PriorPurchaseCount,
+			TierMinPurchases:   reward.TierMinPurchases,
+			ExtraRatio:         reward.ExtraRatio,
+			ExtraAmount:        reward.ExtraAmount,
 		}
 		if reward.Kind == models.ReferralRewardKindDepositReward {
 			credits := reward.DepositCredits

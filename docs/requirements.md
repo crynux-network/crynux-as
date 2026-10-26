@@ -28,7 +28,7 @@ Referral management APIs:
 
 * `GET /v1/account/referral` MUST return the account's active invite code, invitee count, invitee purchase count, and the configured referral policy fields including `purchase_bonus_tiers`.
 * `POST /v1/account/referral/code/reset` MUST revoke the current active invite code and create a new active invite code for the same user. Existing `referral_bindings` MUST remain unchanged so later deposit rewards continue to use the bound `referrer_user_id`.
-* `GET /v1/account/referral/rewards` MUST return the referrer's reward history with `offset`/`limit` pagination. Each deposit reward item MUST include `amount`, `deposit_credits`, `tier_min_purchases`, `extra_ratio`, and `extra_amount`.
+* `GET /v1/account/referral/rewards` MUST return the referrer's reward history with `offset`/`limit` pagination. Each deposit reward item MUST include `amount`, `deposit_credits`, `prior_purchase_count`, `tier_min_purchases`, `extra_ratio`, and `extra_amount`.
 
 `GET /v1/account/purchases` MUST return the account's processed Credits inflows of types purchase (deposit), signup bonus, and invitee bonus, newest first, with `offset`/`limit` pagination. Referral rewards earned as a referrer MUST NOT appear in this list.
 
