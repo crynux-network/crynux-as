@@ -18,6 +18,8 @@ const (
 	CreditEventTypeTaskCharge     CreditEventType = 1
 	CreditEventTypeSignupBonus    CreditEventType = 2
 	CreditEventTypeOpeningBalance CreditEventType = 3
+	CreditEventTypeInviteeBonus   CreditEventType = 4
+	CreditEventTypeReferralReward CreditEventType = 5
 )
 
 type CreditEventStatus int8
@@ -30,7 +32,8 @@ const (
 
 // CreditEvent is the append-only Credits ledger. RefID points to the source
 // record of the event: the deposit ID for deposit events, the LLM call record
-// ID for LLM charge events, and the user ID for signup bonus events. The
+// ID for LLM charge events, the user ID for signup-bonus and invitee-bonus
+// events, and the referral_rewards row ID for referral-reward events. The
 // (Type, RefID) pair is unique so one source record produces at most one
 // ledger event.
 type CreditEvent struct {

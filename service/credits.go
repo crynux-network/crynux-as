@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crynux_as/config"
 	"crynux_as/models"
 	"errors"
 	"fmt"
@@ -97,6 +98,14 @@ func ProcessDeposit(ctx context.Context, db *gorm.DB, in ProcessDepositInput) er
 		}
 		newBalance := new(big.Int).Add(&account.Balance.Int, in.Credits)
 		account.Balance = models.BigInt{Int: *newBalance}
-		return tx.Save(&account).Error
+		if err := tx.Save(&account).Error; err != nil {
+			return err
+		}
+
+		ratio, err := config.GetConfig().ParseDepositRewardRatio()
+		if err != nil {
+			return err
+		}
+		return applyDepositReferralReward(tx, &deposit, ratio)
 	})
 }

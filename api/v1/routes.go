@@ -30,10 +30,25 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(account.GetBalance, 200))
 	accountGroup.GET("/purchases", []fizz.OperationOption{
-		fizz.Summary("Get the purchase records of the account"),
+		fizz.Summary("Get the purchase and bonus credit records of the account"),
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(account.GetPurchases, 200))
+	accountGroup.GET("/referral", []fizz.OperationOption{
+		fizz.Summary("Get the referral settings and stats of the account"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(account.GetReferral, 200))
+	accountGroup.POST("/referral/code/reset", []fizz.OperationOption{
+		fizz.Summary("Reset the active invite code of the account"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(account.ResetReferralCode, 200))
+	accountGroup.GET("/referral/rewards", []fizz.OperationOption{
+		fizz.Summary("Get the referral rewards earned by the account"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(account.GetReferralRewards, 200))
 	accountGroup.GET("/charges", []fizz.OperationOption{
 		fizz.Summary("Get the Credits charge records of the account"),
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),

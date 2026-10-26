@@ -5,7 +5,7 @@ import (
 	"crynux_as/api/v1/response"
 	"crynux_as/blockchain"
 	"crynux_as/config"
-	"crynux_as/models"
+	"crynux_as/service"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -14,9 +14,10 @@ import (
 )
 
 type LoginInput struct {
-	Address   string `json:"address" validate:"required" description:"The wallet address of the user"`
-	Timestamp int64  `json:"timestamp" validate:"required" description:"The unix timestamp when the message is signed"`
-	Signature string `json:"signature" validate:"required" description:"The wallet signature of the login message"`
+	Address    string `json:"address" validate:"required" description:"The wallet address of the user"`
+	Timestamp  int64  `json:"timestamp" validate:"required" description:"The unix timestamp when the message is signed"`
+	Signature  string `json:"signature" validate:"required" description:"The wallet signature of the login message"`
+	InviteCode string `json:"invite_code" description:"Optional invite code applied only when the account is created"`
 }
 
 type LoginData struct {
@@ -47,8 +48,7 @@ func Login(c *gin.Context, in *LoginInput) (*LoginResponse, error) {
 	}
 
 	normalized := common.HexToAddress(in.Address).Hex()
-	signupBonus := config.GetConfig().Credits.SignupBonus
-	if _, err := models.EnsureUserWithCreditAccount(c.Request.Context(), config.GetDB(), normalized, signupBonus); err != nil {
+	if _, err := service.EnsureUserWithReferral(c.Request.Context(), config.GetDB(), normalized, in.InviteCode); err != nil {
 		log.Errorf("Error ensuring user account for %s: %v", normalized, err)
 		return nil, response.NewExceptionResponse(err)
 	}

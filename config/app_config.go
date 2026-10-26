@@ -103,6 +103,12 @@ type AppConfig struct {
 
 	Credits struct {
 		SignupBonus uint64 `mapstructure:"signup_bonus"`
+		Referral    struct {
+			DepositRewardRatio   string `mapstructure:"deposit_reward_ratio"`
+			InviteeBonus         uint64 `mapstructure:"invitee_bonus"`
+			MilestoneInviteCount uint64 `mapstructure:"milestone_invite_count"`
+			MilestoneBonus       uint64 `mapstructure:"milestone_bonus"`
+		} `mapstructure:"referral"`
 	} `mapstructure:"credits"`
 
 	TaskSchema struct {

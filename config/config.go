@@ -264,7 +264,44 @@ func checkCreditsConfig(v *viper.Viper) error {
 	if !v.IsSet("credits.signup_bonus") {
 		return errors.New("credits.signup_bonus is not set")
 	}
+	if !v.IsSet("credits.referral.deposit_reward_ratio") {
+		return errors.New("credits.referral.deposit_reward_ratio is not set")
+	}
+	if !v.IsSet("credits.referral.invitee_bonus") {
+		return errors.New("credits.referral.invitee_bonus is not set")
+	}
+	if !v.IsSet("credits.referral.milestone_invite_count") {
+		return errors.New("credits.referral.milestone_invite_count is not set")
+	}
+	if !v.IsSet("credits.referral.milestone_bonus") {
+		return errors.New("credits.referral.milestone_bonus is not set")
+	}
+	ratio, err := appConfig.ParseDepositRewardRatio()
+	if err != nil {
+		return fmt.Errorf("credits.referral.deposit_reward_ratio is invalid: %w", err)
+	}
+	one := big.NewRat(1, 1)
+	if ratio.Cmp(one) > 0 {
+		return errors.New("credits.referral.deposit_reward_ratio must be less than or equal to 1")
+	}
 	return nil
+}
+
+// ParseDepositRewardRatio parses credits.referral.deposit_reward_ratio as a non-negative decimal.
+// Zero disables deposit referral rewards.
+func (cfg *AppConfig) ParseDepositRewardRatio() (*big.Rat, error) {
+	trimmed := strings.TrimSpace(cfg.Credits.Referral.DepositRewardRatio)
+	if trimmed == "" {
+		return nil, errors.New("must be a non-negative decimal")
+	}
+	rate := new(big.Rat)
+	if _, ok := rate.SetString(trimmed); !ok {
+		return nil, errors.New("must be a non-negative decimal")
+	}
+	if rate.Sign() < 0 {
+		return nil, errors.New("must be a non-negative decimal")
+	}
+	return rate, nil
 }
 
 func (cfg *AppConfig) ParseEmptyQueueMedianPriorityGwei() (*big.Int, error) {

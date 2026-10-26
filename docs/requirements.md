@@ -2,7 +2,7 @@
 
 ## Scope
 
-Crynux AS exposes the AI capabilities of the Crynux Network as managed services. It manages user accounts, on-chain ERC20 payments that purchase Credits, projects with private OpenAI-compatible LLM API endpoints, usage-based Credits charging, and per-project usage statistics. Inference itself is executed by the Crynux Network; Crynux AS submits LLM jobs to the Crynux Bridge raw task APIs.
+Crynux AS exposes the AI capabilities of the Crynux Network as managed services. It manages user accounts, on-chain ERC20 payments that purchase Credits, referral invite codes and referral Credits rewards, projects with private OpenAI-compatible LLM API endpoints, usage-based Credits charging, and per-project usage statistics. Inference itself is executed by the Crynux Network; Crynux AS submits LLM jobs to the Crynux Bridge raw task APIs.
 
 ## Wallet Login and Accounts
 
@@ -11,14 +11,28 @@ The wallet address is the user identity. One wallet address maps to exactly one 
 Login MUST use a wallet signature:
 
 1. The client signs a login message that contains the wallet address and a unix timestamp, using the Ethereum personal sign format.
-2. `POST /v1/auth/login` receives the address, timestamp, and signature. The server MUST verify that the recovered signer address equals the submitted address and that the timestamp is within the accepted validity window.
+2. `POST /v1/auth/login` receives the address, timestamp, signature, and optional `invite_code`. The server MUST verify that the recovered signer address equals the submitted address and that the timestamp is within the accepted validity window.
 3. On successful verification, the server MUST create the user account if it does not exist, and MUST return a JWT token bound to the wallet address.
 
-When the server creates a new user account, it MUST also create the user's `credit_accounts` row in the same database transaction. When `credits.signup_bonus` is greater than zero, that transaction MUST set the new account balance to `credits.signup_bonus` and MUST write one processed `credit_events` row of type signup bonus with `ref_id` equal to the new user ID and amount equal to `credits.signup_bonus`. When `credits.signup_bonus` is `0`, the new account balance MUST be `0` and the server MUST NOT write a signup-bonus ledger event. An existing user account MUST NOT receive another signup bonus on later logins.
+When the server creates a new user account, it MUST also create the user's `credit_accounts` row and one active `referral_codes` row in the same database transaction. When `credits.signup_bonus` is greater than zero, that transaction MUST set the new account balance to `credits.signup_bonus` and MUST write one processed `credit_events` row of type signup bonus with `ref_id` equal to the new user ID and amount equal to `credits.signup_bonus`. When `credits.signup_bonus` is `0`, the new account balance MUST be `0` and the server MUST NOT write a signup-bonus ledger event. An existing user account MUST NOT receive another signup bonus on later logins.
+
+When the server creates a new user account and `invite_code` is non-empty, the server MUST look up an active `referral_codes` row by exact `code`. When a matching active code exists and the code owner is not the new user, the transaction MUST write one `referral_bindings` row (`invitee_user_id` unique) that permanently binds the new user to that referrer. When `credits.referral.invitee_bonus` is greater than zero, that transaction MUST also increase the new account balance by `invitee_bonus` and MUST write one processed `credit_events` row of type invitee bonus with `ref_id` equal to the new user ID. When the invite code is missing, inactive, unknown, or owned by the new user, the server MUST still create the account and MUST NOT bind a referrer or grant invitee bonus. An existing user account MUST ignore `invite_code` on later logins.
+
+After a successful bind in the create-user transaction, when `credits.referral.milestone_invite_count` is greater than zero and the referrer's binding count equals that value, and the referrer has not already received a milestone reward, the same transaction MUST grant `credits.referral.milestone_bonus` Credits to the referrer: insert one `referral_rewards` row of kind milestone bonus, write one processed `credit_events` row of type referral reward with `ref_id` equal to that reward ID, and increase the referrer's `credit_accounts.balance`. When `milestone_invite_count` or `milestone_bonus` is `0`, the server MUST NOT grant a milestone reward.
 
 `credits.signup_bonus` MUST be present in configuration. The value MUST be a non-negative integer. The example configuration value is `1000`.
 
+`credits.referral.deposit_reward_ratio`, `credits.referral.invitee_bonus`, `credits.referral.milestone_invite_count`, and `credits.referral.milestone_bonus` MUST be present in configuration. `deposit_reward_ratio` MUST be a non-negative decimal string less than or equal to `1`; `0` disables deposit referral rewards. `invitee_bonus` and `milestone_bonus` MUST be non-negative integers; `0` disables the corresponding grant. `milestone_invite_count` MUST be a non-negative integer; `0` disables the milestone grant. Example values are `deposit_reward_ratio: "0.10"`, `invitee_bonus: 500`, `milestone_invite_count: 10`, and `milestone_bonus: 5000`.
+
 All account and project management APIs MUST require a valid JWT token in the `Authorization: Bearer <token>` header. A request without a valid token MUST be rejected with HTTP 401.
+
+Referral management APIs:
+
+* `GET /v1/account/referral` MUST return the account's active invite code, invitee count, whether the milestone bonus has been granted, and the configured referral policy fields.
+* `POST /v1/account/referral/code/reset` MUST revoke the current active invite code and create a new active invite code for the same user. Existing `referral_bindings` MUST remain unchanged so later deposit rewards continue to use the bound `referrer_user_id`.
+* `GET /v1/account/referral/rewards` MUST return the referrer's reward history with `offset`/`limit` pagination.
+
+`GET /v1/account/purchases` MUST return the account's processed Credits inflows of types purchase (deposit), signup bonus, and invitee bonus, newest first, with `offset`/`limit` pagination. Referral rewards earned as a referrer MUST NOT appear in this list.
 
 ## Deposits and Credits
 
@@ -54,8 +68,9 @@ For each detected transfer log, the service MUST:
 2. Attribute the transfer to the user account whose wallet address equals the `from` address of the transfer. If no account exists for the `from` address, the service MUST emit a warning log and MUST NOT create a deposit row or Credits ledger event.
 3. When the user account exists and the computed Credits is at least `1`, record a deposit row identified by network, transaction hash, and log index. This identity MUST be unique; re-scanning the same log MUST NOT create a second deposit or credit the account twice.
 4. Create a Credits ledger event of type deposit referencing the deposit row ID, and update the account balance.
+5. When the depositing user has a `referral_bindings` row, compute `reward = floor(deposit_credits * deposit_reward_ratio)` with integer truncation toward zero. When `reward` is greater than zero, the same transaction MUST insert one `referral_rewards` row of kind deposit reward keyed uniquely by `deposit_id`, write one processed `credit_events` row of type referral reward with `ref_id` equal to that reward ID for the referrer, and increase the referrer's `credit_accounts.balance` by `reward`. When there is no binding, the ratio is `0`, or `reward` is `0`, the server MUST NOT create a referral reward.
 
-Deposits and Credits balance changes MUST go through the Credits ledger: every balance change MUST be recorded as a `credit_events` row referencing its source record ID (`ref_id`), and the `credit_accounts` balance MUST equal the sum of its processed events. The event type + `ref_id` pair MUST be unique so one source record produces at most one ledger event. Signup-bonus events use the user ID as `ref_id`.
+Deposits and Credits balance changes MUST go through the Credits ledger: every balance change MUST be recorded as a `credit_events` row referencing its source record ID (`ref_id`), and the `credit_accounts` balance MUST equal the sum of its processed events. The event type + `ref_id` pair MUST be unique so one source record produces at most one ledger event. Signup-bonus and invitee-bonus events use the user ID as `ref_id`. Referral-reward events use the `referral_rewards` row ID as `ref_id`.
 
 ## Projects and Private LLM API Endpoints
 
