@@ -45,4 +45,8 @@ type ReferralReward struct {
 	DepositID               *uint              `json:"deposit_id" gorm:"uniqueIndex"`
 	MilestoneReferrerUserID *uint              `json:"milestone_referrer_user_id" gorm:"uniqueIndex"`
 	DepositCredits          BigInt             `json:"deposit_credits" gorm:"type:string;size:255;not null;default:0"`
+	PriorPurchaseCount      uint64             `json:"prior_purchase_count" gorm:"not null;default:0"`
+	TierMinPurchases        *uint64            `json:"tier_min_purchases"`
+	ExtraRatio              string             `json:"extra_ratio" gorm:"type:string;size:64;not null;default:0"`
+	ExtraAmount             BigInt             `json:"extra_amount" gorm:"type:string;size:255;not null;default:0"`
 }

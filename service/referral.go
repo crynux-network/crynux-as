@@ -264,6 +264,15 @@ func CountInviteePurchases(tx *gorm.DB, referrerUserID uint, excludeDepositID ui
 	return count, nil
 }
 
+func floorCreditsTimesRatio(credits *big.Int, ratio *big.Rat) *big.Int {
+	if credits == nil || ratio == nil || ratio.Sign() <= 0 || credits.Sign() <= 0 {
+		return big.NewInt(0)
+	}
+	rewardRat := new(big.Rat).SetInt(credits)
+	rewardRat.Mul(rewardRat, ratio)
+	return new(big.Int).Div(rewardRat.Num(), rewardRat.Denom())
+}
+
 func applyDepositReferralReward(tx *gorm.DB, deposit *models.Deposit) error {
 	var binding models.ReferralBinding
 	if err := tx.Where("invitee_user_id = ?", deposit.UserID).First(&binding).Error; err != nil {
@@ -280,31 +289,46 @@ func applyDepositReferralReward(tx *gorm.DB, deposit *models.Deposit) error {
 	if priorCount < 0 {
 		return errors.New("invitee purchase count is negative")
 	}
+	prior := uint64(priorCount)
 
-	ratio, err := config.GetConfig().EffectiveDepositRewardRatio(uint64(priorCount))
+	cfg := config.GetConfig()
+	baseRatio, err := cfg.ParseDepositRewardRatio()
 	if err != nil {
 		return err
 	}
-	if ratio == nil || ratio.Sign() <= 0 {
+	extraRatio, tierMin, err := cfg.PurchaseBonusExtra(prior)
+	if err != nil {
+		return err
+	}
+	effectiveRatio := new(big.Rat).Add(baseRatio, extraRatio)
+	if effectiveRatio.Sign() <= 0 {
 		return nil
 	}
 
-	rewardRat := new(big.Rat).SetInt(&deposit.Credits.Int)
-	rewardRat.Mul(rewardRat, ratio)
-	rewardInt := new(big.Int).Div(rewardRat.Num(), rewardRat.Denom())
+	depositCredits := new(big.Int).Set(&deposit.Credits.Int)
+	rewardInt := floorCreditsTimesRatio(depositCredits, effectiveRatio)
 	if rewardInt.Sign() <= 0 {
 		return nil
+	}
+	baseAmount := floorCreditsTimesRatio(depositCredits, baseRatio)
+	extraAmount := new(big.Int).Sub(rewardInt, baseAmount)
+	if extraAmount.Sign() < 0 {
+		extraAmount = big.NewInt(0)
 	}
 
 	depositID := deposit.ID
 	inviteeID := deposit.UserID
 	reward := models.ReferralReward{
-		ReferrerUserID: binding.ReferrerUserID,
-		InviteeUserID:  &inviteeID,
-		Kind:           models.ReferralRewardKindDepositReward,
-		Amount:         models.BigInt{Int: *rewardInt},
-		DepositID:      &depositID,
-		DepositCredits: models.BigInt{Int: *new(big.Int).Set(&deposit.Credits.Int)},
+		ReferrerUserID:     binding.ReferrerUserID,
+		InviteeUserID:      &inviteeID,
+		Kind:               models.ReferralRewardKindDepositReward,
+		Amount:             models.BigInt{Int: *rewardInt},
+		DepositID:          &depositID,
+		DepositCredits:     models.BigInt{Int: *depositCredits},
+		PriorPurchaseCount: prior,
+		TierMinPurchases:   tierMin,
+		ExtraRatio:         config.FormatRatio(extraRatio),
+		ExtraAmount:        models.BigInt{Int: *extraAmount},
 	}
 	if err := tx.Create(&reward).Error; err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {

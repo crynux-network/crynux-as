@@ -336,18 +336,47 @@ func (cfg *AppConfig) EffectiveDepositRewardRatio(priorCount uint64) (*big.Rat, 
 	if err != nil {
 		return nil, err
 	}
-	total := new(big.Rat).Set(base)
+	extra, _, err := cfg.PurchaseBonusExtra(priorCount)
+	if err != nil {
+		return nil, err
+	}
+	return new(big.Rat).Add(base, extra), nil
+}
+
+// PurchaseBonusExtra returns the summed extra_ratio of every purchase_bonus_tier
+// whose min_purchases is at most priorCount, and the highest matching
+// min_purchases. highestMinPurchases is nil when no tier matches.
+func (cfg *AppConfig) PurchaseBonusExtra(priorCount uint64) (*big.Rat, *uint64, error) {
+	extra := big.NewRat(0, 1)
+	var highest *uint64
 	for _, tier := range cfg.Credits.Referral.PurchaseBonusTiers {
 		if priorCount < tier.MinPurchases {
 			continue
 		}
-		extra, err := parseNonNegativeRatio(tier.ExtraRatio)
+		part, err := parseNonNegativeRatio(tier.ExtraRatio)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		total.Add(total, extra)
+		extra.Add(extra, part)
+		minPurchases := tier.MinPurchases
+		if highest == nil || minPurchases > *highest {
+			highest = &minPurchases
+		}
 	}
-	return total, nil
+	return extra, highest, nil
+}
+
+func FormatRatio(rate *big.Rat) string {
+	if rate == nil || rate.Sign() == 0 {
+		return "0"
+	}
+	s := rate.FloatString(18)
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	if s == "" || s == "-" {
+		return "0"
+	}
+	return s
 }
 
 func (cfg *AppConfig) ParseEmptyQueueMedianPriorityGwei() (*big.Int, error) {
