@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crynux_as/bridge"
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/utils"
@@ -494,12 +495,26 @@ func UpdateTaskJobBridgeTask(ctx context.Context, db *gorm.DB, jobID uint, bridg
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"bridge_client_task_id": bridgeClientTaskID,
-		"status":                models.TaskJobStatusSubmitted,
-		"phase":                 "queued",
-		"started_at":            now,
-	}).Error
+	result := db.WithContext(dbCtx).Model(&models.TaskJob{}).
+		Where("id = ? AND status = ?", jobID, models.TaskJobStatusPendingSubmit).
+		Updates(map[string]interface{}{
+			"bridge_client_task_id": bridgeClientTaskID,
+			"status":                models.TaskJobStatusSubmitted,
+			"phase":                 "queued",
+			"started_at":            now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 1 {
+		return nil
+	}
+	cfg := config.GetConfig()
+	client := bridge.NewRawTaskClient(cfg.Bridge.BaseURL, cfg.Bridge.APIKey)
+	if _, abortErr := client.AbortTask(ctx, bridgeClientTaskID); abortErr != nil {
+		log.Errorf("abort orphan bridge task %d after job %d left pending_submit: %v", bridgeClientTaskID, jobID, abortErr)
+	}
+	return nil
 }
 
 func UpdateTaskJobStatus(ctx context.Context, db *gorm.DB, jobID uint, status models.TaskJobStatus) error {

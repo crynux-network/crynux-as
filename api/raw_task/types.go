@@ -50,6 +50,16 @@ type BatchStatusItem struct {
 	Error        string    `json:"error,omitempty"`
 }
 
+type BatchAbortRequest struct {
+	ClientTaskIDs []uint `json:"client_task_ids"`
+}
+
+type BatchAbortItem struct {
+	ClientTaskID uint      `json:"client_task_id"`
+	ClientTask   *TaskView `json:"client_task,omitempty"`
+	Error        string    `json:"error,omitempty"`
+}
+
 type preparedTask struct {
 	request    CreateTaskRequest
 	model      string

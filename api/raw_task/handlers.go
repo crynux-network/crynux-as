@@ -125,6 +125,49 @@ func GetTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskView(job)})
 }
 
+func AbortTask(c *gin.Context) {
+	project := llm.GetProject(c)
+	id, err := strconv.ParseUint(c.Param("client_task_id"), 10, 64)
+	if err != nil || id == 0 {
+		writeError(c, http.StatusBadRequest, "invalid client_task_id")
+		return
+	}
+	job, err := service.AbortRawTaskJob(c.Request.Context(), config.GetDB(), project.ID, uint(id))
+	if err != nil {
+		writeAbortError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskView(job)})
+}
+
+func BatchAbort(c *gin.Context) {
+	project := llm.GetProject(c)
+	var request BatchAbortRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(request.ClientTaskIDs) == 0 || len(request.ClientTaskIDs) > maxBatchSize {
+		writeError(c, http.StatusBadRequest, "client_task_ids must contain between 1 and 100 items")
+		return
+	}
+	items, err := service.AbortRawTaskJobs(c.Request.Context(), config.GetDB(), project.ID, request.ClientTaskIDs)
+	if err != nil {
+		writeInternalError(c, err)
+		return
+	}
+	results := make([]BatchAbortItem, 0, len(items))
+	for _, item := range items {
+		if item.Error != "" {
+			results = append(results, BatchAbortItem{ClientTaskID: item.ClientTaskID, Error: item.Error})
+			continue
+		}
+		view := taskView(item.Job)
+		results = append(results, BatchAbortItem{ClientTaskID: item.ClientTaskID, ClientTask: &view})
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": results})
+}
+
 func BatchStatus(c *gin.Context) {
 	project := llm.GetProject(c)
 	var request BatchStatusRequest
@@ -464,6 +507,19 @@ func recordFailure(ctx context.Context, project *models.Project, model string, b
 
 func writeError(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{"error": gin.H{"message": message, "type": "invalid_request_error"}})
+}
+
+func writeAbortError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, service.ErrRawTaskAbortNotFound):
+		writeError(c, http.StatusNotFound, "task not found")
+	case errors.Is(err, service.ErrRawTaskAbortAlreadyComplete), errors.Is(err, service.ErrRawTaskAbortNotCancellable):
+		writeError(c, http.StatusConflict, "not_cancellable")
+	case errors.Is(err, service.ErrRawTaskAbortTemporary):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{"message": "temporary_error", "type": "server_error"}})
+	default:
+		writeInternalError(c, err)
+	}
 }
 
 func writePrepareTaskError(c *gin.Context, err error) {

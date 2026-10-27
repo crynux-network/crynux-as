@@ -149,6 +149,12 @@ It MUST NOT create a Credits event and MUST NOT change the account balance.
 
 If the job is already terminal with a call record, the failure path MUST leave existing rows unchanged and MUST NOT unlock again.
 
+### Raw Task abort
+
+Raw Task abort is specified in [raw-task-api.md](./raw-task-api.md). The worker MUST treat a job that is already terminal as finished and MUST NOT submit it to Bridge, poll Bridge status for settlement, download a result, or enter the success settle transaction for that job. When abort succeeds through the failure record transaction before Bridge submit, the worker MUST NOT create a Bridge task for that job.
+
+Abort of a job that already has a Bridge client task ID MUST call Bridge abort and MUST run the failure record transaction only after Bridge abort succeeds. AS MUST NOT mark the job failed or unlock Credits while Bridge still reports the ClientTask as running.
+
 ### Responses lookup
 
 `GET /responses/:id` MUST return the job's pending, completed, or failed Responses object while the job remains readable for the same project.

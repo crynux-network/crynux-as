@@ -8,10 +8,12 @@ The API MUST expose:
 
 * `POST /inference_tasks`
 * `GET /inference_tasks/:client_task_id`
+* `POST /inference_tasks/:client_task_id/abort`
 * `GET /inference_tasks/:client_task_id/llm`
 * `GET /inference_tasks/:client_task_id/images/:index`
 * `POST /inference_tasks/batch`
 * `POST /inference_tasks/batch/status`
+* `POST /inference_tasks/batch/abort`
 * `GET /models/image`
 
 The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge ClientTask ID, Bridge client ID, or platform client ID MUST NOT appear in a public response. Every lookup and result download MUST select by both project ID and local task ID.
@@ -82,6 +84,22 @@ The task view MUST include `phase`. Allowed values are `queued`, `running`, `val
 The batch path MUST reserve each accepted item's estimated Credits in request order through the same per-item reserve-and-create transaction used by single create. An item whose estimate exceeds available Credits at its turn MUST return an item error and MUST NOT create a job.
 
 `POST /inference_tasks/batch/status` MUST accept `{"client_task_ids":[...]}` with between 1 and 100 IDs. AS MUST deduplicate IDs for the database query and MUST restore the original order and duplicates in the response. A missing or cross-project ID MUST return an item error without revealing whether another project owns it.
+
+## Task Abort
+
+`POST /inference_tasks/:client_task_id/abort` MUST abort one Raw Task job owned by the authenticated project. The path `client_task_id` MUST be the local `task_jobs.id`. OpenAI-compatible routes MUST NOT expose abort.
+
+Abort MUST use this outcome rule:
+
+1. A missing or cross-project ID MUST return HTTP 404 without revealing whether another project owns the ID.
+2. A job already `failed` with error message `cancelled by client` MUST succeed idempotently and return the failed task view.
+3. A job already `completed` MUST return HTTP 409 and MUST NOT change Credits or the job row.
+4. A job in `pending_submit` with no Bridge client task ID MUST run the failure record transaction with error message `cancelled by client`, unlock the Credits hold, and MUST NOT call Bridge.
+5. A job that already has a Bridge client task ID MUST call Bridge `POST /v1/inference_tasks/:id/abort` first. Only after Bridge reports abort success MAY AS run the failure record transaction with error message `cancelled by client`. When Bridge reports `not_cancellable`, AS MUST return HTTP 409 and MUST leave the job and Credits hold unchanged. When Bridge reports `temporary_error` or a transport failure, AS MUST return HTTP 503 and MUST leave the job and Credits hold unchanged.
+
+`POST /inference_tasks/batch/abort` MUST accept `{"client_task_ids":[...]}` with between 1 and 100 IDs. AS MUST return one item per requested ID in request order. Each item MUST contain `client_task_id` and either `client_task` or `error`. One item failure MUST NOT change another item's outcome. A missing or cross-project ID MUST appear as an item error without revealing ownership.
+
+Client disconnect during abort MUST NOT itself cancel the job. Abort is an explicit API action only.
 
 ## Results
 
