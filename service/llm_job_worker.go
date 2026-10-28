@@ -54,7 +54,7 @@ func RecoverIncompleteJobs(ctx context.Context, db *gorm.DB) error {
 
 	var jobs []models.TaskJob
 	if err := db.WithContext(dbCtx).
-		Where("status IN ?", []models.TaskJobStatus{
+		Where("execution_source = ? AND status IN ?", models.ExecutionSourceCrynux, []models.TaskJobStatus{
 			models.TaskJobStatusSubmitted,
 			models.TaskJobStatusInProgress,
 		}).

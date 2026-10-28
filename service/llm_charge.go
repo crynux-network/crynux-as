@@ -117,6 +117,8 @@ type RecordTaskCallInput struct {
 	TaskType              models.TaskType
 	APIType               models.TaskAPIType
 	Model                 string
+	ExecutionSource       models.ExecutionSource
+	SharedAPIKeyID        *uint
 	TaskArgsJSON          string
 	PromptTokens          uint64
 	CompletionTokens      uint64
@@ -222,6 +224,10 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 		tokenUsageApplicable = 1
 	}
 
+	executionSource := in.ExecutionSource
+	if executionSource == "" {
+		executionSource = models.ExecutionSourceCrynux
+	}
 	workload := ExtractTaskCallWorkloadFields(in.TaskType, in.Model, in.TaskArgsJSON)
 	record := models.TaskCallRecord{
 		UserID:               in.UserID,
@@ -230,6 +236,8 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 		TaskType:             in.TaskType,
 		APIType:              in.APIType,
 		Model:                in.Model,
+		ExecutionSource:      executionSource,
+		SharedAPIKeyID:       in.SharedAPIKeyID,
 		ModelCacheHash:       workload.ModelCacheHash,
 		ExecutionDType:       workload.ExecutionDType,
 		QuantizationConfig:   workload.QuantizationConfig,
@@ -258,6 +266,8 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 		"TaskType",
 		"APIType",
 		"Model",
+		"ExecutionSource",
+		"SharedAPIKeyID",
 		"ModelCacheHash",
 		"ExecutionDType",
 		"QuantizationConfig",

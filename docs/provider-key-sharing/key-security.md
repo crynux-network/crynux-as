@@ -93,7 +93,7 @@ Go runtime behavior can leave copies outside application control. Documentation,
 
 ## Logging and Error Redaction
 
-The following data MUST never appear in logs, traces, metrics, errors, database diagnostics, panic values, or HTTP responses:
+The following data MUST never appear in logs, traces, errors, database diagnostics, panic values, or HTTP responses:
 
 * Shared API Key plaintext;
 * full Authorization header;

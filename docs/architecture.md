@@ -58,7 +58,7 @@ Image TaskArgs execution resolution MUST use one shared resolver for Raw Image c
 
 ## Startup Order
 
-`main.go` initializes components in this order: configuration and Provider encryption secrets, logging, database, migrations, blockchain clients, existing external clients, Service Provider adapters, encryption-secret file removal, prior-process Provider job failure and ledger recovery, existing blockchain and usage workers, initial loaded-models and queued-priority refreshes, Bridge poller, Provider scheduler, reconciliation workers, and finally the HTTP server. The complete Provider startup contract is specified in [provider-key-sharing/architecture.md](./provider-key-sharing/architecture.md).
+`main.go` initializes components in this order: configuration and Provider encryption secrets, logging, database, migrations, blockchain clients, existing external clients, Service Provider adapters, encryption-secret file removal, prior-process Provider job failure and Credits-hold recovery, existing blockchain and usage workers, initial loaded-models and queued-priority refreshes, Bridge poller, Provider scheduler, the existing Credits-lock reconciler, and finally the HTTP server. The complete Provider startup contract is specified in [provider-key-sharing/architecture.md](./provider-key-sharing/architecture.md).
 
 ## Multi-Chain Multi-Token Configuration Model
 

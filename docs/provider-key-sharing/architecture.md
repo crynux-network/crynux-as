@@ -154,10 +154,10 @@ AS MUST initialize Provider Key Sharing in this order:
 6. initialize blockchain clients and existing external clients;
 7. initialize Service Provider adapters;
 8. validate and remove the encryption-key file;
-9. fail submitted or in-progress Provider jobs from the prior process and recover Credits holds and earnings balances;
+9. fail submitted or in-progress Provider jobs from the prior process and recover Credits holds;
 10. start existing blockchain and usage workers;
 11. refresh existing Crynux model and queue caches;
-12. start Bridge poller, Provider scheduler, and reconciliation workers;
+12. start Bridge poller, Provider scheduler, and the existing Credits-lock reconciler;
 13. start the HTTP server.
 
 AS MUST NOT accept a Provider call before recovery and initial catalog construction finish.

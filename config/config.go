@@ -75,6 +75,9 @@ func InitConfig(configPath string) error {
 	if err := checkCreditsConfig(v); err != nil {
 		return err
 	}
+	if err := checkProviderConfig(v); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -321,6 +324,187 @@ func parseNonNegativeRatio(value string) (*big.Rat, error) {
 		return nil, errors.New("must be a non-negative decimal")
 	}
 	return rate, nil
+}
+
+func parseNonNegativeCNXDecimal(value string) (*big.Int, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, errors.New("must be a non-negative decimal CNX string")
+	}
+	rat := new(big.Rat)
+	if _, ok := rat.SetString(trimmed); !ok {
+		return nil, errors.New("must be a non-negative decimal CNX string")
+	}
+	if rat.Sign() < 0 {
+		return nil, errors.New("must be a non-negative decimal CNX string")
+	}
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+	scaled := new(big.Rat).Mul(rat, new(big.Rat).SetInt(scale))
+	if !scaled.IsInt() {
+		return nil, errors.New("must have at most 18 fractional digits")
+	}
+	return new(big.Int).Set(scaled.Num()), nil
+}
+
+var knownServiceProviders = map[string]struct{}{
+	"openai":    {},
+	"anthropic": {},
+	"google":    {},
+}
+
+func checkProviderConfig(v *viper.Viper) error {
+	if !v.IsSet("provider") {
+		return errors.New("provider is not set")
+	}
+	p := appConfig.Provider
+	if p.MaxConcurrencyPerKey == 0 {
+		return errors.New("provider.max_concurrency_per_key must be greater than 0")
+	}
+	if p.SchedulerIntervalMilliseconds == 0 {
+		return errors.New("provider.scheduler_interval_milliseconds must be greater than 0")
+	}
+	if p.SchedulerBatchSize == 0 {
+		return errors.New("provider.scheduler_batch_size must be greater than 0")
+	}
+	if p.DefaultQueueTimeoutSeconds == 0 {
+		return errors.New("provider.default_queue_timeout_seconds must be greater than 0")
+	}
+	if p.MaxAttemptsPerJob == 0 {
+		return errors.New("provider.max_attempts_per_job must be greater than 0")
+	}
+	if p.KeyCooldownSeconds == 0 {
+		return errors.New("provider.key_cooldown_seconds must be greater than 0")
+	}
+	if p.StreamSubscriberBuffer == 0 {
+		return errors.New("provider.stream_subscriber_buffer must be greater than 0")
+	}
+	if p.ShutdownTimeoutSeconds == 0 {
+		return errors.New("provider.shutdown_timeout_seconds must be greater than 0")
+	}
+	if p.MaxSecretBytes == 0 {
+		return errors.New("provider.max_secret_bytes must be greater than 0")
+	}
+	if strings.TrimSpace(p.KeyEncryption.EncryptionKeyFile) == "" {
+		return errors.New("provider.key_encryption.encryption_key_file is not set")
+	}
+	if len(p.Services) == 0 {
+		return errors.New("provider.services is not set")
+	}
+	modelNames := make(map[string]string)
+	for serviceID, svc := range p.Services {
+		if _, ok := knownServiceProviders[serviceID]; !ok {
+			return fmt.Errorf("provider.services.%s is an unknown service provider", serviceID)
+		}
+		if strings.TrimSpace(svc.DisplayName) == "" {
+			return fmt.Errorf("provider.services.%s.display_name is not set", serviceID)
+		}
+		if strings.TrimSpace(svc.BaseURL) == "" {
+			return fmt.Errorf("provider.services.%s.base_url is not set", serviceID)
+		}
+		if svc.ConnectTimeoutSeconds == 0 {
+			return fmt.Errorf("provider.services.%s.connect_timeout_seconds must be greater than 0", serviceID)
+		}
+		if svc.ResponseHeaderTimeoutSeconds == 0 {
+			return fmt.Errorf("provider.services.%s.response_header_timeout_seconds must be greater than 0", serviceID)
+		}
+		if svc.StreamIdleTimeoutSeconds == 0 {
+			return fmt.Errorf("provider.services.%s.stream_idle_timeout_seconds must be greater than 0", serviceID)
+		}
+		if svc.RequestTimeoutSeconds == 0 {
+			return fmt.Errorf("provider.services.%s.request_timeout_seconds must be greater than 0", serviceID)
+		}
+		if svc.CredentialValidationTimeoutSeconds == 0 {
+			return fmt.Errorf("provider.services.%s.credential_validation_timeout_seconds must be greater than 0", serviceID)
+		}
+		for i, model := range svc.Models {
+			name := strings.TrimSpace(model.Name)
+			if name == "" {
+				return fmt.Errorf("provider.services.%s.models[%d].name is not set", serviceID, i)
+			}
+			if other, exists := modelNames[name]; exists {
+				return fmt.Errorf("provider model name %q is duplicated between %s and %s", name, other, serviceID)
+			}
+			modelNames[name] = serviceID
+			if err := checkProviderUsageWeights(serviceID, name, model.UsageWeights); err != nil {
+				return err
+			}
+		}
+	}
+	if !common.IsHexAddress(p.Wallet.SignerAddress) {
+		return errors.New("provider.wallet.signer_address is invalid")
+	}
+	if len(p.Wallet.Networks) == 0 {
+		return errors.New("provider.wallet.networks is not set")
+	}
+	for networkID, network := range p.Wallet.Networks {
+		if strings.TrimSpace(network.DisplayName) == "" {
+			return fmt.Errorf("provider.wallet.networks.%s.display_name is not set", networkID)
+		}
+		if !common.IsHexAddress(network.BenefitAddressContract) {
+			return fmt.Errorf("provider.wallet.networks.%s.benefit_address_contract is invalid", networkID)
+		}
+		if !common.IsHexAddress(network.FeeReceiverAddress) {
+			return fmt.Errorf("provider.wallet.networks.%s.fee_receiver_address is invalid", networkID)
+		}
+		if network.MaxWithdrawalsPerDay == 0 {
+			return fmt.Errorf("provider.wallet.networks.%s.max_withdrawals_per_day must be greater than 0", networkID)
+		}
+		if _, err := parseNonNegativeCNXDecimal(network.FixedWithdrawalFeeCNX); err != nil {
+			return fmt.Errorf("provider.wallet.networks.%s.fixed_withdrawal_fee_cnx is invalid: %w", networkID, err)
+		}
+		if _, err := parseNonNegativeCNXDecimal(network.MinimumHotWalletCNX); err != nil {
+			return fmt.Errorf("provider.wallet.networks.%s.minimum_hot_wallet_cnx is invalid: %w", networkID, err)
+		}
+		if _, err := parseNonNegativeCNXDecimal(network.MinimumHotWalletNativeGas); err != nil {
+			return fmt.Errorf("provider.wallet.networks.%s.minimum_hot_wallet_native_gas is invalid: %w", networkID, err)
+		}
+		if _, ok := appConfig.Blockchains[networkID]; !ok {
+			return fmt.Errorf("provider.wallet.networks.%s must exist in blockchains", networkID)
+		}
+		var prevMin *big.Int
+		for i, tier := range network.WithdrawalFeeTiers {
+			minAmount, err := parseNonNegativeCNXDecimal(tier.MinAmountCNX)
+			if err != nil {
+				return fmt.Errorf("provider.wallet.networks.%s.withdrawal_fee_tiers[%d].min_amount_cnx is invalid: %w", networkID, i, err)
+			}
+			if prevMin != nil && minAmount.Cmp(prevMin) <= 0 {
+				return fmt.Errorf("provider.wallet.networks.%s.withdrawal_fee_tiers must be strictly increasing by min_amount_cnx", networkID)
+			}
+			prevMin = minAmount
+			if _, err := parseNonNegativeRatio(tier.FeeRatio); err != nil {
+				return fmt.Errorf("provider.wallet.networks.%s.withdrawal_fee_tiers[%d].fee_ratio is invalid: %w", networkID, i, err)
+			}
+		}
+	}
+	return nil
+}
+
+func checkProviderUsageWeights(serviceID, modelName string, weights ProviderUsageWeightsConfig) error {
+	fields := map[string]string{
+		"input_tokens":             weights.InputTokens,
+		"output_tokens":            weights.OutputTokens,
+		"cached_input_tokens":      weights.CachedInputTokens,
+		"cache_write_input_tokens": weights.CacheWriteInputTokens,
+		"reasoning_tokens":         weights.ReasoningTokens,
+		"tool_use_prompt_tokens":   weights.ToolUsePromptTokens,
+	}
+	hasPositive := false
+	for field, value := range fields {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		rat, err := parseNonNegativeRatio(value)
+		if err != nil {
+			return fmt.Errorf("provider.services.%s.models[%s].usage_weights.%s is invalid: %w", serviceID, modelName, field, err)
+		}
+		if rat.Sign() > 0 {
+			hasPositive = true
+		}
+	}
+	if !hasPositive {
+		return fmt.Errorf("provider.services.%s.models[%s] must have at least one positive usage weight", serviceID, modelName)
+	}
+	return nil
 }
 
 // ParseDepositRewardRatio parses credits.referral.deposit_reward_ratio as a non-negative decimal.

@@ -30,7 +30,6 @@ provider:
   stream_subscriber_buffer: 128
   shutdown_timeout_seconds: 600
   max_secret_bytes: 4096
-  reconciliation_interval_seconds: 300
   key_encryption:
     encryption_key_file: "config/secrets/provider_key_encryption.txt"
   services:
@@ -141,55 +140,6 @@ Key creation MUST run credential validation without submitting billable model wo
 Authentication failure, permission denial, rate limiting, and quota exhaustion MUST atomically increment the selected Key's consecutive unavailable count before the current job selects another Key. The current job MUST exclude that Key for all later selections. Provider 5xx responses, network errors, and timeouts MUST NOT increment the count or cause a Key switch. A successful Provider call MUST clear the count.
 
 On the third consecutive unavailable result, AS MUST reset the count to zero and set `cooldown_until` to the current time plus `provider.key_cooldown_seconds`. A Key with a future `cooldown_until` MUST not receive a new claim or in-worker Key-switch assignment. A failed Key below the threshold MAY be selected by a later job. Cooldown expiry MUST restore eligibility through the scheduler's time comparison and MUST NOT require a background worker.
-
-## Reconciliation Workers
-
-Startup and periodic reconciliation MUST cover:
-
-* Credits holds;
-* earning available and withdrawal-locked balances;
-* earning event source uniqueness;
-* Wallet event visibility;
-* withdrawal anchors and callbacks.
-
-A reconciler MUST process deterministic bounded batches and commit between batches.
-
-Financial mismatches MUST not be silently ignored. Safe derived counters may be corrected only when the authoritative source is unambiguous, and every correction MUST produce an error log.
-
-## Metrics
-
-Metrics MAY use these bounded labels:
-
-* Service Provider;
-* configured model name;
-* API type;
-* attempt outcome class;
-* key cooldown state;
-* execution source;
-* withdrawal network and status.
-
-Metrics MUST NOT use:
-
-* Shared API Key ID or suffix;
-* Key Owner wallet address;
-* API Consumer project or wallet;
-* upstream request ID;
-* request or response content.
-
-Required metrics:
-
-* Provider queued job count;
-* queue age and queue-timeout count;
-* active slots and configured slots by Service Provider;
-* Provider request duration;
-* stream first-event latency;
-* Provider calls by outcome;
-* uncertain Provider jobs;
-* missing-usage Provider jobs;
-* consumer Credits charged;
-* Key Owner earnings created;
-* withdrawal pending age and callback result;
-* reconciler mismatches.
 
 ## Logging
 

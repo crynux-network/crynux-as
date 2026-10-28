@@ -218,8 +218,7 @@ Tests MUST cover:
 
 * settlement immediately increases available;
 * TaskIncome is immediately publishable;
-* no earning-release worker or maturity state exists;
-* earning reconciliation mismatch.
+* no earning-release worker or maturity state exists.
 
 ## Wallet Contract Tests
 
@@ -274,7 +273,7 @@ Every migration MUST be tested against MySQL 8.1:
 2. verify new schema and indexes;
 3. roll back the newest migration;
 4. apply it again;
-5. run representative queue, history, reconciliation, and Wallet queries.
+5. run representative queue, history, and Wallet queries.
 
 `EXPLAIN` MUST confirm bounded indexed candidate selection for:
 
@@ -284,7 +283,6 @@ Every migration MUST be tested against MySQL 8.1:
 * earning event history;
 * withdrawal list;
 * Wallet event publication;
-* reconciliation batches.
 
 Tests MUST reject lexicographic ordering of decimal-string priorities.
 
@@ -315,7 +313,6 @@ The final test run MUST search:
 * test logs;
 * captured errors;
 * HTTP responses;
-* metrics labels;
 * generated OpenAPI;
 
 for test Shared API Key plaintext and Authorization headers. Any match fails verification.

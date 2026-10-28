@@ -6,6 +6,7 @@ import (
 	"crynux_as/blockchain"
 	"crynux_as/config"
 	"crynux_as/migrate"
+	"crynux_as/provider"
 	"crynux_as/relay"
 	"crynux_as/service"
 	"crynux_as/tasks"
@@ -24,6 +25,13 @@ func main() {
 
 	conf := config.GetConfig()
 
+	encryptionKey, err := service.LoadProviderEncryptionKeyFile(conf.Provider.KeyEncryption.EncryptionKeyFile)
+	if err != nil {
+		print("Error reading provider encryption key file")
+		print(err.Error())
+		os.Exit(1)
+	}
+
 	if err := config.InitLog(conf); err != nil {
 		print("Error initializing log")
 		print(err.Error())
@@ -38,6 +46,33 @@ func main() {
 	startDBMigration()
 
 	if err := blockchain.Init(context.Background()); err != nil {
+		log.Fatalln(err)
+	}
+
+	if err := service.InitProviderCatalog(conf); err != nil {
+		log.Fatalln(err)
+	}
+	reg, err := provider.NewRegistry(conf)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	service.SetProviderAdapterRegistry(reg)
+	service.InitSharedAPIKeyCredentialValidator()
+	service.InitProviderKeySlots(conf.Provider.MaxConcurrencyPerKey)
+	service.InitProviderStreamRegistry(int(conf.Provider.StreamSubscriberBuffer))
+
+	enc, err := service.NewProviderKeyEncryption(encryptionKey)
+	if err != nil {
+		log.Fatalln(err)
+	}
+	service.SetProviderKeyEncryption(enc)
+	service.ClearBytes(encryptionKey)
+	if err := os.Remove(conf.Provider.KeyEncryption.EncryptionKeyFile); err != nil {
+		log.Errorf("failed to remove provider encryption key file: %v", err)
+		os.Exit(1)
+	}
+
+	if err := service.FailPriorProcessProviderJobs(context.Background(), config.GetDB()); err != nil {
 		log.Fatalln(err)
 	}
 

@@ -11,8 +11,8 @@ import (
 
 func StartTaskJobWorker(ctx context.Context) {
 	go func() {
-		log.Infoln("task job worker started")
-		service.RunTaskJobWorker(ctx)
+		log.Infoln("job workers started")
+		service.RunJobWorkers(ctx)
 	}()
 }
 

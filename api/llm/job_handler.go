@@ -57,6 +57,11 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 
+	if route, ok := service.LookupProviderModel(parsed.model); ok {
+		handleProviderTaskJobRequest(c, project, apiType, body, parsed, route, acceptedAt)
+		return
+	}
+
 	execution := service.ResolveLLMModelExecution(parsed.model, parsed.dtype, parsed.quantizationConfig)
 	taskArgsJSON, err := service.ApplyLLMExecutionToTaskArgsJSON(parsed.taskArgsJSON, execution)
 	if err != nil {

@@ -87,6 +87,12 @@ func TonicErrorResponse(ctx *gin.Context, err error) (int, interface{}) {
 	if errors.As(err, &notFoundError) {
 		return 404, notFoundError
 	}
+	type statusCoder interface {
+		StatusCode() int
+	}
+	if sc, ok := err.(statusCoder); ok {
+		return sc.StatusCode(), err
+	}
 	if err, ok := err.(ErrorResponseMessage); ok {
 		return 400, err
 	}

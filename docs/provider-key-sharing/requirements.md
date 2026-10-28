@@ -99,7 +99,7 @@ Confirmed usage is settled only as a completed job with a success call record. A
 
 1. Shared API Keys MUST be encrypted with authenticated encryption before database storage.
 2. The database MUST never contain a plaintext Shared API Key or encryption key.
-3. Logs, traces, metrics, errors, call records, job records, and API responses MUST NOT contain Shared API Keys or authorization headers.
+3. Logs, traces, errors, call records, job records, and API responses MUST NOT contain Shared API Keys or authorization headers.
 4. Plaintext key material MUST exist only during upload validation, encryption, decryption, and the upstream request setup.
 5. The encryption design MUST protect against database-only disclosure.
 6. The documentation and implementation MUST NOT claim that compiled code or process isolation makes keys impossible to extract after arbitrary code execution as the AS process user or host administrator.

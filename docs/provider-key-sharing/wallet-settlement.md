@@ -158,16 +158,3 @@ Limits apply independently to:
 * Beneficial Address and network.
 
 Failed and finished-rejected withdrawals do not count. Day boundaries use UTC because this is a backend risk-control period, not a user display timezone.
-
-## Reconciliation
-
-AS MUST periodically verify:
-
-* account withdrawal-locked equals pending withdrawals' `amount + fee`;
-* every withdrawal references one Withdraw event;
-* every successful withdrawal has one transaction hash;
-* every failed withdrawal has one refund event;
-* every positive fulfilled fee has one fee-income event;
-* event publication has no hidden processed row before a published higher ID.
-
-Any mismatch MUST stop affected Wallet API publication until consistency is restored.

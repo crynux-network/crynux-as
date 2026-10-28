@@ -95,6 +95,8 @@ func ReserveCreditsAndCreateTaskJob(ctx context.Context, db *gorm.DB, in CreateT
 		ProjectID:         in.Project.ID,
 		UserID:            in.Project.UserID,
 		PriorityGwei:      models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
+		SortablePriority:  models.FormatSortablePriority(in.PriorityGwei),
+		ExecutionSource:   models.ExecutionSourceCrynux,
 		TaskType:          models.TaskTypeLLM,
 		APIType:           in.APIType,
 		Model:             in.Model,
@@ -476,7 +478,7 @@ func ListUnfinishedTaskJobs(ctx context.Context, db *gorm.DB, limit int) ([]mode
 
 	var jobs []models.TaskJob
 	err := db.WithContext(dbCtx).
-		Where("status IN ?", []models.TaskJobStatus{
+		Where("execution_source = ? AND status IN ?", models.ExecutionSourceCrynux, []models.TaskJobStatus{
 			models.TaskJobStatusPendingSubmit,
 			models.TaskJobStatusSubmitted,
 			models.TaskJobStatusInProgress,

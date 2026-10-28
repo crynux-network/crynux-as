@@ -13,7 +13,7 @@ const (
 )
 
 type TaskCallRecord struct {
-	ID                    uint            `json:"id" gorm:"primarykey"`
+	ID                    uint            `json:"id" gorm:"primarykey;index:idx_task_call_records_shared_api_key_id,priority:2"`
 	CreatedAt             time.Time       `json:"created_at" gorm:"not null;index:idx_task_call_records_project_created,priority:2;index"`
 	UserID                uint            `json:"user_id" gorm:"not null;index"`
 	ProjectID             uint            `json:"project_id" gorm:"not null;index:idx_task_call_records_project_created,priority:1;index"`
@@ -21,6 +21,8 @@ type TaskCallRecord struct {
 	TaskType              TaskType        `json:"task_type" gorm:"not null"`
 	APIType               TaskAPIType     `json:"api_type" gorm:"not null"`
 	Model                 string          `json:"model" gorm:"type:string;size:255;not null"`
+	ExecutionSource       ExecutionSource `json:"execution_source" gorm:"type:string;size:32;not null;default:crynux"`
+	SharedAPIKeyID        *uint           `json:"-" gorm:"index:idx_task_call_records_shared_api_key_id,priority:1"`
 	ModelCacheHash        string          `json:"model_cache_hash" gorm:"column:model_cache_hash;type:string;size:64;not null;default:''"`
 	ExecutionDType        string          `json:"execution_dtype" gorm:"column:execution_dtype;type:string;size:64;not null;default:''"`
 	QuantizationConfig    json.RawMessage `json:"quantization_config" gorm:"type:longtext"`

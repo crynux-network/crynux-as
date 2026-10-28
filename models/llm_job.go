@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
+	"strings"
 	"time"
 )
 
@@ -52,12 +53,14 @@ const (
 )
 
 type TaskJob struct {
-	ID                    uint        `gorm:"primarykey"`
+	ID                    uint        `gorm:"primarykey;index:idx_task_jobs_provider_queue,priority:4"`
 	CreatedAt             time.Time   `gorm:"not null;index:idx_task_jobs_project_status_created,priority:3;index"`
 	UpdatedAt             time.Time   `gorm:"not null"`
 	ProjectID             uint        `gorm:"not null;index:idx_task_jobs_project_status_created,priority:1;index:idx_task_jobs_project_public_id,priority:1;index"`
 	UserID                uint        `gorm:"not null;index"`
 	PriorityGwei          BigInt      `gorm:"type:string;size:255;not null"`
+	SortablePriority      string      `gorm:"type:string;size:80;not null;default:0;index:idx_task_jobs_provider_queue,priority:3"`
+	ExecutionSource       ExecutionSource          `gorm:"type:string;size:32;not null;default:crynux;index:idx_task_jobs_provider_queue,priority:1"`
 	TaskType              TaskType    `gorm:"not null"`
 	APIType               TaskAPIType `gorm:"not null"`
 	Model                 string      `gorm:"type:string;size:255;not null"`
@@ -72,7 +75,7 @@ type TaskJob struct {
 	RequiredGPUVram       uint64                   `gorm:"not null;default:0"`
 	QueueTimeout          uint64                   `gorm:"not null;default:0"`
 	BridgeClientTaskID    *uint                    `gorm:"index"`
-	Status                TaskJobStatus            `gorm:"not null;default:0;index:idx_task_jobs_project_status_created,priority:2;index:idx_task_jobs_terminal_cleanup,priority:1;index"`
+	Status                TaskJobStatus            `gorm:"not null;default:0;index:idx_task_jobs_project_status_created,priority:2;index:idx_task_jobs_terminal_cleanup,priority:1;index:idx_task_jobs_provider_queue,priority:2"`
 	Phase                 string                   `gorm:"type:string;size:32;not null;default:queued"`
 	EstimatedCompletionAt *time.Time               `gorm:"column:estimated_completion_at"`
 	RawResultJSON         *string                  `gorm:"type:longtext"`
@@ -98,13 +101,28 @@ type TaskJob struct {
 const TaskBillingDataVersion = 1
 
 type TaskBillingData struct {
-	Version       int                   `json:"version"`
-	PriorityGwei  string                `json:"priority_gwei"`
-	BilledVram    uint64                `json:"billed_vram"`
-	TaskFeeWei    string                `json:"task_fee_wei"`
-	LockedCredits string                `json:"locked_credits,omitempty"`
-	LLM           *LLMTaskBillingData   `json:"llm,omitempty"`
-	Image         *ImageTaskBillingData `json:"image,omitempty"`
+	Version       int                      `json:"version"`
+	PriorityGwei  string                   `json:"priority_gwei"`
+	BilledVram    uint64                   `json:"billed_vram"`
+	TaskFeeWei    string                   `json:"task_fee_wei"`
+	LockedCredits string                   `json:"locked_credits,omitempty"`
+	LLM           *LLMTaskBillingData      `json:"llm,omitempty"`
+	Image         *ImageTaskBillingData    `json:"image,omitempty"`
+	Provider      *ProviderTaskBillingData `json:"provider,omitempty"`
+}
+
+// ProviderTaskBillingData is the immutable Provider pricing snapshot persisted on a job.
+type ProviderTaskBillingData struct {
+	ServiceProvider       string            `json:"service_provider"`
+	ModelName             string            `json:"model_name"`
+	UsageWeights          map[string]string `json:"usage_weights"`
+	EffectivePriorityGwei string            `json:"effective_priority_gwei"`
+	CreditsPerGwei        string            `json:"credits_per_gwei"`
+	MaxTaskPriceCNX       string            `json:"max_task_price_cnx"`
+	EstimatedInputBytes   uint64            `json:"estimated_input_bytes"`
+	EstimatedOutputTokens uint64            `json:"estimated_output_tokens"`
+	EstimatedProviderUnits string           `json:"estimated_provider_units"`
+	LockedCredits         string            `json:"locked_credits"`
 }
 
 type LLMTaskBillingData struct {
@@ -165,16 +183,38 @@ func (j TaskJob) DecodeBillingData() (*TaskBillingData, error) {
 	if value, ok := new(big.Int).SetString(data.TaskFeeWei, 10); !ok || value.Sign() < 0 {
 		return nil, errors.New("invalid billing task_fee_wei")
 	}
-	if data.BilledVram == 0 {
+	if data.Provider == nil && data.BilledVram == 0 {
 		return nil, errors.New("invalid billing billed_vram")
 	}
-	if j.TaskType == TaskTypeLLM && data.LLM == nil {
+	if j.TaskType == TaskTypeLLM && data.LLM == nil && data.Provider == nil {
 		return nil, errors.New("missing llm billing data")
 	}
 	if j.TaskType == TaskTypeImage && data.Image == nil {
 		return nil, errors.New("missing image billing data")
 	}
+	if data.Provider != nil {
+		if data.Provider.ServiceProvider == "" || data.Provider.ModelName == "" {
+			return nil, errors.New("invalid provider billing data")
+		}
+		if len(data.Provider.UsageWeights) == 0 {
+			return nil, errors.New("missing provider usage weights")
+		}
+	}
 	return &data, nil
+}
+
+// FormatSortablePriority returns a fixed-width zero-padded decimal string so
+// ORDER BY sortable_priority preserves numeric BigInt order.
+func FormatSortablePriority(priority *big.Int) string {
+	if priority == nil {
+		return "0000000000000000000000000000000000000000000000000000000000000000000000000000"
+	}
+	const width = 78
+	s := priority.String()
+	if len(s) >= width {
+		return s
+	}
+	return strings.Repeat("0", width-len(s)) + s
 }
 
 func EncodeTaskBillingData(data TaskBillingData) (string, error) {

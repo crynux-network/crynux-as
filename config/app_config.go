@@ -120,4 +120,71 @@ type AppConfig struct {
 		GPTInference                string `mapstructure:"gpt_inference"`
 		StableDiffusionFinetuneLora string `mapstructure:"stable_diffusion_finetune_lora"`
 	} `mapstructure:"task_schema"`
+
+	Provider ProviderConfig `mapstructure:"provider"`
+}
+
+type ProviderUsageWeightsConfig struct {
+	InputTokens           string `mapstructure:"input_tokens"`
+	OutputTokens          string `mapstructure:"output_tokens"`
+	CachedInputTokens     string `mapstructure:"cached_input_tokens"`
+	CacheWriteInputTokens string `mapstructure:"cache_write_input_tokens"`
+	ReasoningTokens       string `mapstructure:"reasoning_tokens"`
+	ToolUsePromptTokens   string `mapstructure:"tool_use_prompt_tokens"`
+}
+
+type ProviderModelConfig struct {
+	Name         string                     `mapstructure:"name"`
+	UsageWeights ProviderUsageWeightsConfig `mapstructure:"usage_weights"`
+}
+
+type ProviderServiceConfig struct {
+	DisplayName                         string                `mapstructure:"display_name"`
+	BaseURL                             string                `mapstructure:"base_url"`
+	ConnectTimeoutSeconds               uint64                `mapstructure:"connect_timeout_seconds"`
+	ResponseHeaderTimeoutSeconds        uint64                `mapstructure:"response_header_timeout_seconds"`
+	StreamIdleTimeoutSeconds            uint64                `mapstructure:"stream_idle_timeout_seconds"`
+	RequestTimeoutSeconds               uint64                `mapstructure:"request_timeout_seconds"`
+	CredentialValidationTimeoutSeconds  uint64                `mapstructure:"credential_validation_timeout_seconds"`
+	Models                              []ProviderModelConfig `mapstructure:"models"`
+}
+
+type ProviderWithdrawalFeeTierConfig struct {
+	MinAmountCNX string `mapstructure:"min_amount_cnx"`
+	FeeRatio     string `mapstructure:"fee_ratio"`
+}
+
+type ProviderWalletNetworkConfig struct {
+	DisplayName              string                             `mapstructure:"display_name"`
+	BenefitAddressContract   string                             `mapstructure:"benefit_address_contract"`
+	FixedWithdrawalFeeCNX    string                             `mapstructure:"fixed_withdrawal_fee_cnx"`
+	MaxWithdrawalsPerDay     uint64                             `mapstructure:"max_withdrawals_per_day"`
+	FeeReceiverAddress       string                             `mapstructure:"fee_receiver_address"`
+	MinimumHotWalletCNX      string                             `mapstructure:"minimum_hot_wallet_cnx"`
+	MinimumHotWalletNativeGas string                            `mapstructure:"minimum_hot_wallet_native_gas"`
+	WithdrawalFeeTiers       []ProviderWithdrawalFeeTierConfig  `mapstructure:"withdrawal_fee_tiers"`
+}
+
+type ProviderWalletConfig struct {
+	SignerAddress string                                  `mapstructure:"signer_address"`
+	Networks      map[string]ProviderWalletNetworkConfig  `mapstructure:"networks"`
+}
+
+type ProviderKeyEncryptionConfig struct {
+	EncryptionKeyFile string `mapstructure:"encryption_key_file"`
+}
+
+type ProviderConfig struct {
+	MaxConcurrencyPerKey          uint64                            `mapstructure:"max_concurrency_per_key"`
+	SchedulerIntervalMilliseconds uint64                            `mapstructure:"scheduler_interval_milliseconds"`
+	SchedulerBatchSize            uint64                            `mapstructure:"scheduler_batch_size"`
+	DefaultQueueTimeoutSeconds    uint64                            `mapstructure:"default_queue_timeout_seconds"`
+	MaxAttemptsPerJob             uint64                            `mapstructure:"max_attempts_per_job"`
+	KeyCooldownSeconds            uint64                            `mapstructure:"key_cooldown_seconds"`
+	StreamSubscriberBuffer        uint64                            `mapstructure:"stream_subscriber_buffer"`
+	ShutdownTimeoutSeconds        uint64                            `mapstructure:"shutdown_timeout_seconds"`
+	MaxSecretBytes                uint64                            `mapstructure:"max_secret_bytes"`
+	KeyEncryption                 ProviderKeyEncryptionConfig       `mapstructure:"key_encryption"`
+	Services                      map[string]ProviderServiceConfig  `mapstructure:"services"`
+	Wallet                        ProviderWalletConfig              `mapstructure:"wallet"`
 }

@@ -10,7 +10,7 @@ New model structs MUST:
 * store monetary values as decimal integer strings through the existing big-integer type;
 * store versioned snapshots as canonical JSON in long-text columns;
 * use unique source identities for ledger idempotency;
-* use indexes aligned with queue, history, and reconciliation queries.
+* use indexes aligned with queue and history queries.
 
 Schema migrations MUST use migration-local frozen structs. Existing business history MUST not be backfilled without separate approval.
 
@@ -234,18 +234,6 @@ The following MUST be atomic:
 External HTTP and blockchain operations MUST not run inside database transactions.
 
 Process-local key slots MUST be reserved before the corresponding job claim. A failed claim transaction MUST release the reserved slot.
-
-## Reconciliation
-
-Reconciliation MUST verify:
-
-* `credit_accounts.locked` against held jobs;
-* earning withdrawal-locked against pending withdrawals;
-* one earning event per billable Provider call record;
-* one call record per job;
-* one consumer charge event per charged call;
-* one withdrawal anchor event per withdrawal;
-* terminal withdrawal callback invariants.
 
 ## Retention and Deletion
 

@@ -3,11 +3,13 @@ package v1
 import (
 	"crynux_as/api/v1/account"
 	"crynux_as/api/v1/auth"
+	"crynux_as/api/v1/earn"
 	"crynux_as/api/v1/llm"
 	"crynux_as/api/v1/middleware"
 	"crynux_as/api/v1/projects"
 	"crynux_as/api/v1/purchase"
 	"crynux_as/api/v1/response"
+	"crynux_as/api/v1/wallet"
 
 	"github.com/loopfz/gadgeto/tonic"
 	"github.com/wI2L/fizz"
@@ -145,4 +147,24 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(llm.GetImagePricingExamples, 200))
+
+	earnGroup := v1g.Group("earn", "Earn", "Provider Key Sharing Earn APIs", middleware.JWTAuthMiddleware())
+	earnGroup.GET("", []fizz.OperationOption{fizz.Summary("Get Key Owner earning summary")}, tonic.Handler(earn.GetSummary, 200))
+	earnGroup.GET("/providers", []fizz.OperationOption{fizz.Summary("List configured Service Providers")}, tonic.Handler(earn.ListProviders, 200))
+	earnGroup.GET("/keys", []fizz.OperationOption{fizz.Summary("List Shared API Keys")}, tonic.Handler(earn.ListKeys, 200))
+	earnGroup.POST("/keys", []fizz.OperationOption{fizz.Summary("Create a Shared API Key")}, tonic.Handler(earn.CreateKey, 200))
+	earnGroup.POST("/keys/:key_id/enable", []fizz.OperationOption{fizz.Summary("Enable a Shared API Key")}, tonic.Handler(earn.EnableKey, 200))
+	earnGroup.POST("/keys/:key_id/disable", []fizz.OperationOption{fizz.Summary("Disable a Shared API Key")}, tonic.Handler(earn.DisableKey, 200))
+	earnGroup.DELETE("/keys/:key_id", []fizz.OperationOption{fizz.Summary("Delete a Shared API Key")}, tonic.Handler(earn.DeleteKey, 200))
+	earnGroup.GET("/calls", []fizz.OperationOption{fizz.Summary("List Key Owner call records")}, tonic.Handler(earn.ListCalls, 200))
+	earnGroup.GET("/events", []fizz.OperationOption{fizz.Summary("List TaskIncome earning events")}, tonic.Handler(earn.ListEvents, 200))
+	earnGroup.GET("/withdrawal_networks", []fizz.OperationOption{fizz.Summary("List withdrawal networks")}, tonic.Handler(earn.ListWithdrawalNetworks, 200))
+	earnGroup.POST("/withdrawals/prepare", []fizz.OperationOption{fizz.Summary("Prepare a withdrawal authorization message")}, tonic.Handler(earn.PrepareWithdrawal, 200))
+	earnGroup.POST("/withdrawals", []fizz.OperationOption{fizz.Summary("Create a withdrawal")}, tonic.Handler(earn.CreateWithdrawal, 200))
+	earnGroup.GET("/withdrawals", []fizz.OperationOption{fizz.Summary("List withdrawals")}, tonic.Handler(earn.ListWithdrawals, 200))
+
+	v1g.GET("/relay_account/event_logs", []fizz.OperationOption{fizz.Summary("Wallet event logs")}, tonic.Handler(wallet.GetEventLogs, 200))
+	v1g.GET("/withdraw/list", []fizz.OperationOption{fizz.Summary("Wallet pending withdrawals")}, tonic.Handler(wallet.GetWithdrawList, 200))
+	v1g.POST("/withdraw/:id/fulfill", []fizz.OperationOption{fizz.Summary("Fulfill a withdrawal")}, tonic.Handler(wallet.FulfillWithdrawal, 200))
+	v1g.POST("/withdraw/:id/reject", []fizz.OperationOption{fizz.Summary("Reject a withdrawal")}, tonic.Handler(wallet.RejectWithdrawal, 200))
 }
