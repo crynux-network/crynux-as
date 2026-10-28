@@ -1,6 +1,6 @@
 # OpenAI-Compatible LLM API and Charging
 
-This document specifies the private OpenAI-compatible LLM endpoints, the model catalog, VRAM limit resolution, Bridge forwarding, project Cost Level (`priority_gwei`), call records, and Task Fee Estimation.
+This document specifies the private OpenAI-compatible LLM endpoints, merged model catalog, Crynux model VRAM resolution, Bridge forwarding, project Cost Level (`priority_gwei`), call records, and Crynux Task Fee Estimation. Provider-model compatibility and execution are specified in [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md) and [provider-key-sharing/job-execution.md](./provider-key-sharing/job-execution.md).
 
 Credits charging for LLM calls is specified only in [credits-billing.md](./credits-billing.md).
 
@@ -24,9 +24,9 @@ Implemented endpoints:
 * `GET /api/<endpoint_token>/v1/models`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
-The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields. The Images generations and Images edits request and response formats MUST be OpenAI-compatible for the supported fields specified in **Images Generations API** and **Images Edits API**.
+The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields. Every configured Provider model MUST support Chat Completions and Responses through the Provider adapter behavior in [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md). Provider models MUST reject Completions. The Images generations and Images edits request and response formats MUST be OpenAI-compatible for the supported fields specified in **Images Generations API** and **Images Edits API**.
 
-Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. Chat Completions, Completions, and Responses MUST accept optional `dtype` and `quantization_config` body fields used to select a loaded-models row and to populate canonical TaskArgs. Chat Completions, Completions, Responses, Images generations, and Images edits MUST accept optional top-level `queue_timeout` as specified in Queue Timeout. AS MUST map those public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
+Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. For Crynux models, Chat Completions, Completions, and Responses MUST accept optional `dtype` and `quantization_config` body fields used to select a loaded-models row and populate canonical TaskArgs. Provider models MUST reject those Crynux execution fields. Chat Completions, Completions, Responses, Images generations, and Images edits MUST accept optional top-level `queue_timeout` as specified in Queue Timeout. AS MUST map applicable public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
 
 ## Images Generations API
 
@@ -136,7 +136,7 @@ The HTTP response MUST include `created`, `data[].b64_json`, and echoed `size`, 
 
 Creates a persisted LLM job and returns an OpenAI Responses object.
 
-The same create operation is also available at `POST /api/<endpoint_token>/v1/<vram_limit>/responses`. The path segment and body field `vram_limit` follow the VRAM Limit and Effective VRAM rules.
+For Crynux models, the same create operation is also available at `POST /api/<endpoint_token>/v1/<vram_limit>/responses`. The path segment and body field `vram_limit` follow the VRAM Limit and Effective VRAM rules. A Provider model on a path-based VRAM endpoint MUST be rejected.
 
 Supported request fields in the first version:
 
@@ -151,12 +151,12 @@ Supported request fields in the first version:
 * function `tools`
 * function-call and function-call-output history in `input`
 * `background` (`true` returns immediately with `queued` or `in_progress`; `false` waits for completion)
-* `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, `text.format`, `vram_limit`, and `queue_timeout`
-* `dtype` and `quantization_config` (optional; select a loaded-models row when present)
+* `max_output_tokens`, `temperature`, `top_p`, `stop`, `seed`, `tool_choice`, `text.format`, and `queue_timeout`
+* `vram_limit`, `dtype`, and `quantization_config` for Crynux models only; Provider models MUST reject them
 * `chat_template_kwargs`
 * `reasoning.effort`
 
-The service MUST reject unsupported fields with HTTP 400 and the OpenAI invalid-request error shape. Unsupported fields include `stream`, `conversation`, built-in tools, `cancel`, `delete`, and `structured_outputs`.
+The service MUST reject unsupported fields with HTTP 400 and the OpenAI invalid-request error shape. For Crynux models, unsupported fields include `stream`, `conversation`, built-in tools, `cancel`, `delete`, and `structured_outputs`. Provider models MUST accept or reject `stream` according to [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md); the other unsupported fields remain rejected.
 
 `previous_response_id` MUST follow [llm-job-processing.md](./llm-job-processing.md): only a same-project, still-retained, successfully completed Responses job is accepted; the new job MUST store the fully expanded `TaskArgsJSON`; previous instructions MUST NOT be inherited as this call's instructions.
 
@@ -168,7 +168,7 @@ When `background` is `false`, the handler MUST use the same persisted job flow a
 
 Returns the persisted Responses object for the project's response ID. A missing, foreign, or retention-expired response ID MUST return HTTP 404.
 
-Terminal `completed` responses MUST include formatted `output` and `usage` only after the raw Bridge result, formatted result, and billing settlement are stored. Terminal `failed` responses MUST include an OpenAI-format error object.
+Terminal `completed` responses MUST include formatted `output` and `usage` only after the execution-source result, formatted result, and billing settlement are stored. Terminal `failed` responses MUST include an OpenAI-format error object.
 
 ## Structured Output and Function Tools
 
@@ -191,14 +191,14 @@ AS MUST parse constrained raw tool output through an ordered syntax registry cov
 
 Chat Completions MUST return parsed calls in `message.tool_calls` and set `finish_reason=tool_calls`. Responses MUST return parsed calls as `function_call` output items. Simulated SSE MUST use the same persisted formatted result. `previous_response_id` history reconstruction MUST use the previous job's canonical task arguments so `none`, named choice, and syntax parsing remain consistent.
 
-## LLM Job Execution
+## Task Job Execution
 
-Chat completions, completions, and responses share one `llm_jobs` table and one background worker loop. Table ownership, settle transactions, Responses retention, and Recent Requests merge rules are specified in [llm-job-processing.md](./llm-job-processing.md).
+Chat completions, completions, and responses share the `task_jobs` table and common admission and terminal settlement services. Crynux jobs use the Bridge bounded-batch poller. Provider jobs use the independent Provider scheduler and one goroutine per successfully claimed Shared API Key slot. Table ownership, settle transactions, Responses retention, and Recent Requests merge rules are specified in [llm-job-processing.md](./llm-job-processing.md) and [provider-key-sharing/job-execution.md](./provider-key-sharing/job-execution.md).
 
-For every LLM request, the service MUST:
+For every Crynux LLM request, the service MUST:
 
-1. Parse the public API request into canonical `GPTTaskArgs`, expanding `previous_response_id` history when present. During parsing, the request `model` MUST be normalized with surrounding whitespace trimmed and Hugging Face repository lowercasing (`NormalizeModelID`). Before execution resolution and job persistence, AS MUST also rewrite every Hugging Face model name field inside TaskArgs with the same rules as Raw Task create and Relay task create (LLM `model`; Image `base_model` / component repos and related fields). That normalized value MUST be used for fee estimation, VRAM lookup, `llm_jobs.model`, `llm_call_records.model`, canonical `task_args.model`, usage stats, and the public response `model` field. Canonical `GPTTaskArgs.version` MUST be `3.7.1`. When the request omits both `dtype` and `quantization_config`, AS MUST select the full-cache row with the greatest `min_vram` for that model and MUST write that row's `quantization_config` and `execution_dtype` into TaskArgs (`dtype` MUST prefer the row's `execution_dtype`, and MUST fall back to the adapter dtype resolver when the row dtype is empty). When the request supplies `dtype` and/or `quantization_config`, AS MUST exact-match a full-cache row when possible and MUST write the request values into TaskArgs. When the request omits `seed`, AS MUST set canonical `seed` to a uniformly chosen integer from 0 through 2147483647 before the job is persisted. When the request includes `seed`, including 0, AS MUST copy that integer unchanged.
-2. Create an `llm_jobs` row with status `pending_submit` and the fully expanded `TaskArgsJSON`.
+1. Parse the public API request into canonical `GPTTaskArgs`, expanding `previous_response_id` history when present. During parsing, the request `model` MUST be normalized with surrounding whitespace trimmed and Hugging Face repository lowercasing (`NormalizeModelID`). Before execution resolution and job persistence, AS MUST also rewrite every Hugging Face model name field inside TaskArgs with the same rules as Raw Task create and Relay task create (LLM `model`; Image `base_model` / component repos and related fields). That normalized value MUST be used for fee estimation, VRAM lookup, `task_jobs.model`, `task_call_records.model`, canonical `task_args.model`, usage stats, and the public response `model` field. Canonical `GPTTaskArgs.version` MUST be `3.7.1`. When the request omits both `dtype` and `quantization_config`, AS MUST select the full-cache row with the greatest `min_vram` for that model and MUST write that row's `quantization_config` and `execution_dtype` into TaskArgs (`dtype` MUST prefer the row's `execution_dtype`, and MUST fall back to the adapter dtype resolver when the row dtype is empty). When the request supplies `dtype` and/or `quantization_config`, AS MUST exact-match a full-cache row when possible and MUST write the request values into TaskArgs. When the request omits `seed`, AS MUST set canonical `seed` to a uniformly chosen integer from 0 through 2147483647 before the job is persisted. When the request includes `seed`, including 0, AS MUST copy that integer unchanged.
+2. Create a `task_jobs` row with status `pending_submit` and the fully expanded `TaskArgsJSON`.
 3. Let the background worker advance unfinished jobs in batches: submit `pending_submit` jobs to Bridge, query ClientTask status for in-flight jobs, download the raw `GPTTaskResponse` for each successful job, format the public API result, and perform one-time Credits settlement before marking the job `completed`.
 4. For chat completions and completions, wait synchronously on the HTTP request until the job reaches a terminal state, then return the formatted JSON body or simulated SSE stream.
 5. For responses with `background=false`, wait synchronously on the HTTP request until the job reaches a terminal state.
@@ -216,11 +216,11 @@ The worker MUST keep one loop. Each tick MUST load a bounded batch of unfinished
 
 A `pending_submit` job whose age since `created_at` is greater than or equal to `llm.job_submit_timeout` seconds MUST be marked `failed` with a failed call record. The worker MUST NOT submit that job to Bridge after the timeout.
 
-The stable `llm_jobs.id` MUST be the billing settlement source while the job exists. Repeated polling, synchronous waits, and worker retries MUST NOT create duplicate Credits charges. After retention deletes the job, the permanent call record and any Credits event remain.
+The stable `task_jobs.id` MUST be the billing settlement source while the job exists. Repeated polling, synchronous waits, and worker retries MUST NOT create duplicate Credits charges. After retention deletes the job, the permanent call record and any Credits event remain.
 
-## Forwarding to the Crynux Bridge
+## Crynux Forwarding to the Crynux Bridge
 
-The service MUST execute LLM jobs through the Crynux Bridge raw task APIs using the platform-level Bridge API key from the service configuration (`Authorization: Bearer <api_key>`). The Bridge API key MUST have the `chat` role.
+The service MUST execute Crynux LLM jobs through the Crynux Bridge raw task APIs using the platform-level Bridge API key from the service configuration (`Authorization: Bearer <api_key>`). Provider jobs MUST not enter this forwarding path. The Bridge API key MUST have the `chat` role.
 
 AS MUST NOT send `client_id` in Bridge raw task requests. Bridge MUST derive the client identity from the API key.
 
@@ -244,9 +244,9 @@ Bridge MUST return its whole-client-task aggregated `status` as one of `running`
 
 Bridge status queries and result download MUST remain authorized after the Bridge API key's creation quota is exhausted. Invalid, expired, wrong-role, and cross-client access MUST remain rejected by Bridge.
 
-AS owns OpenAI-compatible request parsing, raw `GPTTaskResponse` normalization into chat completions, completions, and responses output shapes, and simulated SSE for chat completions and completions. Bridge OpenAI `/v1/llm/*` endpoints are not used by AS.
+AS owns OpenAI-compatible request parsing, raw `GPTTaskResponse` normalization into chat completions, completions, and responses output shapes, and simulated SSE for Crynux chat completions and completions. Bridge OpenAI `/v1/llm/*` endpoints are not used by AS.
 
-For streaming chat or completions requests (`stream: true`), the service MUST return simulated server-sent events after the persisted job completes. When the client sets `stream_options.include_usage: true`, the final chunk MUST include `usage`.
+For streaming Crynux chat or completions requests (`stream: true`), the service MUST return simulated server-sent events after the persisted job completes. Provider Chat Completions and Responses requests MUST stream normalized upstream output in real time according to [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md). When the client sets `stream_options.include_usage: true`, the final chunk MUST include `usage`.
 
 ## Authentication
 
@@ -261,9 +261,11 @@ The project MUST have status active. A request failing any of these checks MUST 
 
 ## Model Catalog
 
-The model catalog is the in-memory LLM catalog snapshot built during each successful loaded-models refresh from the Relay `GET /v2/loaded-models` API (see [architecture.md](./architecture.md)). All projects share the same catalog. A cached row's `min_vram` is the minimum VRAM in GB observed across historical successful executions of that model configuration on the Crynux Network. The LLM catalog MUST expose one list row per `(model_cache_hash, execution_dtype)` row from the Relay snapshot. The same `id` MAY appear more than once when quantization or dtype differs. SD / Image rows MUST NOT appear in this catalog. List and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT include `model_cache_hash` or `model_cache_config`.
+The public model catalog merges the in-memory Crynux LLM catalog snapshot with currently available configured Provider models. All projects share the same catalog. A Crynux cached row's `min_vram` is the minimum VRAM in GB observed across historical successful executions of that model configuration on the Crynux Network. The Crynux catalog MUST expose one list row per `(model_cache_hash, execution_dtype)` row from the Relay snapshot. The same `id` MAY appear more than once when quantization or dtype differs. SD / Image rows MUST NOT appear in this catalog.
 
-The catalog snapshot MUST include only rows whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. The full loaded-models cache MUST retain every Relay LLM row for default `min_vram` and exact-configuration lookup. Catalog list and retrieve MUST read the catalog snapshot and MUST NOT re-filter the full cache on each request. Catalog rows MUST be sorted by `id` ascending, then `execution_dtype` ascending, then canonical `quantization_config` ascending, then `model_cache_hash` ascending.
+Provider rows MUST come only from YAML declarations. A Provider row MUST appear only when its Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Busy slots and temporary cooldown MUST NOT hide a model. Provider model IDs MUST be exact official names without prefixes or aliases. Provider rows MUST use the field shapes in [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md). List and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT expose key availability counts, Shared API Key identity, `model_cache_hash`, or `model_cache_config`.
+
+The Crynux catalog snapshot MUST include only rows whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. The full loaded-models cache MUST retain every Relay LLM row for default `min_vram` and exact-configuration lookup. Catalog list and retrieve MUST read the catalog snapshot and MUST NOT re-filter the full cache on each request. The merged list MUST sort by `id` ascending, then execution source with Crynux before Provider, then Crynux `execution_dtype`, canonical `quantization_config`, and `model_cache_hash` ascending. Provider rows have no Crynux tie-breaker fields.
 
 ### `GET /api/<endpoint_token>/v1/models`
 
@@ -291,13 +293,10 @@ Requirements:
 
 * The root `object` MUST be `"list"` and `data` MUST be an array.
 * Each item MUST contain `id`, `object` (`"model"`), `created`, and `owned_by`.
-* `id` MUST be the lowercase HuggingFace model ID from the Relay `model_id`, usable directly as the `model` field in chat and completions requests.
+* For a Crynux row, `id` MUST be the lowercase Hugging Face model ID from the Relay `model_id`. For a Provider row, `id` MUST be the exact configured official model name.
 * `created` MUST be `0`; the Relay provides no creation time.
-* `owned_by` MUST be `"crynux"`.
-* Each item MUST include the extra field `min_vram` with the cached minimum VRAM in GB.
-* Each item MUST include the extra field `on_disk_node_count` with the cached Relay count of nodes that have the model files on disk.
-* Each item MUST include `execution_dtype` as a string. An empty string MUST mean the Relay row had no execution dtype.
-* Each item MUST include `quantization_config` as a JSON object or `null`.
+* `owned_by` MUST be `"crynux"` for Crynux rows and the Service Provider ID for Provider rows.
+* A Crynux item MUST include `min_vram`, `on_disk_node_count`, `execution_dtype`, and `quantization_config` as specified above. A Provider item MUST omit these Crynux execution fields.
 * Each item MUST NOT include `model_cache_hash` or `model_cache_config`.
 * Each item MUST NOT include `in_memory_node_count`.
 * The response MUST be the OpenAI JSON body directly, without the management-API `{"message": ...}` envelope.
@@ -319,12 +318,14 @@ Returns an OpenAI list envelope whose `data` contains every catalog row for that
 
 ## Model ID Validation
 
-Chat Completions, Completions, and Responses create requests MUST validate the request `model` before Credits reservation and job creation.
+Chat Completions, Completions, and Responses create requests MUST route and validate the request `model` before Credits reservation and job creation.
 
-1. AS MUST normalize `model` with trim and Hugging Face repository lowercasing (`NormalizeModelID`).
-2. `model` MUST be a Hugging Face model id. Absolute URLs and any value containing `://` MUST be rejected with HTTP 400. Values with whitespace or characters outside the Hugging Face repo-id pattern MUST be rejected with HTTP 400.
-3. When any row for the normalized model is present in the full LLM loaded-models cache, AS MUST skip the Hub lookup.
-4. When the model is absent from that cache, AS MUST query Hugging Face Hub `GET {huggingface.api_base_url}/api/models/{model}`. A missing model MUST return HTTP 400. Hub timeouts and HTTP 5xx MUST return HTTP 500 and MUST NOT reserve Credits or create a job.
+1. AS MUST trim surrounding whitespace and first exact-match the remaining case-sensitive value against the configured Provider model map.
+2. On a Provider match, AS MUST select that Service Provider and route Chat Completions or Responses through its adapter. A Provider model on Completions MUST return HTTP 400. AS MUST NOT lowercase, prefix, alias, or query Hugging Face for that model.
+3. Without a Provider match, AS MUST normalize the value with Hugging Face repository lowercasing (`NormalizeModelID`).
+4. A Crynux model MUST be a Hugging Face model ID. Absolute URLs and any value containing `://` MUST be rejected with HTTP 400. Values with whitespace or characters outside the Hugging Face repo-id pattern MUST be rejected with HTTP 400.
+5. When any row for the normalized Crynux model is present in the full LLM loaded-models cache, AS MUST skip the Hub lookup.
+6. When the Crynux model is absent from that cache, AS MUST query Hugging Face Hub `GET {huggingface.api_base_url}/api/models/{model}`. A missing model MUST return HTTP 400. Hub timeouts and HTTP 5xx MUST return HTTP 500 and MUST NOT reserve Credits or create a job.
 
 The catalog snapshot used by `GET /models` MUST NOT be used as a create-time allowlist.
 
@@ -334,20 +335,20 @@ The catalog snapshot used by `GET /models` MUST NOT be used as a create-time all
 
 Chat completions, completions, responses, images generations, and images edits MAY include top-level `queue_timeout` as an unsigned integer number of seconds. When present, the value MUST be greater than zero. Clients MAY send it through the official OpenAI Python SDK `extra_body` merge or as a top-level field in the official OpenAI JavaScript SDK request body.
 
-`queue_timeout` sets only the Relay queue wait budget for the submitted task. It MUST NOT change Cost Level, Credits estimation, or Relay-owned execution timeout after node assignment.
+For a Crynux model, `queue_timeout` sets only the Relay queue wait budget for the submitted task. For a Provider model, it sets only the Shared API Key slot wait budget and defaults as specified in [provider-key-sharing/job-execution.md](./provider-key-sharing/job-execution.md). It MUST NOT change Cost Level or Credits estimation.
 
-### User-specified `vram_limit`
+### Crynux User-specified `vram_limit`
 
-A chat, completions, responses, images generations, or images edits request specifies the VRAM limit in GB through either:
+A Crynux chat, completions, responses, images generations, or images edits request specifies the VRAM limit in GB through either:
 
 1. The URL path segment `<vram_limit>` (`POST .../v1/<vram_limit>/chat/completions`, `POST .../v1/<vram_limit>/completions`, `POST .../v1/<vram_limit>/responses`, `POST .../v1/<vram_limit>/images/generations`, or `POST .../v1/<vram_limit>/images/edits`).
 2. The body field `vram_limit` (unsigned integer).
 
 The path value MUST override the body value. A non-integer path value MUST be rejected with HTTP 400. When neither is set, the user has not specified a VRAM limit.
 
-### Effective VRAM Resolution
+### Crynux Effective VRAM Resolution
 
-For chat, completions, and responses, the effective VRAM of a request MUST be resolved as:
+For Crynux chat, completions, and responses, the effective VRAM of a request MUST be resolved as:
 
 1. When the user specified a `vram_limit`, the effective VRAM is the user value. A user value lower than the cached `min_vram` of a known model MUST be accepted.
 2. When the user did not specify a `vram_limit` and the request includes `quantization_config` and/or `dtype` that exact-match a full-cache row for the model, the effective VRAM is that row's `min_vram`.
@@ -462,7 +463,7 @@ Configuration loading MUST fail when any required LLM configuration value is zer
 
 Call-record ownership and the Credits amount ledger are specified in [llm-job-processing.md](./llm-job-processing.md).
 
-Each `llm_call_records` row MUST contain:
+Each text `task_call_records` row MUST contain:
 
 * `project_id`
 * `model`
@@ -470,9 +471,9 @@ Each `llm_call_records` row MUST contain:
 * `priority_gwei` (the effective Cost Level used for the charge, as a decimal integer string)
 * `status` (success or failed)
 * `duration_ms`
-* `billed_vram` (the resolved effective VRAM in GB used for VRAM weight and Bridge forwarding)
+* `billed_vram` (the resolved effective VRAM in GB used for VRAM weight and Bridge forwarding for a Crynux row; null for a Provider row)
 
-When Task Fee Estimation succeeds before Bridge forwarding, a success `llm_call_records` row MUST also contain:
+When Task Fee Estimation succeeds before Bridge forwarding, a success `task_call_records` row MUST also contain:
 
 * `task_fee_gwei`
 * `median_priority_gwei` (Queue Median Hint value resolved at estimation time; MUST NOT have been used to compute `task_fee_gwei`)
@@ -488,7 +489,7 @@ A settled success call record MUST also contain the Credits recalculation snapsh
 
 The call record MUST NOT store the charged Credits amount. The call record MUST NOT store `reference_priority_gwei`. Actual Credits changes MUST exist only on processed `credit_events` rows.
 
-When Task Fee Estimation fails and the request is aborted before Bridge forwarding, the failure `llm_call_records` row MUST leave the four fee fields empty. Management query APIs MUST NOT expose the fee fields or recalculation snapshot fields.
+When Task Fee Estimation fails and the request is aborted before Bridge forwarding, the failure `task_call_records` row MUST leave the four fee fields empty. Management query APIs MUST NOT expose the fee fields or recalculation snapshot fields.
 
 ## Task Fee Estimation
 
@@ -553,7 +554,7 @@ After project `priority_gwei`, validated coefficients, and `vram_weight` are ava
 When Task Fee Estimation fails, the service MUST:
 
 1. Log the concrete error cause.
-2. Create one failure `llm_call_records` row without the four fee fields.
+2. Create one failure `task_call_records` row without the four fee fields.
 3. Return HTTP 500 to the client.
 4. MUST NOT forward the request to the Bridge.
 

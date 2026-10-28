@@ -2,14 +2,15 @@
 
 | Document | Description |
 |----------|-------------|
-| [requirements.md](./requirements.md) | Functional requirements: wallet login and accounts, multi-chain multi-token deposits and Credits crediting, projects and private LLM API endpoints, Bridge forwarding and usage-based charging, and per-project usage statistics |
-| [architecture.md](./architecture.md) | Technical architecture: components, deposit and LLM charging data flows, Relay loaded-models / queued-priority / execution-time caches, multi-chain multi-token configuration model, and Credits ledger consistency rules |
+| [requirements.md](./requirements.md) | Functional requirements: wallet login and accounts, deposits and Credits, projects and private model APIs, Crynux and Service Provider execution, Key Owner earnings, and usage statistics |
+| [architecture.md](./architecture.md) | Technical architecture: components, Credits and earnings flows, independent Bridge and Provider workers, Relay caches, encrypted Shared API Keys, Wallet settlement, and consistency rules |
 | [deposit-processing.md](./deposit-processing.md) | Deposit processing specification: per-network scan workers, cursor and log filter rules, `credits_per_token` conversion, unknown-sender ignore rules, and atomic Credits ledger updates |
-| [llm-api.md](./llm-api.md) | OpenAI-compatible LLM API specification: private endpoints, model catalog from the loaded-models cache, VRAM limit and effective VRAM resolution, Bridge forwarding, project Cost Level (`priority_gwei`), call records, and Task Fee Estimation |
-| [llm-job-processing.md](./llm-job-processing.md) | LLM execution and ledger ownership: `llm_jobs`, `llm_call_records`, `credit_events`, and `credit_accounts` responsibilities, request processing order, settle and failure transactions, Responses retention, Recent Requests merge, and retention cleanup |
+| [llm-api.md](./llm-api.md) | OpenAI-compatible API specification: private endpoints, merged model catalog, Crynux VRAM resolution and Bridge forwarding, Provider routing references, Cost Level, call records, and Task Fee Estimation |
+| [llm-job-processing.md](./llm-job-processing.md) | Task execution and ledger ownership: `task_jobs`, `task_call_records`, `credit_events`, and `credit_accounts` responsibilities, request processing order, settle and failure transactions, Responses retention, Recent Requests merge, and retention cleanup |
 | [model-compatibility/](./model-compatibility/) | OpenAI-compatible request conversion, canonical task persistence and raw-task transport, raw assistant-text parsing, and public response construction |
 | [credits-billing.md](./credits-billing.md) | Credits billing and shared `billable_gwei` task-fee inputs: project Cost Level `priority_gwei`, Relay execution-time coefficients, VRAM weight, settle rules, and pricing-examples API |
 | [raw-task-api.md](./raw-task-api.md) | Project-authenticated Raw Task routes, local ID isolation, batch behavior, LLM and Image results, model catalogs, pricing, and settlement |
+| [provider-key-sharing/](./provider-key-sharing/) | Provider Key Sharing specification: Service Provider model routing, encrypted Shared API Keys, independent Bridge and Provider workers, real streaming, pricing, Key Owner earnings, Wallet-compatible withdrawals, APIs, operations, and testing |
 
 ## Doc Update Requirements
 

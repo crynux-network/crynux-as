@@ -2,7 +2,7 @@
 
 ## Scope
 
-Crynux AS exposes the AI capabilities of the Crynux Network as managed services. It manages user accounts, on-chain ERC20 payments that purchase Credits, referral invite codes and referral Credits rewards, projects with private OpenAI-compatible LLM API endpoints, usage-based Credits charging, and per-project usage statistics. Inference itself is executed by the Crynux Network; Crynux AS submits LLM jobs to the Crynux Bridge raw task APIs.
+Crynux AS exposes Crynux Network and configured third-party Service Provider models as managed services. It manages user accounts, on-chain ERC20 payments that purchase Credits, referral invite codes and referral Credits rewards, projects with private OpenAI-compatible LLM API endpoints, usage-based Credits charging, per-project usage statistics, encrypted Shared API Keys, Key Owner CNX earnings, and CNX withdrawals. Crynux models execute through Crynux Bridge. Configured OpenAI, Anthropic, and Google models execute through the Provider Key Sharing architecture specified in [provider-key-sharing/](./provider-key-sharing/).
 
 ## Wallet Login and Accounts
 
@@ -99,22 +99,22 @@ The detailed endpoint, Bridge forwarding, Cost Level modes and effective `priori
 Each project exposes the following endpoints under its private base URL:
 
 * `POST /api/<endpoint_token>/v1/chat/completions`
-* `POST /api/<endpoint_token>/v1/completions`
+* `POST /api/<endpoint_token>/v1/responses`
+* `GET /api/<endpoint_token>/v1/responses/<response_id>`
 * `POST /api/<endpoint_token>/v1/images/generations`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/images/generations`
 * `POST /api/<endpoint_token>/v1/images/edits`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/images/edits`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
-* `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/responses`
 * `GET /api/<endpoint_token>/v1/models`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
 The request and response formats are OpenAI-compatible for the supported fields of each endpoint.
 
-The models endpoints return the shared LLM model catalog snapshot built during loaded-models refresh from the Relay. The catalog MUST include only models whose Relay `on_disk_node_count` is at least `llm.min_catalog_on_disk_node_count`. Each model object includes the extra fields `min_vram` and `on_disk_node_count`. See [llm-api.md](./llm-api.md).
+The models endpoints return one merged catalog. Crynux rows come from the Relay loaded-model snapshot and MUST include only models whose Relay `on_disk_node_count` is at least `llm.min_catalog_on_disk_node_count`. Provider rows come from explicit YAML model configuration and appear only while the Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Provider model names MUST remain their official API names without a prefix or alias. See [llm-api.md](./llm-api.md) and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
 
-A request MAY specify a VRAM limit in GB through the `<vram_limit>` URL path segment or the `vram_limit` body field; the path value overrides the body value. The resolved effective VRAM selects `vram_weight` for Credits and task fee and is sent to Bridge as raw task `min_vram`. See [llm-api.md](./llm-api.md) and [credits-billing.md](./credits-billing.md).
+A Crynux request MAY specify a VRAM limit in GB through the `<vram_limit>` URL path segment or the `vram_limit` body field; the path value overrides the body value. The resolved effective VRAM selects `vram_weight` for Credits and task fee and is sent to Bridge as raw task `min_vram`. Provider requests MUST reject VRAM fields and path-based VRAM selection. See [llm-api.md](./llm-api.md), [credits-billing.md](./credits-billing.md), and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
 
 ### Authentication
 
@@ -131,9 +131,11 @@ The same project authentication MUST protect the Raw Task routes specified in [r
 
 Raw batch create and status requests MUST contain between 1 and 100 items and MUST preserve request order. Item validation, insufficient Credits, missing IDs, and cross-project IDs MUST be represented as item errors without failing unrelated valid items.
 
-### Forwarding to the Crynux Bridge
+### Task Execution
 
-The service executes LLM and Image jobs through the Crynux Bridge raw task APIs. AS parses OpenAI-compatible LLM requests into canonical `GPTTaskArgs`, submits Bridge ClientTasks, queries ClientTask status, downloads raw `GPTTaskResponse` JSON, and formats public LLM API responses locally. For Image jobs, including OpenAI Images generations, OpenAI Images edits, and Raw Image tasks, AS downloads PNG results from Bridge into `llm.task_result_dir` before settle and serves or encodes those files from disk. See [llm-api.md](./llm-api.md) and [raw-task-api.md](./raw-task-api.md).
+The service executes Crynux LLM and Image jobs through the Crynux Bridge raw task APIs. AS parses OpenAI-compatible Crynux LLM requests into canonical `GPTTaskArgs`, submits Bridge ClientTasks, queries ClientTask status, downloads raw `GPTTaskResponse` JSON, and formats public responses locally. For Image jobs, including OpenAI Images generations, OpenAI Images edits, and Raw Image tasks, AS downloads PNG results from Bridge into `llm.task_result_dir` before settle and serves or encodes those files from disk. See [llm-api.md](./llm-api.md) and [raw-task-api.md](./raw-task-api.md).
+
+Configured Provider text models execute through independent Service Provider adapters and a priority scheduler. Provider calls MUST use a Shared API Key of the matched Service Provider, enforce the global per-key concurrency limit, stream output in real time, and settle Key Owner earnings from final normalized usage. Provider execution MUST NOT block the Bridge bounded-batch poller. See [provider-key-sharing/job-execution.md](./provider-key-sharing/job-execution.md).
 
 ### Charging
 
@@ -143,9 +145,9 @@ Each LLM call is charged from the Credits balance of the owning account using th
 
 ### Call Records
 
-Every LLM call, successful or failed, MUST be recorded as one `llm_call_records` row as specified in [llm-job-processing.md](./llm-job-processing.md). The call record MUST contain the account `user_id` snapshot, project, optional unique `llm_job_id`, model, prompt/completion/total token counts, `token_usage_applicable`, success or failure status, `accepted_at`, `completed_at`, `duration_ms = completed_at - accepted_at`, and the billed effective VRAM. The call record MUST NOT store the charged Credits amount. Actual Credits changes MUST exist only on processed `credit_events` rows.
+Every task-creating call, successful or failed, MUST be recorded as one `task_call_records` row as specified in [llm-job-processing.md](./llm-job-processing.md). The call record MUST contain the account `user_id` snapshot, project, optional unique `task_job_id`, model, execution source, prompt/completion/total token counts, `token_usage_applicable`, success or failure status, `accepted_at`, `completed_at`, `duration_ms = completed_at - accepted_at`, and the billed effective VRAM when applicable. The call record MUST NOT store the charged Credits amount. Actual Credits changes MUST exist only on processed `credit_events` rows.
 
-`GET /v1/projects/:project_id/requests` is a JWT-authenticated management API. It MUST verify that the project belongs to the authenticated account and is not Deleted. It MUST return one merged list of unfinished project jobs and finished project call records, newest first, with total length at most `llm.project_recent_requests_limit`. The API MUST NOT accept `limit`, `offset`, or any other client-controlled page size. Each item MUST include `id`, `source`, `created_at`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `priority_gwei`, `credits`, `billed_vram`, `duration_ms`, `status`, `phase`, and `error_message`. `source` MUST be `job` or `call_record`. `status` MUST be one of `queued`, `in_progress`, `success`, or `failed` mapped as specified in [llm-job-processing.md](./llm-job-processing.md). `phase` and `error_message` MUST follow [llm-job-processing.md](./llm-job-processing.md): unfinished jobs expose Bridge/AS `phase` with null `error_message`; finished failed rows MAY expose `error_message` from a still-retained `task_jobs` row via `task_job_id`, and MUST NOT require `error_message` on `task_call_records`. In-progress items MUST return null for `prompt_tokens`, `completion_tokens`, `total_tokens`, `duration_ms`, and `credits`. Finished items MUST take `credits` from the processed LLM charge event amount, or `0` when no event exists. The `priority_gwei` MUST be the Cost Level decimal integer string stored on the job or call record. The response MUST NOT include `task_fee_gwei`, `median_priority_gwei`, `estimated_node_seconds`, or `vram_weight`. The response field MUST be `requests`.
+`GET /v1/projects/:project_id/requests` is a JWT-authenticated management API. It MUST verify that the project belongs to the authenticated account and is not Deleted. It MUST return one merged list of unfinished project jobs and finished project call records, newest first, with total length at most `llm.project_recent_requests_limit`. The API MUST NOT accept `limit`, `offset`, or any other client-controlled page size. Each item MUST include `id`, `source`, `execution_source`, `created_at`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `priority_gwei`, `credits`, `billed_vram`, `duration_ms`, `status`, `phase`, and `error_message`. `source` MUST be `job` or `call_record`. `execution_source` MUST be `crynux`, `openai`, `anthropic`, or `google`. `status` MUST be one of `queued`, `in_progress`, `success`, or `failed` mapped as specified in [llm-job-processing.md](./llm-job-processing.md). Crynux rows MUST use the Bridge/AS `phase`; Provider queued rows MUST use `waiting_for_key`; Provider claimed or executing rows MUST use `provider_running`; Provider finished rows MUST return null `phase`. Provider rows MUST return null `billed_vram`. Unfinished rows MUST return null `error_message`; finished failed rows MAY expose a redacted `error_message` from a still-retained `task_jobs` row via `task_job_id`, and MUST NOT require `error_message` on `task_call_records`. In-progress items MUST return null for `prompt_tokens`, `completion_tokens`, `total_tokens`, `duration_ms`, and `credits`. Finished items MUST take `credits` from the processed task-charge event amount, or `0` when no event exists. The `priority_gwei` MUST be the Cost Level decimal integer string stored on the job or call record. The response MUST NOT include `task_fee_gwei`, `median_priority_gwei`, `estimated_node_seconds`, or `vram_weight`. The response field MUST be `requests`.
 
 ## Usage Statistics
 
@@ -155,13 +157,13 @@ Requests MUST count only finished success and failure calls. Authenticated reque
 
 Credits in usage stats MUST equal processed `credit_events` rows of type LLM charge referenced by call record ID. Token metrics MUST include only calls with `token_usage_applicable = 1`. Account and project hourly aggregates MUST accumulate Image `image_count` for Image task call records and MUST keep `image_count` at zero for LLM call records.
 
-Project model 10-minute aggregates and Top-10 snapshots MUST key rows by Relay loaded-model identity `(model_cache_hash, execution_dtype)` together with `project_id` and the period start. Empty identity fields MUST participate in the unique key as empty strings; the normalized lowercase `model` on the call record MUST be stored for display and MUST NOT merge rows that differ by `model_cache_hash` or `execution_dtype`. Aggregates MUST also store `task_type`, `quantization_config`, `components`, and Image `image_count`. Usage stats aggregation MUST NOT apply additional case folding or case-insensitive merging of model names.
+Project model 10-minute aggregates and Top-10 snapshots MUST key Crynux rows by Relay loaded-model identity `(model_cache_hash, execution_dtype)` together with `execution_source = crynux`, `project_id`, and the period start. Provider rows MUST key by execution source, exact configured model name, project ID, and period start and MUST not use a separate Service Provider identity or a fabricated Relay identity. A Crynux call record MUST store its normalized lowercase repository model for display. A Provider call record MUST preserve its exact case-sensitive configured model name. Aggregates MUST also store `task_type`, `quantization_config`, `components`, and Image `image_count`. Usage stats aggregation MUST NOT apply additional case folding or case-insensitive merging of model names.
 
 Deleting a project MUST set project status to Deleted. Deleted projects MUST NOT appear in list or detail APIs and MUST NOT accept new LLM requests. Existing jobs MUST continue using create-time snapshots. Historical account usage MUST retain Deleted project consumption.
 
 Two background workers MUST run every minute:
 
-1. The base worker advances a cursor over `llm_call_records` and updates account hourly, project hourly, project-model 10-minute, and project-duration 10-minute stats by `accepted_at`. For each aggregated call record, the base worker MUST set `projects.last_request_at` to the greater of its current value and that record's `accepted_at` Unix second.
+1. The base worker advances a cursor over `task_call_records` and updates account hourly, project hourly, project-model 10-minute, and project-duration 10-minute stats by `accepted_at`. For each aggregated call record, the base worker MUST set `projects.last_request_at` to the greater of its current value and that record's `accepted_at` Unix second.
 2. The snapshot worker claims dirty projects and rebuilds `1h`, `1d`, and `7d` model Top-10 and completion-duration display histograms from the 10-minute tables. For each claimed project, the snapshot worker MUST also refresh the project's current-Unix-day summary fields on `projects` by summing matching rows from `project_usage_hourly_stats` where `period_start` is in `[UnixDayStart(now), HourStartUnix(now)]`. The refreshed fields MUST be `request_count_day`, `success_count_day`, `failure_count_day`, and `credits_day`. For each claimed project, the snapshot worker MUST also refresh `recent_window_success_count` and `recent_window_failure_count` by summing matching rows from `project_model_usage_10m_stats` over the configured recent-failure window. The window length MUST be `usage_stats.recent_failure_window_seconds`. The window MUST align to Unix 10-minute buckets as `[TenMinuteStartUnix(now) - (buckets - 1) * 600, TenMinuteStartUnix(now) + 600)`, where `buckets = max(1, ceil(window_seconds / 600))`. When `last_request_at` is null or earlier than that window start, both recent-window counts MUST be set to zero without scanning the 10-minute table. Each snapshot tick MUST also refresh a bounded batch of projects that still have non-zero recent-window counts or whose `last_request_at` is at or after the current window start, so sliding-window aging clears stale counts when no new dirty claim occurs. The snapshot worker MUST also clear those day summary fields to zero for a bounded batch of projects whose day counters are non-zero and whose `last_request_at` is null or earlier than `UnixDayStart(now)`.
 
 Configuration:
@@ -176,4 +178,4 @@ Management APIs:
 * `GET /v1/projects/:project_id/stats/completion-duration?range=1h|1d|7d`
 * `GET /v1/projects/:project_id/stats/models?range=1h|1d|7d`
 
-These APIs MUST read the stats tables and snapshots only. They MUST NOT scan `llm_call_records`, MUST use Unix timestamps, and MUST NOT accept a timezone parameter.
+These APIs MUST read the stats tables and snapshots only. They MUST NOT scan `task_call_records`, MUST use Unix timestamps, and MUST NOT accept a timezone parameter.
