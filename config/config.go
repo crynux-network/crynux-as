@@ -257,6 +257,9 @@ func checkLLMConfig() error {
 	if err := checkMaxTaskPriceCNXConfig(); err != nil {
 		return err
 	}
+	if err := checkMinTaskPriceCNXConfig(); err != nil {
+		return err
+	}
 	if appConfig.LLM.JobSubmitTimeout == 0 {
 		return errors.New("llm.job_submit_timeout is not set")
 	}
@@ -398,6 +401,43 @@ func checkMaxTaskPriceCNXConfig() error {
 	return nil
 }
 
+func checkMinTaskPriceCNXConfig() error {
+	prices := appConfig.LLM.MinTaskPriceCNX
+	if len(prices) == 0 {
+		return errors.New("llm.min_task_price_cnx is not set")
+	}
+	if _, err := appConfig.MinTaskFeeGwei(MaxTaskPriceProviderCrynux); err != nil {
+		return fmt.Errorf("llm.min_task_price_cnx.%s is invalid: %w", MaxTaskPriceProviderCrynux, err)
+	}
+	for providerID, price := range prices {
+		if providerID == MaxTaskPriceProviderCrynux {
+			continue
+		}
+		if _, err := MinTaskFeeGweiFromPrice(price); err != nil {
+			return fmt.Errorf("llm.min_task_price_cnx.%s is invalid: %w", providerID, err)
+		}
+	}
+	for providerID := range appConfig.LLM.MaxTaskPriceCNX {
+		minFee, err := appConfig.MinTaskFeeGwei(providerID)
+		if err != nil {
+			return fmt.Errorf("llm.min_task_price_cnx.%s is invalid: %w", providerID, err)
+		}
+		maxFee, err := appConfig.MaxTaskFeeGwei(providerID)
+		if err != nil {
+			return fmt.Errorf("llm.max_task_price_cnx.%s is invalid: %w", providerID, err)
+		}
+		if minFee.Cmp(maxFee) > 0 {
+			return fmt.Errorf("llm.min_task_price_cnx.%s must be less than or equal to llm.max_task_price_cnx.%s", providerID, providerID)
+		}
+	}
+	for providerID := range prices {
+		if _, ok := appConfig.LLM.MaxTaskPriceCNX[providerID]; !ok {
+			return fmt.Errorf("llm.min_task_price_cnx.%s has no matching llm.max_task_price_cnx entry", providerID)
+		}
+	}
+	return nil
+}
+
 func checkProviderConfig(v *viper.Viper) error {
 	if !v.IsSet("provider") {
 		return errors.New("provider is not set")
@@ -447,6 +487,14 @@ func checkProviderConfig(v *viper.Viper) error {
 			return fmt.Errorf("llm.max_task_price_cnx.%s has no matching provider.services entry", providerID)
 		}
 	}
+	for providerID := range appConfig.LLM.MinTaskPriceCNX {
+		if providerID == MaxTaskPriceProviderCrynux {
+			continue
+		}
+		if _, ok := p.Services[providerID]; !ok {
+			return fmt.Errorf("llm.min_task_price_cnx.%s has no matching provider.services entry", providerID)
+		}
+	}
 	modelNames := make(map[string]string)
 	for serviceID, svc := range p.Services {
 		if _, ok := knownServiceProviders[serviceID]; !ok {
@@ -454,6 +502,9 @@ func checkProviderConfig(v *viper.Viper) error {
 		}
 		if _, err := appConfig.MaxTaskFeeGwei(serviceID); err != nil {
 			return fmt.Errorf("llm.max_task_price_cnx.%s is invalid: %w", serviceID, err)
+		}
+		if _, err := appConfig.MinTaskFeeGwei(serviceID); err != nil {
+			return fmt.Errorf("llm.min_task_price_cnx.%s is invalid: %w", serviceID, err)
 		}
 		if strings.TrimSpace(svc.DisplayName) == "" {
 			return fmt.Errorf("provider.services.%s.display_name is not set", serviceID)
@@ -638,6 +689,22 @@ func (cfg *AppConfig) MaxTaskPriceCNXFor(providerID string) (string, error) {
 	return price, nil
 }
 
+// MinTaskPriceCNXFor returns the configured min_task_price_cnx string for one provider ID.
+func (cfg *AppConfig) MinTaskPriceCNXFor(providerID string) (string, error) {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return "", errors.New("provider id is not set")
+	}
+	if cfg.LLM.MinTaskPriceCNX == nil {
+		return "", fmt.Errorf("llm.min_task_price_cnx.%s is not set", providerID)
+	}
+	price, ok := cfg.LLM.MinTaskPriceCNX[providerID]
+	if !ok || strings.TrimSpace(price) == "" {
+		return "", fmt.Errorf("llm.min_task_price_cnx.%s is not set", providerID)
+	}
+	return price, nil
+}
+
 // MaxTaskFeeGwei converts llm.max_task_price_cnx.<provider> to Gwei as floor(price_cnx * 1e9).
 // 1 CNX = 1e18 wei and task_fee_gwei * 1e9 = wei, so 1 CNX = 1e9 Gwei.
 func (cfg *AppConfig) MaxTaskFeeGwei(providerID string) (*big.Int, error) {
@@ -646,6 +713,16 @@ func (cfg *AppConfig) MaxTaskFeeGwei(providerID string) (*big.Int, error) {
 		return nil, err
 	}
 	return MaxTaskFeeGweiFromPrice(price)
+}
+
+// MinTaskFeeGwei converts llm.min_task_price_cnx.<provider> to Gwei as floor(price_cnx * 1e9).
+// A configured value of "0" yields 0 Gwei and disables the admission minimum gate.
+func (cfg *AppConfig) MinTaskFeeGwei(providerID string) (*big.Int, error) {
+	price, err := cfg.MinTaskPriceCNXFor(providerID)
+	if err != nil {
+		return nil, err
+	}
+	return MinTaskFeeGweiFromPrice(price)
 }
 
 // MaxTaskFeeGweiFromPrice converts one max_task_price_cnx decimal string to Gwei.
@@ -660,6 +737,17 @@ func MaxTaskFeeGweiFromPrice(priceCNX string) (*big.Int, error) {
 		return nil, errors.New("must convert to a positive Gwei amount")
 	}
 	return feeGwei, nil
+}
+
+// MinTaskFeeGweiFromPrice converts one min_task_price_cnx decimal string to Gwei.
+// Zero is allowed and means no minimum task fee for that provider.
+func MinTaskFeeGweiFromPrice(priceCNX string) (*big.Int, error) {
+	price, err := ParseNonNegativeDecimalRate(priceCNX)
+	if err != nil {
+		return nil, err
+	}
+	scaled := new(big.Rat).Mul(price, big.NewRat(1_000_000_000, 1))
+	return new(big.Int).Quo(scaled.Num(), scaled.Denom()), nil
 }
 
 func (cfg *AppConfig) ParseRecentFailureRateThreshold() (*big.Rat, error) {
@@ -694,6 +782,22 @@ func ParsePositiveDecimalRate(value string) (*big.Rat, error) {
 	}
 	if rate.Sign() <= 0 {
 		return nil, errors.New("must be a positive decimal")
+	}
+	return rate, nil
+}
+
+// ParseNonNegativeDecimalRate parses a non-negative decimal string (including "0").
+func ParseNonNegativeDecimalRate(value string) (*big.Rat, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, errors.New("must be a non-negative decimal")
+	}
+	rate := new(big.Rat)
+	if _, ok := rate.SetString(trimmed); !ok {
+		return nil, errors.New("must be a non-negative decimal")
+	}
+	if rate.Sign() < 0 {
+		return nil, errors.New("must be a non-negative decimal")
 	}
 	return rate, nil
 }

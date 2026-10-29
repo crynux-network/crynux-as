@@ -108,6 +108,7 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	}
 	taskFee, err := service.EstimateLLMTaskFeeWithQuery(
 		c.Request.Context(),
+		project,
 		query,
 		effectiveVram,
 		priorityGwei,
@@ -115,11 +116,16 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		maxCompletion,
 	)
 	if err != nil {
-		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, parsed.model, err)
 		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, parsed.model, err)
 		writeServerError(c)
 		return
 	}
+	priorityGwei = taskFee.PriorityGwei
 
 	if err := service.ValidateOptionalQueueTimeout(parsed.queueTimeout); err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)

@@ -438,6 +438,11 @@ llm:
     openai: "0.001"
     anthropic: "0.001"
     google: "0.001"
+  min_task_price_cnx:
+    crynux: "0"
+    openai: "0"
+    anthropic: "0"
+    google: "0"
   job_submit_timeout: 600
   job_retention_days: 30
   task_result_dir: "data/task_results"
@@ -456,6 +461,7 @@ llm:
 * `min_priority_gwei` and `max_priority_gwei` are the hard bounds for project Cost Level values. They MUST be positive decimal integer strings. Configuration loading MUST fail when `min_priority_gwei` is greater than `max_priority_gwei`.
 * `credits_per_gwei` is specified in [credits-billing.md](./credits-billing.md). It MUST be a positive decimal string.
 * `max_task_price_cnx` is specified in [credits-billing.md](./credits-billing.md). It MUST be a map of provider ID to positive decimal CNX string, MUST include `crynux`, and MUST include one entry for every configured Service Provider. Configuration loading MUST fail when any required key is missing, any value is non-positive, or any value does not convert to a positive Gwei amount. Every YAML configuration template MUST set it.
+* `min_task_price_cnx` is specified in [credits-billing.md](./credits-billing.md). It MUST be a map of provider ID to non-negative decimal CNX string with the same keys as `max_task_price_cnx`. A value of `0` disables the admission floor for that provider. Static Cost Level requests below the floor MUST be rejected. Auto Cost Level requests below the floor MUST raise effective priority up to `auto_max_priority_gwei` when that maximum can meet the floor, otherwise MUST be rejected. Configuration loading MUST fail when any required key is missing, any value is negative, any value does not convert to a non-negative Gwei amount, or any provider's minimum exceeds that provider's maximum. Every YAML configuration template MUST set it.
 * `job_submit_timeout` is the maximum age in seconds of a `pending_submit` LLM job before the worker stops Bridge submit retries and marks the job failed. Every YAML configuration template MUST set it to a positive integer.
 * `job_retention_days` is the number of days a terminal settled job remains readable for Responses lookup and `previous_response_id`. Every YAML configuration template MUST set it to a positive integer. Example configurations MUST use `30`. After that window, retention cleanup MUST delete the `task_jobs` row and the matching `{task_result_dir}/{id}` directory when present, and MUST NOT delete `task_call_records`, `credit_events`, or `credit_accounts`.
 * `task_result_dir` is the local directory root for Image task PNG files at `{task_result_dir}/{task_jobs.id}/{index}.png`. Every YAML configuration template MUST set it to a non-empty path. Example configurations MUST use `data/task_results`. Configuration loading MUST fail when it is missing or empty.

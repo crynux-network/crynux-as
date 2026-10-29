@@ -208,6 +208,7 @@ func ProviderEarningWei(billableGwei *big.Int) *big.Int {
 }
 
 func BuildProviderBillingData(
+	project *models.Project,
 	route ProviderModelRoute,
 	effectivePriority *big.Int,
 	inputBytes, maxOutputTokens uint64,
@@ -218,11 +219,23 @@ func BuildProviderBillingData(
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
+	minTaskPriceCNX, err := cfg.MinTaskPriceCNXFor(string(route.ServiceProvider))
+	if err != nil {
+		return models.ProviderTaskBillingData{}, nil, err
+	}
 	units, err := EstimateProviderUnits(route.UsageWeights, inputBytes, maxOutputTokens)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
-	billableGwei, err := ProviderBillableGwei(effectivePriority, units, maxTaskPriceCNX)
+	feeAtPriority := func(priority *big.Int) (*big.Int, error) {
+		return ProviderBillableGwei(priority, units, maxTaskPriceCNX)
+	}
+	adjustedPriority, billableGwei, err := EnforceAdmissionMinTaskFee(
+		string(route.ServiceProvider),
+		project,
+		effectivePriority,
+		feeAtPriority,
+	)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
@@ -237,9 +250,10 @@ func BuildProviderBillingData(
 		ServiceProvider:        string(route.ServiceProvider),
 		ModelName:              route.ModelName,
 		UsageWeights:           route.UsageWeights,
-		EffectivePriorityGwei:  effectivePriority.String(),
+		EffectivePriorityGwei:  adjustedPriority.String(),
 		CreditsPerGwei:         cfg.LLM.CreditsPerGwei,
 		MaxTaskPriceCNX:        maxTaskPriceCNX,
+		MinTaskPriceCNX:        minTaskPriceCNX,
 		EstimatedInputBytes:    inputBytes,
 		EstimatedOutputTokens:  maxOutputTokens,
 		EstimatedProviderUnits: units.FloatString(18),

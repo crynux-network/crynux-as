@@ -98,6 +98,7 @@ func ImagesGenerations(c *gin.Context) {
 	}
 	minVram := billedVram
 	estimate, err := service.EstimateImageTaskFee(c.Request.Context(), service.CalcImageTaskFeeInput{
+		Project:  project,
 		TaskArgs: taskArgsJSON,
 		Query: relay.ExecutionTimeQuery{
 			Model:              req.Model,
@@ -109,11 +110,16 @@ func ImagesGenerations(c *gin.Context) {
 		EffectiveVram: billedVram,
 	})
 	if err != nil {
-		log.Errorf("Image task fee estimation failed for project %d model %s: %v", project.ID, req.Model, err)
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), priorityGwei, nil)
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Errorf("Image task fee estimation failed for project %d model %s: %v", project.ID, req.Model, err)
 		writeServerError(c)
 		return
 	}
+	priorityGwei = estimate.PriorityGwei
 
 	taskFeeWei := new(big.Int).Mul(estimate.TaskFeeGwei, big.NewInt(imagesWeiPerGwei))
 	db := config.GetDB()
@@ -257,6 +263,7 @@ func ImagesEdits(c *gin.Context) {
 	}
 	minVram := billedVram
 	estimate, err := service.EstimateImageTaskFee(c.Request.Context(), service.CalcImageTaskFeeInput{
+		Project:  project,
 		TaskArgs: taskArgsJSON,
 		Query: relay.ExecutionTimeQuery{
 			Model:              req.Model,
@@ -268,11 +275,16 @@ func ImagesEdits(c *gin.Context) {
 		EffectiveVram: billedVram,
 	})
 	if err != nil {
-		log.Errorf("Image edit task fee estimation failed for project %d model %s: %v", project.ID, req.Model, err)
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), priorityGwei, nil)
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Errorf("Image edit task fee estimation failed for project %d model %s: %v", project.ID, req.Model, err)
 		writeServerError(c)
 		return
 	}
+	priorityGwei = estimate.PriorityGwei
 
 	taskFeeWei := new(big.Int).Mul(estimate.TaskFeeGwei, big.NewInt(imagesWeiPerGwei))
 	db := config.GetDB()

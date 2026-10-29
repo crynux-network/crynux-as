@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crynux_as/config"
+	"crynux_as/models"
 	"crynux_as/relay"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,7 @@ type CalcBillableResult struct {
 }
 
 type CalcTaskFeeResult struct {
+	PriorityGwei          *big.Int
 	TaskFeeGwei           *big.Int
 	Credits               *big.Int
 	MedianPriorityGwei    *big.Int
@@ -41,10 +43,99 @@ type CalcTaskFeeResult struct {
 }
 
 type CalcImageTaskFeeInput struct {
+	Project       *models.Project
 	TaskArgs      string
 	Query         relay.ExecutionTimeQuery
 	PriorityGwei  *big.Int
 	EffectiveVram uint64
+}
+
+// ErrTaskFeeBelowMinimum is returned when the admission task fee is below
+// llm.min_task_price_cnx and cannot be raised under the project's Cost Level rules.
+var ErrTaskFeeBelowMinimum = errors.New("Task fee is below the minimum for this provider; increase the project Cost Level")
+
+// EnforceAdmissionMinTaskFee compares the post-max-cap fee at the resolved
+// priority against llm.min_task_price_cnx.<providerID>.
+//
+// Static mode below the minimum returns ErrTaskFeeBelowMinimum.
+// Auto mode raises priority up to auto_max_priority_gwei when that cap can
+// produce a fee at or above the minimum; otherwise it returns the same error.
+// feeAtPriority MUST return the post-max-cap billable/task fee for one priority.
+func EnforceAdmissionMinTaskFee(
+	providerID string,
+	project *models.Project,
+	priority *big.Int,
+	feeAtPriority func(priority *big.Int) (*big.Int, error),
+) (*big.Int, *big.Int, error) {
+	if project == nil {
+		return nil, nil, errors.New("project is required")
+	}
+	if priority == nil || priority.Sign() <= 0 {
+		return nil, nil, errors.New("priority_gwei must be positive")
+	}
+	if feeAtPriority == nil {
+		return nil, nil, errors.New("fee calculator is required")
+	}
+	appCfg := config.GetConfig()
+	if appCfg == nil {
+		return nil, nil, errors.New("config is not initialized")
+	}
+	minFee, err := appCfg.MinTaskFeeGwei(providerID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("min_task_price_cnx.%s: %w", providerID, err)
+	}
+	billable, err := feeAtPriority(priority)
+	if err != nil {
+		return nil, nil, err
+	}
+	if minFee.Sign() <= 0 || billable.Cmp(minFee) >= 0 {
+		return new(big.Int).Set(priority), billable, nil
+	}
+
+	mode := project.CostLevelMode
+	if mode == "" {
+		mode = models.CostLevelModeStatic
+	}
+	if mode != models.CostLevelModeAuto {
+		return nil, nil, ErrTaskFeeBelowMinimum
+	}
+	if project.AutoMaxPriorityGwei == nil || project.AutoMaxPriorityGwei.Sign() <= 0 {
+		return nil, nil, ErrTaskFeeBelowMinimum
+	}
+	autoMax := new(big.Int).Set(&project.AutoMaxPriorityGwei.Int)
+	if autoMax.Cmp(priority) < 0 {
+		autoMax = new(big.Int).Set(priority)
+	}
+	feeAtMax, err := feeAtPriority(autoMax)
+	if err != nil {
+		return nil, nil, err
+	}
+	if feeAtMax.Cmp(minFee) < 0 {
+		return nil, nil, ErrTaskFeeBelowMinimum
+	}
+
+	lo := new(big.Int).Set(priority)
+	hi := new(big.Int).Set(autoMax)
+	for lo.Cmp(hi) < 0 {
+		mid := new(big.Int).Rsh(new(big.Int).Add(lo, hi), 1)
+		fee, err := feeAtPriority(mid)
+		if err != nil {
+			return nil, nil, err
+		}
+		if fee.Cmp(minFee) >= 0 {
+			hi = mid
+		} else {
+			lo = new(big.Int).Add(mid, big.NewInt(1))
+		}
+	}
+	billable, err = feeAtPriority(hi)
+	if err != nil {
+		return nil, nil, err
+	}
+	if billable.Cmp(minFee) < 0 {
+		return nil, nil, ErrTaskFeeBelowMinimum
+	}
+	return hi, billable, nil
 }
 
 type imageTaskArgs struct {
@@ -132,8 +223,29 @@ func EstimateImageTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcT
 		seconds = 1
 	}
 	appCfg := config.GetConfig()
+	feeAtPriority := func(priority *big.Int) (*big.Int, error) {
+		got, err := CalcBillableGwei(CalcBillableInput{
+			PriorityGwei:    priority,
+			EffectiveVram:   in.EffectiveVram,
+			BaseVram:        appCfg.LLM.BaseVRAM,
+			ConstantSeconds: seconds,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return got.TaskFeeGwei, nil
+	}
+	adjustedPriority, _, err := EnforceAdmissionMinTaskFee(
+		config.MaxTaskPriceProviderCrynux,
+		in.Project,
+		in.PriorityGwei,
+		feeAtPriority,
+	)
+	if err != nil {
+		return nil, err
+	}
 	billable, err := CalcBillableGwei(CalcBillableInput{
-		PriorityGwei:    in.PriorityGwei,
+		PriorityGwei:    adjustedPriority,
 		EffectiveVram:   in.EffectiveVram,
 		BaseVram:        appCfg.LLM.BaseVRAM,
 		ConstantSeconds: seconds,
@@ -154,6 +266,7 @@ func EstimateImageTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcT
 		return nil, err
 	}
 	return &CalcTaskFeeResult{
+		PriorityGwei:         adjustedPriority,
 		TaskFeeGwei:          billable.TaskFeeGwei,
 		Credits:              credits,
 		MedianPriorityGwei:   median,
@@ -324,6 +437,7 @@ func validateExecutionTimeCoefficients(constantSeconds, secondsPerInputToken, se
 // hint snapshot that does not enter billable_gwei.
 func EstimateTaskFee(
 	ctx context.Context,
+	project *models.Project,
 	model string,
 	effectiveVram uint64,
 	priorityGwei *big.Int,
@@ -333,6 +447,7 @@ func EstimateTaskFee(
 	query := relay.ExecutionTimeQuery{Model: model, MinVRAM: &effectiveVram}
 	return EstimateLLMTaskFeeWithQuery(
 		ctx,
+		project,
 		query,
 		effectiveVram,
 		priorityGwei,
@@ -343,6 +458,7 @@ func EstimateTaskFee(
 
 func EstimateLLMTaskFeeWithQuery(
 	ctx context.Context,
+	project *models.Project,
 	query relay.ExecutionTimeQuery,
 	effectiveVram uint64,
 	priorityGwei *big.Int,
@@ -367,8 +483,34 @@ func EstimateLLMTaskFeeWithQuery(
 		return nil, err
 	}
 
+	feeAtPriority := func(priority *big.Int) (*big.Int, error) {
+		got, err := CalcBillableGwei(CalcBillableInput{
+			PriorityGwei:          priority,
+			EffectiveVram:         effectiveVram,
+			BaseVram:              appCfg.LLM.BaseVRAM,
+			ConstantSeconds:       coefficients.ConstantSeconds,
+			SecondsPerInputToken:  coefficients.SecondsPerInputToken,
+			SecondsPerOutputToken: coefficients.SecondsPerOutputToken,
+			PromptTokens:          estimatedPromptTokens,
+			CompletionTokens:      maxCompletionTokens,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return got.TaskFeeGwei, nil
+	}
+	adjustedPriority, _, err := EnforceAdmissionMinTaskFee(
+		config.MaxTaskPriceProviderCrynux,
+		project,
+		priorityGwei,
+		feeAtPriority,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	billable, err := CalcBillableGwei(CalcBillableInput{
-		PriorityGwei:          priorityGwei,
+		PriorityGwei:          adjustedPriority,
 		EffectiveVram:         effectiveVram,
 		BaseVram:              appCfg.LLM.BaseVRAM,
 		ConstantSeconds:       coefficients.ConstantSeconds,
@@ -392,6 +534,7 @@ func EstimateLLMTaskFeeWithQuery(
 	}
 
 	return &CalcTaskFeeResult{
+		PriorityGwei:          adjustedPriority,
 		TaskFeeGwei:           billable.TaskFeeGwei,
 		Credits:               credits,
 		MedianPriorityGwei:    median,

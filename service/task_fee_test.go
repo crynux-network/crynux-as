@@ -13,6 +13,9 @@ func setTaskFeeTestConfig(t *testing.T, maxTaskPriceCNX string) {
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{
 		config.MaxTaskPriceProviderCrynux: maxTaskPriceCNX,
 	}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{
+		config.MaxTaskPriceProviderCrynux: "0",
+	}
 	cfg.LLM.BaseVRAM = 8
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })

@@ -119,6 +119,7 @@ type ProviderTaskBillingData struct {
 	EffectivePriorityGwei string            `json:"effective_priority_gwei"`
 	CreditsPerGwei        string            `json:"credits_per_gwei"`
 	MaxTaskPriceCNX       string            `json:"max_task_price_cnx"`
+	MinTaskPriceCNX       string            `json:"min_task_price_cnx"`
 	EstimatedInputBytes   uint64            `json:"estimated_input_bytes"`
 	EstimatedOutputTokens uint64            `json:"estimated_output_tokens"`
 	EstimatedProviderUnits string           `json:"estimated_provider_units"`

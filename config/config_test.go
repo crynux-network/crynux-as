@@ -70,3 +70,61 @@ func TestMaxTaskFeeGweiRejectsInvalidValues(t *testing.T) {
 		t.Fatal("missing provider max_task_price_cnx was accepted")
 	}
 }
+
+func TestMinTaskFeeGweiAllowsZero(t *testing.T) {
+	cfg := &AppConfig{}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{
+		MaxTaskPriceProviderCrynux: "0",
+		"openai":                   "0.001",
+	}
+	got, err := cfg.MinTaskFeeGwei(MaxTaskPriceProviderCrynux)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sign() != 0 {
+		t.Fatalf("MinTaskFeeGwei(crynux) = %s, want 0", got.String())
+	}
+	got, err = cfg.MinTaskFeeGwei("openai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := big.NewInt(1_000_000)
+	if got.Cmp(want) != 0 {
+		t.Fatalf("MinTaskFeeGwei(openai) = %s, want %s", got.String(), want.String())
+	}
+}
+
+func TestMinTaskFeeGweiRejectsInvalidValues(t *testing.T) {
+	for _, value := range []string{"", "-1", "abc"} {
+		cfg := &AppConfig{}
+		cfg.LLM.MinTaskPriceCNX = map[string]string{
+			MaxTaskPriceProviderCrynux: value,
+		}
+		if _, err := cfg.MinTaskFeeGwei(MaxTaskPriceProviderCrynux); err == nil {
+			t.Errorf("min_task_price_cnx %q was accepted", value)
+		}
+	}
+	cfg := &AppConfig{}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{
+		MaxTaskPriceProviderCrynux: "0",
+	}
+	if _, err := cfg.MinTaskFeeGwei("openai"); err == nil {
+		t.Fatal("missing provider min_task_price_cnx was accepted")
+	}
+}
+
+func TestCheckMinTaskPriceCNXConfigRejectsAboveMax(t *testing.T) {
+	prev := GetConfig()
+	t.Cleanup(func() { SetConfigForTest(prev) })
+	cfg := &AppConfig{}
+	cfg.LLM.MaxTaskPriceCNX = map[string]string{
+		MaxTaskPriceProviderCrynux: "0.001",
+	}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{
+		MaxTaskPriceProviderCrynux: "0.002",
+	}
+	SetConfigForTest(cfg)
+	if err := checkMinTaskPriceCNXConfig(); err == nil {
+		t.Fatal("min above max was accepted")
+	}
+}

@@ -370,12 +370,12 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	var llmBilling *models.LLMTaskBillingData
 	if *request.TaskType == models.TaskTypeImage {
 		estimate, err = service.EstimateImageTaskFee(ctx, service.CalcImageTaskFeeInput{
-			TaskArgs: taskArgs, Query: query, PriorityGwei: priority,
+			Project: project, TaskArgs: taskArgs, Query: query, PriorityGwei: priority,
 			EffectiveVram: billedVram,
 		})
 	} else {
 		promptTokens := uint64((utf8.RuneCountInString(taskArgs) + 3) / 4)
-		estimate, err = service.EstimateLLMTaskFeeWithQuery(ctx, query, billedVram, priority, promptTokens, maxTokens)
+		estimate, err = service.EstimateLLMTaskFeeWithQuery(ctx, project, query, billedVram, priority, promptTokens, maxTokens)
 		if err == nil {
 			llmBilling = &models.LLMTaskBillingData{
 				VramWeight: estimate.VramWeight, ConstantSeconds: estimate.ConstantSeconds,
@@ -388,6 +388,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if err != nil {
 		return nil, err
 	}
+	priority = estimate.PriorityGwei
 	taskFeeWei := new(big.Int).Mul(estimate.TaskFeeGwei, big.NewInt(weiPerGwei))
 	return &preparedTask{
 		request: request, model: model, taskArgs: taskArgs, minVram: minVram,

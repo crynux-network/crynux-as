@@ -135,6 +135,7 @@ func CreateResponse(c *gin.Context) {
 	}
 	taskFee, err := service.EstimateLLMTaskFeeWithQuery(
 		c.Request.Context(),
+		project,
 		query,
 		effectiveVram,
 		priorityGwei,
@@ -142,11 +143,16 @@ func CreateResponse(c *gin.Context) {
 		maxCompletion,
 	)
 	if err != nil {
-		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, req.Model, err)
 		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		log.Errorf("Task fee estimation failed for project %d model %s: %v", project.ID, req.Model, err)
 		writeServerError(c)
 		return
 	}
+	priorityGwei = taskFee.PriorityGwei
 
 	if err := service.ValidateOptionalQueueTimeout(req.QueueTimeout); err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)

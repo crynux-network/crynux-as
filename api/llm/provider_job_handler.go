@@ -8,6 +8,7 @@ import (
 	"crynux_as/utils"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"net/http"
 	"time"
 
@@ -43,9 +44,20 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 	}
 	inputBytes := service.EstimateProviderInputBytes(body)
 	maxCompletion := service.ResolveMaxCompletionTokens(parsed.maxTokens, parsed.maxCompletionTokens, appCfg.LLM.DefaultMaxTokens)
-	snapshot, credits, err := service.BuildProviderBillingData(route, priorityGwei, inputBytes, maxCompletion, nil)
+	snapshot, credits, err := service.BuildProviderBillingData(project, route, priorityGwei, inputBytes, maxCompletion, nil)
 	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), priorityGwei, nil)
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
 		log.Errorf("provider billing estimate failed: %v", err)
+		writeServerError(c)
+		return
+	}
+	adjustedPriority, ok := new(big.Int).SetString(snapshot.EffectivePriorityGwei, 10)
+	if !ok || adjustedPriority.Sign() <= 0 {
+		log.Errorf("provider billing snapshot has invalid effective priority for project %d", project.ID)
 		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), priorityGwei, nil)
 		writeServerError(c)
 		return
@@ -68,7 +80,7 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 		Background:      parsed.background,
 		Stream:          parsed.stream,
 		RequestBody:     body,
-		PriorityGwei:    priorityGwei,
+		PriorityGwei:    adjustedPriority,
 		CreditsToLock:   credits,
 		QueueTimeout:    queueTimeout,
 		BillingSnapshot: snapshot,

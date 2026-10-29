@@ -312,6 +312,7 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 	cfg.LLM.MaxPriorityGwei = "1000"
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 

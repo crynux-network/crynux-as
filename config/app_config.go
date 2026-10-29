@@ -95,6 +95,7 @@ type AppConfig struct {
 		MaxPriorityGwei               string `mapstructure:"max_priority_gwei"`
 		CreditsPerGwei                string `mapstructure:"credits_per_gwei"`
 		MaxTaskPriceCNX               map[string]string `mapstructure:"max_task_price_cnx"`
+		MinTaskPriceCNX               map[string]string `mapstructure:"min_task_price_cnx"`
 		JobSubmitTimeout              uint64 `mapstructure:"job_submit_timeout"`
 		JobRetentionDays              uint64 `mapstructure:"job_retention_days"`
 		TaskResultDir                 string `mapstructure:"task_result_dir"`

@@ -15,6 +15,7 @@ func TestReserveCreditsRejectsWhenAvailableInsufficient(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -84,6 +85,7 @@ func TestReserveCreditsSecondRequestSeesHeldLock(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -128,6 +130,7 @@ func TestFailReleasesHoldWithoutCharging(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -204,6 +207,7 @@ func TestSettleChargesActualAndClearsLock(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -275,6 +279,7 @@ func TestSettleChargesMinOfActualAndBalance(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
@@ -393,6 +398,7 @@ func TestReserveTransactionFailureLeavesLockedUnchanged(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 

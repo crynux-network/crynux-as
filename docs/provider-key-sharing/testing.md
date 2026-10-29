@@ -93,6 +93,9 @@ Tests MUST cover:
 * final usage equal to estimate;
 * final usage greater than estimate and uncollected balance shortfall;
 * global task price cap;
+* global task price minimum: static mode rejects when the final estimated fee is below a non-zero `min_task_price_cnx`;
+* global task price minimum: auto mode raises priority up to `auto_max_priority_gwei` when that maximum can meet the floor, otherwise rejects;
+* `min_task_price_cnx` of `0` disables the admission floor;
 * one-Credit minimum;
 * no floating-point ledger arithmetic.
 
