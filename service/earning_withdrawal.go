@@ -26,36 +26,16 @@ var (
 	ErrWithdrawalAuthFreshness = errors.New("withdrawal authorization timestamp is outside the allowed window")
 	ErrWithdrawalAuthReplay    = errors.New("withdrawal authorization fingerprint already used")
 	ErrWithdrawalBenefitMismatch = errors.New("benefit address mismatch")
+	ErrWithdrawalBelowMinimum    = errors.New("withdrawal amount is below the network minimum")
 )
 
-func CalculateWithdrawalFee(network string, amount *big.Int) (*big.Int, error) {
+func CalculateWithdrawalFee(network string, _ *big.Int) (*big.Int, error) {
 	cfg := config.GetConfig()
 	networkCfg, ok := cfg.Provider.Wallet.Networks[network]
 	if !ok {
 		return nil, ErrWithdrawalNetwork
 	}
-	fixedFee, err := blockchain.ParseCNXToWei(networkCfg.FixedWithdrawalFeeCNX)
-	if err != nil {
-		return nil, err
-	}
-	selectedRatio := big.NewRat(0, 1)
-	for _, tier := range networkCfg.WithdrawalFeeTiers {
-		minAmount, err := blockchain.ParseCNXToWei(tier.MinAmountCNX)
-		if err != nil {
-			return nil, err
-		}
-		if amount.Cmp(minAmount) < 0 {
-			break
-		}
-		ratio, ok := new(big.Rat).SetString(strings.TrimSpace(tier.FeeRatio))
-		if !ok || ratio.Sign() < 0 {
-			return nil, fmt.Errorf("invalid fee ratio")
-		}
-		selectedRatio = ratio
-	}
-	proportional := new(big.Rat).Mul(new(big.Rat).SetInt(amount), selectedRatio)
-	proportionalWei := new(big.Int).Quo(proportional.Num(), proportional.Denom())
-	return new(big.Int).Add(fixedFee, proportionalWei), nil
+	return blockchain.ParseCNXToWei(networkCfg.FixedWithdrawalFeeCNX)
 }
 
 func BuildCanonicalWithdrawalMessage(amount *big.Int, address, benefitAddress, network string, timestamp int64) string {
@@ -101,6 +81,13 @@ func PrepareWithdrawal(ctx context.Context, db *gorm.DB, user *models.User, amou
 	if amount == nil || amount.Sign() <= 0 {
 		return nil, errors.New("amount must be positive")
 	}
+	minAmount, err := blockchain.ParseCNXToWei(networkCfg.WithdrawalMinCNX)
+	if err != nil {
+		return nil, err
+	}
+	if amount.Cmp(minAmount) < 0 {
+		return nil, ErrWithdrawalBelowMinimum
+	}
 	fee, err := CalculateWithdrawalFee(network, amount)
 	if err != nil {
 		return nil, err
@@ -113,7 +100,6 @@ func PrepareWithdrawal(ctx context.Context, db *gorm.DB, user *models.User, amou
 	message := BuildCanonicalWithdrawalMessage(amount, user.Address, benefit.Hex(), network, now)
 	total := new(big.Int).Add(amount, fee)
 	_ = db
-	_ = networkCfg
 	return &PrepareWithdrawalResult{
 		Amount:         amount.String(),
 		WithdrawalFee:  fee.String(),
@@ -148,6 +134,13 @@ func CreateWithdrawal(ctx context.Context, db *gorm.DB, in CreateWithdrawalInput
 	networkCfg, ok := cfg.Provider.Wallet.Networks[in.Network]
 	if !ok {
 		return nil, ErrWithdrawalNetwork
+	}
+	minAmount, err := blockchain.ParseCNXToWei(networkCfg.WithdrawalMinCNX)
+	if err != nil {
+		return nil, err
+	}
+	if in.Amount.Cmp(minAmount) < 0 {
+		return nil, ErrWithdrawalBelowMinimum
 	}
 	now := time.Now().Unix()
 	if in.Timestamp < now-120 || in.Timestamp > now+60 {

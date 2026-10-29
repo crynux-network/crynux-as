@@ -73,13 +73,11 @@ provider:
         display_name: "Base"
         benefit_address_contract: "0x0000000000000000000000000000000000000002"
         fixed_withdrawal_fee_cnx: "1"
+        withdrawal_min_cnx: "10000"
         max_withdrawals_per_day: 3
         fee_receiver_address: "0x0000000000000000000000000000000000000003"
         minimum_hot_wallet_cnx: "1000"
         minimum_hot_wallet_native_gas: "0.1"
-        withdrawal_fee_tiers:
-          - min_amount_cnx: "100"
-            fee_ratio: "0.001"
 ```
 
 Service Provider base URLs are operator-controlled trusted configuration. User input MUST never alter them.
@@ -100,9 +98,7 @@ Startup MUST validate:
 * Wallet signer and contract addresses are valid;
 * every Wallet network display name is non-empty;
 * hot-wallet CNX and native-gas thresholds are non-negative decimal strings;
-* withdrawal fee tiers are strictly increasing by minimum amount;
-* fixed fees and tier minimums are non-negative decimal CNX strings with at most 18 fractional digits;
-* fee ratios are non-negative rational strings;
+* fixed withdrawal fees and withdrawal minimums are non-negative decimal CNX strings with at most 18 fractional digits;
 * Wallet network exists in `blockchains`.
 
 When a later Relay loaded-model refresh introduces a name reserved by Provider configuration, AS MUST reject that conflicting Crynux catalog row and retain Provider routing.

@@ -22,7 +22,6 @@ Tests MUST cover:
 * missing encryption-key path;
 * wrong secret-file encoding or length;
 * invalid Wallet addresses;
-* unordered withdrawal fee tiers;
 * unknown Wallet network;
 * no implicit Go defaults.
 
@@ -239,7 +238,7 @@ Wallet HTTP contracts are specified in [Wallet API](wallet-api.md). AS tests MUS
 * authorization fingerprint replay;
 * Beneficial Address zero-address fallback;
 * Beneficial Address mismatch;
-* withdrawal fee tiers;
+* fixed withdrawal fee;
 * daily requester and destination limits;
 * idempotent fulfill;
 * idempotent reject;

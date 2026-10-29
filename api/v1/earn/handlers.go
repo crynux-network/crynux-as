@@ -200,11 +200,13 @@ func ListWithdrawalNetworks(c *gin.Context) (*successResponse, error) {
 			chainID = bc.ChainID
 		}
 		items = append(items, gin.H{
-			"id":           id,
-			"display_name": network.DisplayName,
-			"chain_id":     chainID,
-			"asset":        "CNX",
-			"decimals":     18,
+			"id":                       id,
+			"display_name":             network.DisplayName,
+			"chain_id":                 chainID,
+			"asset":                    "CNX",
+			"decimals":                 18,
+			"fixed_withdrawal_fee_cnx": network.FixedWithdrawalFeeCNX,
+			"withdrawal_min_cnx":       network.WithdrawalMinCNX,
 		})
 	}
 	return &successResponse{Data: items}, nil
@@ -230,7 +232,13 @@ func PrepareWithdrawal(c *gin.Context) (*successResponse, error) {
 	}
 	result, err := service.PrepareWithdrawal(c.Request.Context(), config.GetDB(), user, amount, body.Network)
 	if err != nil {
-		return nil, response.NewValidationErrorResponse("network", err.Error())
+		if errors.Is(err, service.ErrWithdrawalBelowMinimum) {
+			return nil, response.NewValidationErrorResponse("amount", err.Error())
+		}
+		if errors.Is(err, service.ErrWithdrawalNetwork) {
+			return nil, response.NewValidationErrorResponse("network", err.Error())
+		}
+		return nil, response.NewValidationErrorResponse("amount", err.Error())
 	}
 	return &successResponse{Data: result}, nil
 }
@@ -268,6 +276,8 @@ func CreateWithdrawal(c *gin.Context) (*successResponse, error) {
 		switch {
 		case errors.Is(err, service.ErrInsufficientEarnings):
 			return nil, &paymentRequiredError{message: err.Error()}
+		case errors.Is(err, service.ErrWithdrawalBelowMinimum):
+			return nil, response.NewValidationErrorResponse("amount", err.Error())
 		case errors.Is(err, service.ErrWithdrawalDailyLimit):
 			return nil, &rateLimitError{message: err.Error()}
 		case errors.Is(err, service.ErrWithdrawalAuthReplay):

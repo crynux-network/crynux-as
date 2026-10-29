@@ -452,6 +452,9 @@ func checkProviderConfig(v *viper.Viper) error {
 		if _, err := parseNonNegativeCNXDecimal(network.FixedWithdrawalFeeCNX); err != nil {
 			return fmt.Errorf("provider.wallet.networks.%s.fixed_withdrawal_fee_cnx is invalid: %w", networkID, err)
 		}
+		if _, err := parseNonNegativeCNXDecimal(network.WithdrawalMinCNX); err != nil {
+			return fmt.Errorf("provider.wallet.networks.%s.withdrawal_min_cnx is invalid: %w", networkID, err)
+		}
 		if _, err := parseNonNegativeCNXDecimal(network.MinimumHotWalletCNX); err != nil {
 			return fmt.Errorf("provider.wallet.networks.%s.minimum_hot_wallet_cnx is invalid: %w", networkID, err)
 		}
@@ -460,20 +463,6 @@ func checkProviderConfig(v *viper.Viper) error {
 		}
 		if _, ok := appConfig.Blockchains[networkID]; !ok {
 			return fmt.Errorf("provider.wallet.networks.%s must exist in blockchains", networkID)
-		}
-		var prevMin *big.Int
-		for i, tier := range network.WithdrawalFeeTiers {
-			minAmount, err := parseNonNegativeCNXDecimal(tier.MinAmountCNX)
-			if err != nil {
-				return fmt.Errorf("provider.wallet.networks.%s.withdrawal_fee_tiers[%d].min_amount_cnx is invalid: %w", networkID, i, err)
-			}
-			if prevMin != nil && minAmount.Cmp(prevMin) <= 0 {
-				return fmt.Errorf("provider.wallet.networks.%s.withdrawal_fee_tiers must be strictly increasing by min_amount_cnx", networkID)
-			}
-			prevMin = minAmount
-			if _, err := parseNonNegativeRatio(tier.FeeRatio); err != nil {
-				return fmt.Errorf("provider.wallet.networks.%s.withdrawal_fee_tiers[%d].fee_ratio is invalid: %w", networkID, i, err)
-			}
 		}
 	}
 	return nil

@@ -114,21 +114,16 @@ Wallet independently repeats the same chain lookup and rejects a mismatch.
 
 Each withdrawal network MUST configure:
 
-* fixed CNX fee as a decimal string;
-* ordered proportional fee tiers;
+* fixed CNX withdrawal fee as a decimal string;
+* minimum withdrawable CNX amount as a decimal string;
 * maximum withdrawals per day;
 * fee-receiver address.
 
-Fee calculation MUST match Relay:
+`withdrawal_min_cnx` is the smallest withdrawal amount AS accepts for that network. Prepare and create MUST reject an amount below this minimum. The Earn WebUI MUST load the same value from `GET /v1/earn/withdrawal_networks` and enforce it client-side before prepare.
 
-```text
-fee = fixed_fee_wei
-    + floor(amount * selected_tier_ratio)
-```
+The withdrawal fee for a network is exactly that network's `fixed_withdrawal_fee_cnx`. AS MUST NOT apply proportional fee tiers.
 
-`fixed_withdrawal_fee_cnx` and each `min_amount_cnx` MUST be non-negative decimal strings with at most 18 fractional digits. Configuration loading MUST convert each value exactly to CNX wei by multiplying by `10^18` and MUST fail on excess precision, invalid syntax, or integer overflow. Floating-point conversion MUST NOT be used.
-
-The selected tier is the highest tier whose converted minimum amount is not greater than the withdrawal amount. The ratio applies to the complete amount. When the amount is below the first tier minimum or the tier list is empty, the proportional ratio MUST be zero.
+`fixed_withdrawal_fee_cnx` and `withdrawal_min_cnx` MUST be non-negative decimal strings with at most 18 fractional digits. Configuration loading MUST convert each value exactly to CNX wei by multiplying by `10^18` and MUST fail on excess precision, invalid syntax, or integer overflow. Floating-point conversion MUST NOT be used.
 
 The fee MUST be fixed at withdrawal creation and returned to Wallet. Wallet MUST NOT recalculate it.
 

@@ -85,15 +85,16 @@ Confirmed usage is settled only as a completed job with a success call record. A
 ## Withdrawals
 
 1. Key Owners MUST be able to withdraw available CNX through the Earn management API.
-2. Withdrawal-locked earnings MUST NOT be withdrawable again.
-3. Withdrawal authorization MUST use the exact canonical message expected by Relay Wallet.
-4. The destination MUST be the Beneficial Address resolved from the configured on-chain contract for the Key Owner's login wallet.
-5. AS and Wallet MUST independently verify the Beneficial Address.
-6. Withdrawal creation MUST atomically reserve `amount + withdrawal_fee`, create the withdrawal record, and create its anchor event.
-7. A fulfilled withdrawal MUST be idempotent and MUST preserve the first recorded transaction hash.
-8. A rejected withdrawal MUST atomically restore `amount + withdrawal_fee` exactly once.
-9. AS MUST NOT automatically reject or refund a withdrawal merely because a callback is delayed.
-10. One active AS Wallet deployment MUST process all AS withdrawals.
+2. Each withdrawal network MUST configure a minimum withdrawal amount. Withdrawals below that minimum MUST be rejected.
+3. Withdrawal-locked earnings MUST NOT be withdrawable again.
+4. Withdrawal authorization MUST use the exact canonical message expected by Relay Wallet.
+5. The destination MUST be the Beneficial Address resolved from the configured on-chain contract for the Key Owner's login wallet.
+6. AS and Wallet MUST independently verify the Beneficial Address.
+7. Withdrawal creation MUST atomically reserve `amount + withdrawal_fee`, create the withdrawal record, and create its anchor event.
+8. A fulfilled withdrawal MUST be idempotent and MUST preserve the first recorded transaction hash.
+9. A rejected withdrawal MUST atomically restore `amount + withdrawal_fee` exactly once.
+10. AS MUST NOT automatically reject or refund a withdrawal merely because a callback is delayed.
+11. One active AS Wallet deployment MUST process all AS withdrawals.
 
 ## Security and Privacy
 

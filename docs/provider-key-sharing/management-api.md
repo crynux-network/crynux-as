@@ -223,10 +223,14 @@ Response data is the configured withdrawal networks:
     "display_name": "Base",
     "chain_id": 8453,
     "asset": "CNX",
-    "decimals": 18
+    "decimals": 18,
+    "fixed_withdrawal_fee_cnx": "1",
+    "withdrawal_min_cnx": "10000"
   }
 ]
 ```
+
+`fixed_withdrawal_fee_cnx` and `withdrawal_min_cnx` are CNX decimal strings matching Wallet network configuration. The fee for a network is that fixed value only. The WebUI MUST use these fields to preview the fee, enforce the minimum, and compute the maximum withdrawable amount.
 
 The endpoint MUST not expose contract addresses, fee-receiver addresses, risk limits, RPC URLs, or hot-wallet thresholds.
 
