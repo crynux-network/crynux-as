@@ -197,8 +197,13 @@ type openAIStreamAccumulator struct {
 	created int64
 	msg     AssembledMessage
 	usage   *NormalizedUsage
-	// toolCallsByIndex accumulates parallel tool calls.
+	// toolCallsByIndex accumulates parallel tool calls by dense tool index.
 	toolCallsByIndex map[int]*AssembledToolCall
+	// toolStartEmitted tracks whether ToolCallStart was already emitted per dense index.
+	toolStartEmitted map[int]bool
+	// responsesOutputToTool maps upstream Responses output_index to dense tool index.
+	responsesOutputToTool map[int]int
+	nextToolIndex         int
 }
 
 func (a *openAIStreamAccumulator) ensureTool(index int) *AssembledToolCall {
@@ -297,16 +302,17 @@ func (a *OpenAIAdapter) readChatStream(body io.Reader, model, upstreamID string,
 			}
 			for _, tc := range choice.Delta.ToolCalls {
 				slot := acc.ensureTool(tc.Index)
-				started := false
 				if tc.ID != "" {
 					slot.ID = tc.ID
-					started = true
 				}
 				if tc.Function.Name != "" {
 					slot.Name = tc.Function.Name
-					started = true
 				}
-				if started {
+				if (tc.ID != "" || tc.Function.Name != "") && !acc.toolStartEmitted[tc.Index] {
+					if acc.toolStartEmitted == nil {
+						acc.toolStartEmitted = map[int]bool{}
+					}
+					acc.toolStartEmitted[tc.Index] = true
 					EmitToolCallStart(sink, tc.Index, slot.ID, slot.Name)
 					publicBegan = true
 				}
@@ -439,40 +445,46 @@ func (a *OpenAIAdapter) readResponsesStream(body io.Reader, model, upstreamID st
 				_ = json.Unmarshal(raw, &item)
 			}
 			if item.Type == "function_call" {
-				idx := len(acc.toolCallsByIndex)
-				if raw, ok := payload["output_index"]; ok {
-					_ = json.Unmarshal(raw, &idx)
-				}
-				slot := acc.ensureTool(idx)
+				toolIdx := acc.mapResponsesOutputIndex(payload)
+				slot := acc.ensureTool(toolIdx)
 				slot.ID = firstNonEmpty(item.CallID, item.ID)
 				slot.Name = item.Name
 				slot.Arguments = item.Arguments
-				EmitToolCallStart(sink, idx, slot.ID, slot.Name)
-				publicBegan = true
+				if !acc.toolStartEmitted[toolIdx] {
+					if acc.toolStartEmitted == nil {
+						acc.toolStartEmitted = map[int]bool{}
+					}
+					acc.toolStartEmitted[toolIdx] = true
+					EmitToolCallStart(sink, toolIdx, slot.ID, slot.Name)
+					publicBegan = true
+				}
 			}
 		case "response.function_call_arguments.delta":
 			var delta string
 			_ = json.Unmarshal(payload["delta"], &delta)
-			idx := 0
-			if raw, ok := payload["output_index"]; ok {
-				_ = json.Unmarshal(raw, &idx)
-			}
+			idx := acc.mapResponsesOutputIndex(payload)
 			slot := acc.ensureTool(idx)
 			slot.Arguments += delta
 			EmitToolCallArgsDelta(sink, idx, delta)
 			publicBegan = true
 		case "response.function_call_arguments.done":
-			idx := 0
-			if raw, ok := payload["output_index"]; ok {
-				_ = json.Unmarshal(raw, &idx)
-			}
+			idx := acc.mapResponsesOutputIndex(payload)
 			EmitToolCallCompleted(sink, idx)
-		case "response.completed":
+		case "response.completed", "response.incomplete":
+			status := "completed"
+			if typ == "response.incomplete" {
+				status = "incomplete"
+			}
+			incompleteReason := ""
 			if raw, ok := payload["response"]; ok {
 				var resp struct {
-					ID    string          `json:"id"`
-					Model string          `json:"model"`
-					Usage json.RawMessage `json:"usage"`
+					ID     string          `json:"id"`
+					Model  string          `json:"model"`
+					Status string          `json:"status"`
+					Usage  json.RawMessage `json:"usage"`
+					IncompleteDetails *struct {
+						Reason string `json:"reason"`
+					} `json:"incomplete_details"`
 					Output []struct {
 						Type      string `json:"type"`
 						ID        string `json:"id"`
@@ -491,6 +503,12 @@ func (a *OpenAIAdapter) readResponsesStream(body io.Reader, model, upstreamID st
 					}
 					if resp.Model != "" {
 						acc.model = resp.Model
+					}
+					if resp.Status != "" {
+						status = resp.Status
+					}
+					if resp.IncompleteDetails != nil {
+						incompleteReason = resp.IncompleteDetails.Reason
 					}
 					if len(resp.Usage) > 0 {
 						encoded, _ := json.Marshal(map[string]any{"usage": json.RawMessage(resp.Usage)})
@@ -511,21 +529,20 @@ func (a *OpenAIAdapter) readResponsesStream(body io.Reader, model, upstreamID st
 						}
 					}
 					if len(acc.toolCallsByIndex) == 0 {
-						for i, item := range resp.Output {
+						toolIdx := 0
+						for _, item := range resp.Output {
 							if item.Type == "function_call" {
-								slot := acc.ensureTool(i)
+								slot := acc.ensureTool(toolIdx)
 								slot.ID = firstNonEmpty(item.CallID, item.ID)
 								slot.Name = item.Name
 								slot.Arguments = item.Arguments
+								toolIdx++
 							}
 						}
 					}
 				}
 			}
-			acc.msg.FinishReason = "stop"
-			if len(acc.toolCallsByIndex) > 0 {
-				acc.msg.FinishReason = "tool_calls"
-			}
+			acc.msg.FinishReason = mapOpenAIResponsesFinishReason(status, incompleteReason, len(acc.toolCallsByIndex) > 0)
 			EmitFinish(sink, acc.msg.FinishReason)
 			publicBegan = true
 		case "error":
@@ -584,6 +601,33 @@ func (a *OpenAIAdapter) readResponsesStream(body io.Reader, model, upstreamID st
 		FinalResultJSON:   resultJSON,
 		FinalUsage:        acc.usage,
 	}, nil
+}
+
+func (a *openAIStreamAccumulator) mapResponsesOutputIndex(payload map[string]json.RawMessage) int {
+	upstream := a.nextToolIndex
+	if raw, ok := payload["output_index"]; ok {
+		_ = json.Unmarshal(raw, &upstream)
+	}
+	if a.responsesOutputToTool == nil {
+		a.responsesOutputToTool = map[int]int{}
+	}
+	if toolIdx, ok := a.responsesOutputToTool[upstream]; ok {
+		return toolIdx
+	}
+	toolIdx := a.nextToolIndex
+	a.nextToolIndex++
+	a.responsesOutputToTool[upstream] = toolIdx
+	return toolIdx
+}
+
+func mapOpenAIResponsesFinishReason(status, incompleteReason string, hasTools bool) string {
+	if hasTools {
+		return "tool_calls"
+	}
+	if status == "incomplete" || incompleteReason == "max_output_tokens" || incompleteReason == "max_tokens" {
+		return "length"
+	}
+	return "stop"
 }
 
 func parseOpenAIUsage(raw []byte, apiType models.TaskAPIType) (*NormalizedUsage, error) {

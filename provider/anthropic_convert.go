@@ -89,18 +89,7 @@ func convertCanonicalToAnthropic(req CanonicalRequest) ([]byte, error) {
 	}
 	out["messages"] = messages
 
-	omitTools := false
-	if req.ToolChoice != nil {
-		choice, omit, err := mapAnthropicToolChoice(req.ToolChoice)
-		if err != nil {
-			return nil, err
-		}
-		omitTools = omit
-		if choice != nil {
-			out["tool_choice"] = choice
-		}
-	}
-	if !omitTools && len(req.Tools) > 0 {
+	if len(req.Tools) > 0 {
 		tools := make([]map[string]any, 0, len(req.Tools))
 		for _, t := range req.Tools {
 			tools = append(tools, map[string]any{
@@ -111,7 +100,20 @@ func convertCanonicalToAnthropic(req CanonicalRequest) ([]byte, error) {
 		}
 		out["tools"] = tools
 	}
-	if format := mapAnthropicOutputConfig(req.ResponseFormat); format != nil {
+
+	choice, err := mapAnthropicToolChoice(req.ToolChoice, req.ParallelToolCalls)
+	if err != nil {
+		return nil, err
+	}
+	if choice != nil {
+		out["tool_choice"] = choice
+	}
+
+	format, err := mapAnthropicOutputConfig(req.ResponseFormat)
+	if err != nil {
+		return nil, err
+	}
+	if format != nil {
 		out["output_config"] = map[string]any{"format": format}
 	}
 	return json.Marshal(out)
@@ -150,70 +152,100 @@ func normalizeStopSequences(stop any) []string {
 	}
 }
 
-func mapAnthropicToolChoice(choice any) (any, bool, error) {
+func mapAnthropicToolChoice(choice any, parallelToolCalls *bool) (any, error) {
+	disableParallel := parallelToolCalls != nil && !*parallelToolCalls
+
+	applyParallel := func(m map[string]any) map[string]any {
+		if disableParallel {
+			m["disable_parallel_tool_use"] = true
+		}
+		return m
+	}
+
+	if choice == nil {
+		if disableParallel {
+			return applyParallel(map[string]any{"type": "auto"}), nil
+		}
+		return nil, nil
+	}
+
 	switch v := choice.(type) {
 	case string:
 		switch v {
 		case "none":
-			return nil, true, nil
+			return map[string]any{"type": "none"}, nil
 		case "auto":
-			return map[string]any{"type": "auto"}, false, nil
+			return applyParallel(map[string]any{"type": "auto"}), nil
 		case "required":
-			return map[string]any{"type": "any"}, false, nil
+			return applyParallel(map[string]any{"type": "any"}), nil
 		default:
-			return nil, false, fmt.Errorf("unsupported tool_choice %q", v)
+			return nil, fmt.Errorf("unsupported tool_choice %q", v)
 		}
 	case map[string]any:
 		typ, _ := v["type"].(string)
 		if typ == "function" {
-			fn, _ := v["function"].(map[string]any)
-			name, _ := fn["name"].(string)
-			return map[string]any{"type": "tool", "name": name}, false, nil
+			name, err := namedFunctionToolChoiceName(v)
+			if err != nil {
+				return nil, err
+			}
+			return applyParallel(map[string]any{"type": "tool", "name": name}), nil
 		}
-		return v, false, nil
+		if typ == "none" || typ == "auto" || typ == "any" || typ == "tool" {
+			out := map[string]any{}
+			for k, val := range v {
+				out[k] = val
+			}
+			if typ != "none" {
+				applyParallel(out)
+			}
+			return out, nil
+		}
+		return nil, fmt.Errorf("unsupported tool_choice type %q", typ)
 	default:
 		raw, err := json.Marshal(choice)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		var asMap map[string]any
 		if err := json.Unmarshal(raw, &asMap); err == nil {
-			return mapAnthropicToolChoice(asMap)
+			return mapAnthropicToolChoice(asMap, parallelToolCalls)
 		}
 		var asString string
 		if err := json.Unmarshal(raw, &asString); err == nil {
-			return mapAnthropicToolChoice(asString)
+			return mapAnthropicToolChoice(asString, parallelToolCalls)
 		}
-		return nil, false, fmt.Errorf("unsupported tool_choice")
+		return nil, fmt.Errorf("unsupported tool_choice")
 	}
 }
 
-func mapAnthropicOutputConfig(responseFormat map[string]any) map[string]any {
+func mapAnthropicOutputConfig(responseFormat map[string]any) (map[string]any, error) {
 	if responseFormat == nil {
-		return nil
+		return nil, nil
 	}
 	typ, _ := responseFormat["type"].(string)
 	switch typ {
 	case "json_object":
-		return map[string]any{"type": "json_object"}
+		return map[string]any{
+			"type":   "json_schema",
+			"schema": map[string]any{"type": "object"},
+		}, nil
 	case "json_schema":
 		js, _ := responseFormat["json_schema"].(map[string]any)
 		if js == nil {
-			return nil
+			return nil, fmt.Errorf("response_format.json_schema is required")
 		}
-		format := map[string]any{"type": "json_schema"}
-		if name, ok := js["name"]; ok {
-			format["name"] = name
+		schema, ok := js["schema"]
+		if !ok || schema == nil {
+			return nil, fmt.Errorf("response_format.json_schema.schema is required")
 		}
-		if schema, ok := js["schema"]; ok {
-			format["schema"] = schema
-		}
-		if strict, ok := js["strict"]; ok {
-			format["strict"] = strict
-		}
-		return format
+		return map[string]any{
+			"type":   "json_schema",
+			"schema": schema,
+		}, nil
+	case "text", "":
+		return nil, nil
 	default:
-		return nil
+		return nil, fmt.Errorf("unsupported response_format type %q", typ)
 	}
 }
 

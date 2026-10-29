@@ -95,7 +95,7 @@ func BuildResponsesResult(id, model string, msg AssembledMessage, usage *Normali
 			"name":      tc.Name,
 			"arguments": tc.Arguments,
 			"status":    "completed",
-			"index":     i,
+			"index":     responsesToolOutputIndex(i),
 		})
 	}
 	status := "completed"
@@ -149,6 +149,12 @@ func responsesUsageMap(u *NormalizedUsage) map[string]any {
 		m["output_tokens_details"] = map[string]any{"reasoning_tokens": u.ReasoningTokens}
 	}
 	return m
+}
+
+// responsesToolOutputIndex maps dense tool indexes onto public Responses
+// output_index values. Text content always occupies output_index 0.
+func responsesToolOutputIndex(toolIndex int) int {
+	return 1 + toolIndex
 }
 
 func MapAnthropicStopReason(reason string) string {

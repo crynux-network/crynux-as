@@ -222,9 +222,10 @@ func (e *PublicStreamEncoder) encodeResponses(event StreamEvent) ([][]byte, bool
 			return nil, false, err
 		}
 		e.functionCallSeq++
+		outIdx := responsesToolOutputIndex(p.Index)
 		payload := map[string]any{
 			"type":         "response.output_item.added",
-			"output_index": p.Index,
+			"output_index": outIdx,
 			"item": map[string]any{
 				"type":      "function_call",
 				"id":        p.ID,
@@ -232,6 +233,7 @@ func (e *PublicStreamEncoder) encodeResponses(event StreamEvent) ([][]byte, bool
 				"name":      p.Name,
 				"arguments": "",
 				"status":    "in_progress",
+				"index":     outIdx,
 			},
 		}
 		return [][]byte{mustResponsesEvent("response.output_item.added", payload)}, false, nil
@@ -242,7 +244,7 @@ func (e *PublicStreamEncoder) encodeResponses(event StreamEvent) ([][]byte, bool
 		}
 		payload := map[string]any{
 			"type":         "response.function_call_arguments.delta",
-			"output_index": p.Index,
+			"output_index": responsesToolOutputIndex(p.Index),
 			"delta":        p.Arguments,
 		}
 		return [][]byte{mustResponsesEvent("response.function_call_arguments.delta", payload)}, false, nil
@@ -253,7 +255,7 @@ func (e *PublicStreamEncoder) encodeResponses(event StreamEvent) ([][]byte, bool
 		}
 		payload := map[string]any{
 			"type":         "response.function_call_arguments.done",
-			"output_index": p.Index,
+			"output_index": responsesToolOutputIndex(p.Index),
 		}
 		return [][]byte{mustResponsesEvent("response.function_call_arguments.done", payload)}, false, nil
 	case StreamEventFinish:

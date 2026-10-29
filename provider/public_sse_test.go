@@ -75,6 +75,47 @@ func TestRequestIncludeUsage(t *testing.T) {
 	}
 }
 
+func TestPublicStreamEncoderResponsesToolOutputIndex(t *testing.T) {
+	enc := NewPublicStreamEncoder(models.TaskAPITypeResponses, "resp_1", "m", 1, false)
+	frames, _, err := enc.Encode(StreamEvent{
+		Kind:    StreamEventToolCallStart,
+		Payload: mustJSON(ToolCallStartPayload{Index: 0, ID: "call_1", Name: "weather"}),
+	})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	joined := string(frames[0])
+	if !strings.Contains(joined, `"output_index":1`) {
+		t.Fatalf("expected tool output_index 1, got %s", joined)
+	}
+	result, err := BuildResponsesResult("resp_1", "m", AssembledMessage{
+		Content:   "hi",
+		ToolCalls: []AssembledToolCall{{ID: "call_1", Name: "weather", Arguments: "{}"}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(result, &out)
+	items := out["output"].([]any)
+	toolItem := items[1].(map[string]any)
+	if int(toolItem["index"].(float64)) != 1 {
+		t.Fatalf("final index=%v items=%v", toolItem["index"], items)
+	}
+}
+
+func TestMapOpenAIResponsesFinishReason(t *testing.T) {
+	if got := mapOpenAIResponsesFinishReason("completed", "", true); got != "tool_calls" {
+		t.Fatalf("got %q", got)
+	}
+	if got := mapOpenAIResponsesFinishReason("incomplete", "max_output_tokens", false); got != "length" {
+		t.Fatalf("got %q", got)
+	}
+	if got := mapOpenAIResponsesFinishReason("completed", "", false); got != "stop" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func mustJSON(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {

@@ -383,3 +383,21 @@ func flattenAnyContent(v any) (string, error) {
 		return flattenContent(raw)
 	}
 }
+
+// namedFunctionToolChoiceName extracts the function name from Chat Completions
+// {"type":"function","function":{"name":N}} or Responses {"type":"function","name":N}.
+func namedFunctionToolChoiceName(choice map[string]any) (string, error) {
+	typ, _ := choice["type"].(string)
+	if typ != "function" {
+		return "", fmt.Errorf("unsupported tool_choice type %q", typ)
+	}
+	if fn, ok := choice["function"].(map[string]any); ok {
+		if name, _ := fn["name"].(string); name != "" {
+			return name, nil
+		}
+	}
+	if name, _ := choice["name"].(string); name != "" {
+		return name, nil
+	}
+	return "", fmt.Errorf("tool_choice function name is required")
+}

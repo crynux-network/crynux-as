@@ -29,12 +29,14 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 				if tc.Arguments != "" {
 					_ = json.Unmarshal([]byte(tc.Arguments), &args)
 				}
-				parts = append(parts, map[string]any{
-					"functionCall": map[string]any{
-						"name": tc.Name,
-						"args": args,
-					},
-				})
+				fc := map[string]any{
+					"name": tc.Name,
+					"args": args,
+				}
+				if tc.ID != "" {
+					fc["id"] = tc.ID
+				}
+				parts = append(parts, map[string]any{"functionCall": fc})
 			}
 			if len(parts) == 0 {
 				parts = append(parts, map[string]any{"text": ""})
@@ -45,14 +47,16 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 			if name == "" {
 				name = lookupToolName(req.Messages, msg.ToolCallID)
 			}
-			parts := []map[string]any{{
-				"functionResponse": map[string]any{
-					"name": name,
-					"response": map[string]any{
-						"result": msg.Content,
-					},
+			fr := map[string]any{
+				"name": name,
+				"response": map[string]any{
+					"result": msg.Content,
 				},
-			}}
+			}
+			if msg.ToolCallID != "" {
+				fr["id"] = msg.ToolCallID
+			}
+			parts := []map[string]any{{"functionResponse": fr}}
 			contents = append(contents, map[string]any{"role": "user", "parts": parts})
 		default:
 			contents = append(contents, map[string]any{
@@ -79,11 +83,12 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 		}
 		out["tools"] = []map[string]any{{"functionDeclarations": decls}}
 	}
-	if cfg, omit := mapGoogleToolConfig(req.ToolChoice); cfg != nil {
+	cfg, err := mapGoogleToolConfig(req.ToolChoice)
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil {
 		out["toolConfig"] = cfg
-		if omit {
-			delete(out, "tools")
-		}
 	}
 
 	gen := map[string]any{}
@@ -96,7 +101,14 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 	if req.TopP != nil {
 		gen["topP"] = *req.TopP
 	}
-	if mime, schema := mapGoogleResponseFormat(req.ResponseFormat); mime != "" {
+	if seqs := normalizeStopSequences(req.Stop); len(seqs) > 0 {
+		gen["stopSequences"] = seqs
+	}
+	mime, schema, err := mapGoogleResponseFormat(req.ResponseFormat)
+	if err != nil {
+		return nil, err
+	}
+	if mime != "" {
 		gen["responseMimeType"] = mime
 		if schema != nil {
 			gen["responseSchema"] = schema
@@ -104,6 +116,11 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 	}
 	if len(gen) > 0 {
 		out["generationConfig"] = gen
+	}
+
+	_, hasTools := out["tools"]
+	if hasTools && mime == "application/json" {
+		return nil, fmt.Errorf("google does not support tools together with JSON structured output")
 	}
 	return json.Marshal(out)
 }
@@ -119,9 +136,9 @@ func lookupToolName(messages []CanonicalMessage, toolCallID string) string {
 	return toolCallID
 }
 
-func mapGoogleToolConfig(choice any) (map[string]any, bool) {
+func mapGoogleToolConfig(choice any) (map[string]any, error) {
 	if choice == nil {
-		return nil, false
+		return nil, nil
 	}
 	switch v := choice.(type) {
 	case string:
@@ -129,32 +146,37 @@ func mapGoogleToolConfig(choice any) (map[string]any, bool) {
 		case "none":
 			return map[string]any{
 				"functionCallingConfig": map[string]any{"mode": "NONE"},
-			}, true
+			}, nil
 		case "auto":
 			return map[string]any{
 				"functionCallingConfig": map[string]any{"mode": "AUTO"},
-			}, false
+			}, nil
 		case "required":
 			return map[string]any{
 				"functionCallingConfig": map[string]any{"mode": "ANY"},
-			}, false
+			}, nil
+		default:
+			return nil, fmt.Errorf("unsupported tool_choice %q", v)
 		}
 	case map[string]any:
 		typ, _ := v["type"].(string)
 		if typ == "function" {
-			fn, _ := v["function"].(map[string]any)
-			name, _ := fn["name"].(string)
+			name, err := namedFunctionToolChoiceName(v)
+			if err != nil {
+				return nil, err
+			}
 			return map[string]any{
 				"functionCallingConfig": map[string]any{
 					"mode":                 "ANY",
 					"allowedFunctionNames": []string{name},
 				},
-			}, false
+			}, nil
 		}
+		return nil, fmt.Errorf("unsupported tool_choice type %q", typ)
 	}
 	raw, err := json.Marshal(choice)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	var asString string
 	if json.Unmarshal(raw, &asString) == nil {
@@ -164,25 +186,31 @@ func mapGoogleToolConfig(choice any) (map[string]any, bool) {
 	if json.Unmarshal(raw, &asMap) == nil {
 		return mapGoogleToolConfig(asMap)
 	}
-	return nil, false
+	return nil, fmt.Errorf("unsupported tool_choice")
 }
 
-func mapGoogleResponseFormat(responseFormat map[string]any) (string, any) {
+func mapGoogleResponseFormat(responseFormat map[string]any) (string, any, error) {
 	if responseFormat == nil {
-		return "", nil
+		return "", nil, nil
 	}
 	typ, _ := responseFormat["type"].(string)
 	switch typ {
 	case "json_object":
-		return "application/json", nil
+		return "application/json", nil, nil
 	case "json_schema":
 		js, _ := responseFormat["json_schema"].(map[string]any)
 		if js == nil {
-			return "application/json", nil
+			return "", nil, fmt.Errorf("response_format.json_schema is required")
 		}
-		return "application/json", js["schema"]
+		schema, ok := js["schema"]
+		if !ok || schema == nil {
+			return "", nil, fmt.Errorf("response_format.json_schema.schema is required")
+		}
+		return "application/json", schema, nil
+	case "text", "":
+		return "", nil, nil
 	default:
-		return "", nil
+		return "", nil, fmt.Errorf("unsupported response_format type %q", typ)
 	}
 }
 
@@ -193,6 +221,7 @@ func parseGoogleGenerateContentResponse(raw []byte) (AssembledMessage, *Normaliz
 				Parts []struct {
 					Text         string `json:"text"`
 					FunctionCall *struct {
+						ID   string         `json:"id"`
 						Name string         `json:"name"`
 						Args map[string]any `json:"args"`
 					} `json:"functionCall"`
@@ -216,7 +245,8 @@ func parseGoogleGenerateContentResponse(raw []byte) (AssembledMessage, *Normaliz
 	if len(resp.Candidates) > 0 {
 		cand := resp.Candidates[0]
 		msg.FinishReason = MapGoogleFinishReason(cand.FinishReason)
-		for i, part := range cand.Content.Parts {
+		toolIndex := 0
+		for _, part := range cand.Content.Parts {
 			if part.Text != "" {
 				msg.Content += part.Text
 			}
@@ -229,11 +259,16 @@ func parseGoogleGenerateContentResponse(raw []byte) (AssembledMessage, *Normaliz
 					}
 					args = string(encoded)
 				}
+				id := part.FunctionCall.ID
+				if id == "" {
+					id = fmt.Sprintf("call_google_%d", toolIndex)
+				}
 				msg.ToolCalls = append(msg.ToolCalls, AssembledToolCall{
-					ID:        fmt.Sprintf("call_google_%d", i),
+					ID:        id,
 					Name:      part.FunctionCall.Name,
 					Arguments: args,
 				})
+				toolIndex++
 			}
 		}
 	}

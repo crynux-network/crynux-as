@@ -54,6 +54,15 @@ func TestAnthropicRequestConversionToolsAndSystem(t *testing.T) {
 	if format["type"] != "json_schema" {
 		t.Fatalf("format=%v", format)
 	}
+	if _, ok := format["name"]; ok {
+		t.Fatalf("format should not include name: %v", format)
+	}
+	if _, ok := format["strict"]; ok {
+		t.Fatalf("format should not include strict: %v", format)
+	}
+	if _, ok := format["schema"]; !ok {
+		t.Fatalf("format missing schema: %v", format)
+	}
 	messages := out["messages"].([]any)
 	assistant := messages[1].(map[string]any)
 	content := assistant["content"].([]any)
@@ -78,6 +87,100 @@ func TestAnthropicRequestConversionToolsAndSystem(t *testing.T) {
 	tr := toolContent[0].(map[string]any)
 	if tr["type"] != "tool_result" || tr["tool_use_id"] != "call_1" {
 		t.Fatalf("tool_result=%v", tr)
+	}
+}
+
+func TestAnthropicNamedToolChoiceChatAndResponses(t *testing.T) {
+	chatJSON := []byte(`{
+		"messages":[{"role":"user","content":"x"}],
+		"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
+		"tool_choice":{"type":"function","function":{"name":"lookup"}}
+	}`)
+	chatCanon, err := ParseCanonicalRequest(chatJSON, "m", models.TaskAPITypeChatCompletions)
+	if err != nil {
+		t.Fatalf("chat parse: %v", err)
+	}
+	chatNative, err := convertCanonicalToAnthropic(chatCanon)
+	if err != nil {
+		t.Fatalf("chat convert: %v", err)
+	}
+	var chatOut map[string]any
+	_ = json.Unmarshal(chatNative, &chatOut)
+	chatChoice := chatOut["tool_choice"].(map[string]any)
+	if chatChoice["type"] != "tool" || chatChoice["name"] != "lookup" {
+		t.Fatalf("chat tool_choice=%v", chatChoice)
+	}
+
+	respJSON := []byte(`{
+		"input":"x",
+		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
+		"tool_choice":{"type":"function","name":"lookup"}
+	}`)
+	respCanon, err := ParseCanonicalRequest(respJSON, "m", models.TaskAPITypeResponses)
+	if err != nil {
+		t.Fatalf("responses parse: %v", err)
+	}
+	respNative, err := convertCanonicalToAnthropic(respCanon)
+	if err != nil {
+		t.Fatalf("responses convert: %v", err)
+	}
+	var respOut map[string]any
+	_ = json.Unmarshal(respNative, &respOut)
+	respChoice := respOut["tool_choice"].(map[string]any)
+	if respChoice["type"] != "tool" || respChoice["name"] != "lookup" {
+		t.Fatalf("responses tool_choice=%v", respChoice)
+	}
+}
+
+func TestAnthropicJSONObjectAndParallelAndNone(t *testing.T) {
+	reqJSON := []byte(`{
+		"messages":[{"role":"user","content":"x"}],
+		"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
+		"tool_choice":"none",
+		"parallel_tool_calls":false,
+		"response_format":{"type":"json_object"}
+	}`)
+	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeChatCompletions)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	native, err := convertCanonicalToAnthropic(canonical)
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	var out map[string]any
+	_ = json.Unmarshal(native, &out)
+	if _, ok := out["tools"]; !ok {
+		t.Fatalf("tools should be kept with tool_choice none: %v", out)
+	}
+	choice := out["tool_choice"].(map[string]any)
+	if choice["type"] != "none" {
+		t.Fatalf("tool_choice=%v", choice)
+	}
+	format := out["output_config"].(map[string]any)["format"].(map[string]any)
+	if format["type"] != "json_schema" {
+		t.Fatalf("format=%v", format)
+	}
+	schema := format["schema"].(map[string]any)
+	if schema["type"] != "object" {
+		t.Fatalf("schema=%v", schema)
+	}
+
+	autoJSON := []byte(`{
+		"messages":[{"role":"user","content":"x"}],
+		"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
+		"parallel_tool_calls":false
+	}`)
+	autoCanon, _ := ParseCanonicalRequest(autoJSON, "m", models.TaskAPITypeChatCompletions)
+	autoNative, err := convertCanonicalToAnthropic(autoCanon)
+	if err != nil {
+		t.Fatalf("auto convert: %v", err)
+	}
+	var autoOut map[string]any
+	_ = json.Unmarshal(autoNative, &autoOut)
+	autoChoice := autoOut["tool_choice"].(map[string]any)
+	if autoChoice["type"] != "auto" || autoChoice["disable_parallel_tool_use"] != true {
+		t.Fatalf("auto tool_choice=%v", autoChoice)
 	}
 }
 

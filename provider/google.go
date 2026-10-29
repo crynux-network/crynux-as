@@ -188,17 +188,7 @@ func (a *GoogleAdapter) readStream(body io.Reader, apiType models.TaskAPIType, m
 			}
 		}
 		for _, tc := range msgPart.ToolCalls {
-			idx := -1
-			for i, existing := range acc.ToolCalls {
-				if existing.Name == tc.Name && existing.ID == tc.ID {
-					idx = i
-					break
-				}
-				if existing.Name == tc.Name && (existing.Arguments == "" || strings.HasPrefix(tc.Arguments, existing.Arguments)) {
-					idx = i
-					break
-				}
-			}
+			idx := matchGoogleStreamToolCall(acc.ToolCalls, tc)
 			if idx < 0 {
 				idx = len(acc.ToolCalls)
 				acc.ToolCalls = append(acc.ToolCalls, tc)
@@ -211,6 +201,9 @@ func (a *GoogleAdapter) readStream(body io.Reader, apiType models.TaskAPIType, m
 					EmitToolCallArgsDelta(sink, idx, tc.Arguments)
 				}
 			} else {
+				if acc.ToolCalls[idx].ID == "" && tc.ID != "" {
+					acc.ToolCalls[idx].ID = tc.ID
+				}
 				prev := acc.ToolCalls[idx].Arguments
 				if len(tc.Arguments) > len(prev) {
 					delta := tc.Arguments[len(prev):]
@@ -273,4 +266,30 @@ func (a *GoogleAdapter) readStream(body io.Reader, apiType models.TaskAPIType, m
 		FinalResultJSON:   publicJSON,
 		FinalUsage:        usage,
 	}, nil
+}
+
+// matchGoogleStreamToolCall finds an existing tool slot. Prefer exact id match.
+// Without ids, only merge when the new args continue the same name slot's args;
+// parallel same-name calls without ids open a new slot instead of collapsing.
+func matchGoogleStreamToolCall(existing []AssembledToolCall, tc AssembledToolCall) int {
+	if tc.ID != "" {
+		for i, e := range existing {
+			if e.ID == tc.ID {
+				return i
+			}
+		}
+		return -1
+	}
+	for i, e := range existing {
+		if e.ID != "" {
+			continue
+		}
+		if e.Name != tc.Name {
+			continue
+		}
+		if e.Arguments == "" || strings.HasPrefix(tc.Arguments, e.Arguments) {
+			return i
+		}
+	}
+	return -1
 }
