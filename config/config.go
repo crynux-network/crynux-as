@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -75,10 +76,33 @@ func InitConfig(configPath string) error {
 	if err := checkCreditsConfig(v); err != nil {
 		return err
 	}
+	if err := loadProviderServices(); err != nil {
+		return err
+	}
 	if err := checkProviderConfig(v); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+func loadProviderServices() error {
+	path := strings.TrimSpace(appConfig.Provider.ServicesFile)
+	if path == "" {
+		return errors.New("provider.services_file is not set")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read provider.services_file: %w", err)
+	}
+	var services map[string]ProviderServiceConfig
+	if err := json.Unmarshal(raw, &services); err != nil {
+		return fmt.Errorf("parse provider.services_file: %w", err)
+	}
+	if len(services) == 0 {
+		return errors.New("provider.services_file must define at least one service")
+	}
+	appConfig.Provider.Services = services
 	return nil
 }
 
@@ -387,8 +411,11 @@ func checkProviderConfig(v *viper.Viper) error {
 	if strings.TrimSpace(p.KeyEncryption.EncryptionKeyFile) == "" {
 		return errors.New("provider.key_encryption.encryption_key_file is not set")
 	}
+	if strings.TrimSpace(p.ServicesFile) == "" {
+		return errors.New("provider.services_file is not set")
+	}
 	if len(p.Services) == 0 {
-		return errors.New("provider.services is not set")
+		return errors.New("provider services are not loaded")
 	}
 	modelNames := make(map[string]string)
 	for serviceID, svc := range p.Services {

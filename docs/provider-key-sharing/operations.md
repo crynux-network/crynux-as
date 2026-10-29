@@ -15,9 +15,9 @@ AS MUST NOT use Redis, NATS, or another stream broker for this feature. Real Pro
 
 ## Configuration
 
-All Provider Key Sharing values MUST be explicit in every YAML template. Missing, empty, zero, duplicate, or out-of-range required values MUST fail startup. Go code MUST NOT supply default values.
+All Provider Key Sharing values MUST be explicit in every YAML template and in the Provider services JSON file. Missing, empty, zero, duplicate, or out-of-range required values MUST fail startup. Go code MUST NOT supply default values.
 
-The configuration shape is:
+The YAML configuration shape is:
 
 ```yaml
 provider:
@@ -32,40 +32,7 @@ provider:
   max_secret_bytes: 4096
   key_encryption:
     encryption_key_file: "config/secrets/provider_key_encryption.txt"
-  services:
-    openai:
-      display_name: "OpenAI"
-      base_url: "https://api.openai.com"
-      connect_timeout_seconds: 10
-      response_header_timeout_seconds: 60
-      stream_idle_timeout_seconds: 120
-      request_timeout_seconds: 600
-      credential_validation_timeout_seconds: 10
-      models:
-        - name: "gpt-5.6-sol"
-          usage_weights:
-            input_tokens: "1"
-            output_tokens: "4"
-            cached_input_tokens: "0.1"
-            reasoning_tokens: "4"
-    anthropic:
-      display_name: "Anthropic"
-      base_url: "https://api.anthropic.com"
-      connect_timeout_seconds: 10
-      response_header_timeout_seconds: 60
-      stream_idle_timeout_seconds: 120
-      request_timeout_seconds: 600
-      credential_validation_timeout_seconds: 10
-      models: []
-    google:
-      display_name: "Google"
-      base_url: "https://generativelanguage.googleapis.com"
-      connect_timeout_seconds: 10
-      response_header_timeout_seconds: 60
-      stream_idle_timeout_seconds: 120
-      request_timeout_seconds: 600
-      credential_validation_timeout_seconds: 10
-      models: []
+  services_file: "config/provider_services.json"
   wallet:
     signer_address: "0x0000000000000000000000000000000000000001"
     networks:
@@ -77,6 +44,8 @@ provider:
         max_withdrawals_per_day: 3
         fee_receiver_address: "0x0000000000000000000000000000000000000003"
 ```
+
+`provider.services_file` MUST point to a JSON object whose keys are Service Provider IDs. Each value MUST define that Service Provider's display name, base URL, timeouts, and models. The template is [config/provider_services.example.json](../../config/provider_services.example.json).
 
 Service Provider base URLs are operator-controlled trusted configuration. User input MUST never alter them.
 
@@ -93,6 +62,7 @@ Startup MUST validate:
 * non-negative rational usage weights;
 * at least one positive usage weight per model;
 * the encryption-key path is non-empty;
+* the Provider services JSON path is non-empty and the file loads at least one Service Provider;
 * Wallet signer and contract addresses are valid;
 * every Wallet network display name is non-empty;
 * fixed withdrawal fees and withdrawal minimums are non-negative decimal CNX strings with at most 18 fractional digits;

@@ -125,28 +125,28 @@ type AppConfig struct {
 }
 
 type ProviderUsageWeightsConfig struct {
-	InputTokens           string `mapstructure:"input_tokens"`
-	OutputTokens          string `mapstructure:"output_tokens"`
-	CachedInputTokens     string `mapstructure:"cached_input_tokens"`
-	CacheWriteInputTokens string `mapstructure:"cache_write_input_tokens"`
-	ReasoningTokens       string `mapstructure:"reasoning_tokens"`
-	ToolUsePromptTokens   string `mapstructure:"tool_use_prompt_tokens"`
+	InputTokens           string `mapstructure:"input_tokens" json:"input_tokens,omitempty"`
+	OutputTokens          string `mapstructure:"output_tokens" json:"output_tokens,omitempty"`
+	CachedInputTokens     string `mapstructure:"cached_input_tokens" json:"cached_input_tokens,omitempty"`
+	CacheWriteInputTokens string `mapstructure:"cache_write_input_tokens" json:"cache_write_input_tokens,omitempty"`
+	ReasoningTokens       string `mapstructure:"reasoning_tokens" json:"reasoning_tokens,omitempty"`
+	ToolUsePromptTokens   string `mapstructure:"tool_use_prompt_tokens" json:"tool_use_prompt_tokens,omitempty"`
 }
 
 type ProviderModelConfig struct {
-	Name         string                     `mapstructure:"name"`
-	UsageWeights ProviderUsageWeightsConfig `mapstructure:"usage_weights"`
+	Name         string                     `mapstructure:"name" json:"name"`
+	UsageWeights ProviderUsageWeightsConfig `mapstructure:"usage_weights" json:"usage_weights"`
 }
 
 type ProviderServiceConfig struct {
-	DisplayName                         string                `mapstructure:"display_name"`
-	BaseURL                             string                `mapstructure:"base_url"`
-	ConnectTimeoutSeconds               uint64                `mapstructure:"connect_timeout_seconds"`
-	ResponseHeaderTimeoutSeconds        uint64                `mapstructure:"response_header_timeout_seconds"`
-	StreamIdleTimeoutSeconds            uint64                `mapstructure:"stream_idle_timeout_seconds"`
-	RequestTimeoutSeconds               uint64                `mapstructure:"request_timeout_seconds"`
-	CredentialValidationTimeoutSeconds  uint64                `mapstructure:"credential_validation_timeout_seconds"`
-	Models                              []ProviderModelConfig `mapstructure:"models"`
+	DisplayName                        string                `mapstructure:"display_name" json:"display_name"`
+	BaseURL                            string                `mapstructure:"base_url" json:"base_url"`
+	ConnectTimeoutSeconds              uint64                `mapstructure:"connect_timeout_seconds" json:"connect_timeout_seconds"`
+	ResponseHeaderTimeoutSeconds       uint64                `mapstructure:"response_header_timeout_seconds" json:"response_header_timeout_seconds"`
+	StreamIdleTimeoutSeconds           uint64                `mapstructure:"stream_idle_timeout_seconds" json:"stream_idle_timeout_seconds"`
+	RequestTimeoutSeconds              uint64                `mapstructure:"request_timeout_seconds" json:"request_timeout_seconds"`
+	CredentialValidationTimeoutSeconds uint64                `mapstructure:"credential_validation_timeout_seconds" json:"credential_validation_timeout_seconds"`
+	Models                             []ProviderModelConfig `mapstructure:"models" json:"models"`
 }
 
 type ProviderWalletNetworkConfig struct {
@@ -176,8 +176,9 @@ type ProviderConfig struct {
 	KeyCooldownSeconds            uint64                            `mapstructure:"key_cooldown_seconds"`
 	StreamSubscriberBuffer        uint64                            `mapstructure:"stream_subscriber_buffer"`
 	ShutdownTimeoutSeconds        uint64                            `mapstructure:"shutdown_timeout_seconds"`
-	MaxSecretBytes                uint64                            `mapstructure:"max_secret_bytes"`
-	KeyEncryption                 ProviderKeyEncryptionConfig       `mapstructure:"key_encryption"`
-	Services                      map[string]ProviderServiceConfig  `mapstructure:"services"`
-	Wallet                        ProviderWalletConfig              `mapstructure:"wallet"`
+	MaxSecretBytes                uint64                           `mapstructure:"max_secret_bytes"`
+	KeyEncryption                 ProviderKeyEncryptionConfig      `mapstructure:"key_encryption"`
+	ServicesFile                  string                           `mapstructure:"services_file"`
+	Services                      map[string]ProviderServiceConfig `mapstructure:"-"`
+	Wallet                        ProviderWalletConfig             `mapstructure:"wallet"`
 }
