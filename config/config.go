@@ -455,12 +455,6 @@ func checkProviderConfig(v *viper.Viper) error {
 		if _, err := parseNonNegativeCNXDecimal(network.WithdrawalMinCNX); err != nil {
 			return fmt.Errorf("provider.wallet.networks.%s.withdrawal_min_cnx is invalid: %w", networkID, err)
 		}
-		if _, err := parseNonNegativeCNXDecimal(network.MinimumHotWalletCNX); err != nil {
-			return fmt.Errorf("provider.wallet.networks.%s.minimum_hot_wallet_cnx is invalid: %w", networkID, err)
-		}
-		if _, err := parseNonNegativeCNXDecimal(network.MinimumHotWalletNativeGas); err != nil {
-			return fmt.Errorf("provider.wallet.networks.%s.minimum_hot_wallet_native_gas is invalid: %w", networkID, err)
-		}
 		if _, ok := appConfig.Blockchains[networkID]; !ok {
 			return fmt.Errorf("provider.wallet.networks.%s must exist in blockchains", networkID)
 		}

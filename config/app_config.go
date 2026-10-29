@@ -154,10 +154,8 @@ type ProviderWalletNetworkConfig struct {
 	BenefitAddressContract    string `mapstructure:"benefit_address_contract"`
 	FixedWithdrawalFeeCNX     string `mapstructure:"fixed_withdrawal_fee_cnx"`
 	WithdrawalMinCNX          string `mapstructure:"withdrawal_min_cnx"`
-	MaxWithdrawalsPerDay      uint64 `mapstructure:"max_withdrawals_per_day"`
-	FeeReceiverAddress        string `mapstructure:"fee_receiver_address"`
-	MinimumHotWalletCNX       string `mapstructure:"minimum_hot_wallet_cnx"`
-	MinimumHotWalletNativeGas string `mapstructure:"minimum_hot_wallet_native_gas"`
+	MaxWithdrawalsPerDay uint64 `mapstructure:"max_withdrawals_per_day"`
+	FeeReceiverAddress   string `mapstructure:"fee_receiver_address"`
 }
 
 type ProviderWalletConfig struct {

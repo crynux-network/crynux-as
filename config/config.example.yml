@@ -154,5 +154,3 @@ provider:
         withdrawal_min_cnx: "10000"
         max_withdrawals_per_day: 3
         fee_receiver_address: "0x0000000000000000000000000000000000000003"
-        minimum_hot_wallet_cnx: "1000"
-        minimum_hot_wallet_native_gas: "0.1"

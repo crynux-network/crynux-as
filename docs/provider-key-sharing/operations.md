@@ -76,8 +76,6 @@ provider:
         withdrawal_min_cnx: "10000"
         max_withdrawals_per_day: 3
         fee_receiver_address: "0x0000000000000000000000000000000000000003"
-        minimum_hot_wallet_cnx: "1000"
-        minimum_hot_wallet_native_gas: "0.1"
 ```
 
 Service Provider base URLs are operator-controlled trusted configuration. User input MUST never alter them.
@@ -97,7 +95,6 @@ Startup MUST validate:
 * the encryption-key path is non-empty;
 * Wallet signer and contract addresses are valid;
 * every Wallet network display name is non-empty;
-* hot-wallet CNX and native-gas thresholds are non-negative decimal strings;
 * fixed withdrawal fees and withdrawal minimums are non-negative decimal CNX strings with at most 18 fractional digits;
 * Wallet network exists in `blockchains`.
 

@@ -232,7 +232,7 @@ Response data is the configured withdrawal networks:
 
 `fixed_withdrawal_fee_cnx` and `withdrawal_min_cnx` are CNX decimal strings matching Wallet network configuration. The fee for a network is that fixed value only. The WebUI MUST use these fields to preview the fee, enforce the minimum, and compute the maximum withdrawable amount.
 
-The endpoint MUST not expose contract addresses, fee-receiver addresses, risk limits, RPC URLs, or hot-wallet thresholds.
+The endpoint MUST not expose contract addresses, fee-receiver addresses, risk limits, or RPC URLs.
 
 ## Prepare Withdrawal
 
