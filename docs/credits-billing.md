@@ -17,14 +17,14 @@ uncapped_billable_gwei =
     * vram_weight
 
 max_task_fee_gwei =
-    floor(max_task_price_cnx * 1e9)
+    floor(max_task_price_cnx.<provider> * 1e9)
 ```
 
 * When `floor(uncapped_billable_gwei) > max_task_fee_gwei`, the service MUST set `billable_gwei = max_task_fee_gwei` and `task_fee_gwei = max_task_fee_gwei`.
 * Otherwise Credits MUST use the uncapped floating-point `billable_gwei` product and `task_fee_gwei = floor(uncapped_billable_gwei)`.
 * `credits = max(1, floor(billable_gwei * credits_per_gwei))` using that post-cap `billable_gwei`.
 
-`1 CNX = 1e18 wei` and `task_fee_gwei * 1e9 = wei`, so `1 CNX = 1e9` Gwei. `max_task_fee_gwei` MUST be `floor(max_task_price_cnx * 1e9)`.
+`1 CNX = 1e18 wei` and `task_fee_gwei * 1e9 = wei`, so `1 CNX = 1e9` Gwei. For Crynux Network tasks, `max_task_fee_gwei` MUST be `floor(max_task_price_cnx.crynux * 1e9)`.
 
 `priority_gwei` MUST be the effective Cost Level resolved for the request from the project Cost Level mode and snapshotted at job create. For `static` mode that value MUST be `projects.priority_gwei`. For `auto` mode that value MUST be computed from the live queue bounds and the project's `auto_queue_position`, then capped by `auto_max_priority_gwei`, as specified in [llm-api.md](./llm-api.md) Project Cost Level.
 
@@ -51,7 +51,11 @@ llm:
   min_priority_gwei: "1"
   max_priority_gwei: "1000000000"
   credits_per_gwei: "1"
-  max_task_price_cnx: "0.001"
+  max_task_price_cnx:
+    crynux: "0.001"
+    openai: "0.001"
+    anthropic: "0.001"
+    google: "0.001"
   job_submit_timeout: 600
   job_retention_days: 30
   task_result_dir: "data/task_results"
@@ -64,7 +68,7 @@ Configuration loading MUST fail when any of these values is missing or invalid:
 * `min_priority_gwei`
 * `max_priority_gwei`
 * `credits_per_gwei` (MUST parse as a positive decimal string)
-* `max_task_price_cnx` (MUST parse as a positive decimal string and MUST convert to a positive `max_task_fee_gwei`)
+* `max_task_price_cnx` (MUST be a map of provider ID to positive decimal CNX string; MUST include `crynux`; MUST include one entry for every `provider.services` key; every value MUST convert to a positive `max_task_fee_gwei`)
 
 Configuration loading MUST fail when `min_priority_gwei` is greater than `max_priority_gwei`.
 
@@ -80,9 +84,9 @@ The following items MUST NOT appear in configuration and MUST NOT be used for Cr
 
 `credits_per_gwei` converts `billable_gwei` into Credits. It MUST NOT change `task_fee_gwei`.
 
-`max_task_price_cnx` is the operator global hard cap on one request's submitted task fee and Credits, expressed in CNX as a positive decimal string. After `billable_gwei` / `task_fee_gwei` are computed from Cost Level, estimated node seconds, and VRAM weight, the service MUST clamp both to `max_task_fee_gwei` when the uncapped `task_fee_gwei` is greater. The cap MUST NOT change the snapshotted request `priority_gwei`. The cap MUST apply to OpenAI-compatible LLM, Raw LLM, and Raw Image fee and Credits paths that use the shared `billable_gwei` formula. `billing_config` MUST NOT return `max_task_price_cnx`.
+`max_task_price_cnx` is the operator hard cap on one request's submitted task fee and Credits, keyed by provider ID. Each value is a positive decimal string in CNX units. Crynux Network OpenAI-compatible LLM, Raw LLM, and Raw Image fee paths MUST use `max_task_price_cnx.crynux`. Provider Key Sharing paths MUST use the cap for that Service Provider ID. After `billable_gwei` / `task_fee_gwei` are computed from Cost Level, estimated node seconds, and VRAM weight, the service MUST clamp both to that provider's `max_task_fee_gwei` when the uncapped `task_fee_gwei` is greater. The cap MUST NOT change the snapshotted request `priority_gwei`. `billing_config` MUST NOT return `max_task_price_cnx`.
 
-`empty_queue_median_priority_gwei`, `min_priority_gwei`, `max_priority_gwei`, and every API or persisted field whose name ends in `_gwei` MUST be encoded as a decimal integer string (the same representation used for other Gwei amounts in Crynux AS). `credits_per_gwei` and `max_task_price_cnx` MUST be positive decimal strings. Configuration, `billing_config`, and the call-record snapshot MUST store the configured string value for `credits_per_gwei`. Integer forms such as `"1"` and fractional forms such as `"0.000001"` are both valid for `credits_per_gwei` and `max_task_price_cnx`.
+`empty_queue_median_priority_gwei`, `min_priority_gwei`, `max_priority_gwei`, and every API or persisted field whose name ends in `_gwei` MUST be encoded as a decimal integer string (the same representation used for other Gwei amounts in Crynux AS). `credits_per_gwei` and every `max_task_price_cnx` map value MUST be positive decimal strings. Configuration, `billing_config`, and the call-record snapshot MUST store the configured string value for `credits_per_gwei`. Integer forms such as `"1"` and fractional forms such as `"0.000001"` are both valid for `credits_per_gwei` and `max_task_price_cnx` values.
 
 `empty_queue_median_priority_gwei` is used only when presenting a queue-median hint and the queued-priority cache has never observed a non-empty queue, and when creating a project with no usable live or remembered median. It MUST NOT enter `billable_gwei` except when it becomes the project's stored `priority_gwei` at project creation through the Queue Median Hint rules in [llm-api.md](./llm-api.md).
 
@@ -117,7 +121,7 @@ uncapped_billable_gwei =
     Prio * estimated_node_seconds * vram_weight
 
 max_task_fee_gwei =
-    floor(max_task_price_cnx * 1e9)
+    floor(max_task_price_cnx.crynux * 1e9)
 
 task_fee_gwei =
     min(floor(uncapped_billable_gwei), max_task_fee_gwei)
@@ -145,7 +149,7 @@ For each LLM request that requires Credits precheck and task fee, the service MU
 1. Resolve effective VRAM and precheck token estimates (`P` estimate and `C` estimate).
 2. Resolve the request effective `priority_gwei` from the project Cost Level mode as specified in [llm-api.md](./llm-api.md) Project Cost Level.
 3. Fetch and validate execution-time coefficients for `(model, quantization_config, dtype, effective_vram)`.
-4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and uncapped `billable_gwei` using the request's resolved effective `priority_gwei`. Apply `llm.max_task_price_cnx` so that when `floor(uncapped_billable_gwei) > max_task_fee_gwei`, both `billable_gwei` and `task_fee_gwei` become `max_task_fee_gwei`; otherwise `task_fee_gwei = floor(uncapped_billable_gwei)` and Credits use the uncapped floating-point `billable_gwei`. The snapshotted effective `priority_gwei` MUST remain the uncapped Cost Level value.
+4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and uncapped `billable_gwei` using the request's resolved effective `priority_gwei`. Apply `llm.max_task_price_cnx.crynux` so that when `floor(uncapped_billable_gwei) > max_task_fee_gwei`, both `billable_gwei` and `task_fee_gwei` become `max_task_fee_gwei`; otherwise `task_fee_gwei = floor(uncapped_billable_gwei)` and Credits use the uncapped floating-point `billable_gwei`. The snapshotted effective `priority_gwei` MUST remain the uncapped Cost Level value.
 5. Let `estimate = max(1, floor(billable_gwei * G))` using the post-cap `billable_gwei`. In one database transaction, lock the user's `credit_accounts` row with `SELECT ... FOR UPDATE`, reject with HTTP 402 when `available = balance - locked` is strictly less than `estimate`, increase `credit_accounts.locked` by `estimate`, and create the `task_jobs` row with `credits_locked = estimate` and `credits_lock_status = held`. The pre-lock MUST NOT write a `credit_events` row and MUST NOT change `credit_accounts.balance`.
 6. Use the post-cap `task_fee_gwei` from step 4 as the submitted task fee in Gwei.
 7. Resolve `median_priority_gwei` with the Queue Median Hint rules in [llm-api.md](./llm-api.md). This resolution MUST always produce a value and MUST NOT fail the request.
@@ -169,7 +173,7 @@ Precheck token inputs:
 After a successful Bridge response:
 
 1. The service MUST read `usage.prompt_tokens`, `usage.completion_tokens`, and `usage.total_tokens`.
-2. The service MUST compute Credits with the charge formula using persisted job coefficients, persisted `vram_weight`, the job `priority_gwei` snapshot, and the usage token counts, then apply the same `llm.max_task_price_cnx` clamp to the settle-time `billable_gwei` before converting to Credits. Settle MUST NOT recompute or replace the already submitted `task_fee_gwei`.
+2. The service MUST compute Credits with the charge formula using persisted job coefficients, persisted `vram_weight`, the job `priority_gwei` snapshot, and the usage token counts, then apply the same `llm.max_task_price_cnx.crynux` clamp to the settle-time `billable_gwei` before converting to Credits. Settle MUST NOT recompute or replace the already submitted `task_fee_gwei`.
 3. In the success settle transaction, after locking the job row, the service MUST release the Credits hold when `credits_lock_status` is `held`: lock the account row, decrease `credit_accounts.locked` by `credits_locked` (clamp `locked` to zero and emit an error log when `locked` is less than `credits_locked`), and set `credits_lock_status` to `released`. When `credits_lock_status` is already `released` or `none`, the unlock step MUST be a no-op.
 4. The service MUST create one `llm_call_records` row with success status, token counts, the job `priority_gwei` used for the charge, the billed effective VRAM, call duration, the pre-forward Task Fee Estimation fields, and the Credits recalculation snapshot (`constant_seconds`, `seconds_per_input_token`, `seconds_per_output_token`, `credits_per_gwei`). The call record MUST NOT store the charged Credits amount. The call record `estimated_node_seconds` MUST be the pre-forward value persisted on the job. It MUST NOT be replaced by the settle-time recomputation used only for Credits.
 5. Let `charge = min(computed_credits, balance)`. When `charge` is greater than zero, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by `charge` in the same database transaction. The event amount is the sole permanent store of the charged Credits. When `charge` is zero, the service MUST NOT create a ledger event. When `charge` is less than `computed_credits`, the service MUST emit an error log for operators.
@@ -188,7 +192,7 @@ The effective request `priority_gwei` is the user Cost Level used for charging.
 * Credits scale with `Prio`.
 * Task fee scales with `Prio`.
 
-Raising the effective Cost Level MUST increase both Credits and the submitted task fee for the same model and token counts, until `llm.max_task_price_cnx` clamps the amount. After that clamp applies, further Cost Level increases MUST NOT increase Credits or the submitted task fee for that request.
+Raising the effective Cost Level MUST increase both Credits and the submitted task fee for the same model and token counts, until `llm.max_task_price_cnx.crynux` clamps the amount. After that clamp applies, further Cost Level increases MUST NOT increase Credits or the submitted task fee for that request.
 
 In `static` mode, the live median priority and queue bounds MUST NOT change Credits or task fee by themselves. When the queue becomes more congested, the same stored `priority_gwei` MUST keep the same task fee and the same Credits; scheduling may become slower until the user raises `priority_gwei`.
 

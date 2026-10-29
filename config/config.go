@@ -254,8 +254,8 @@ func checkLLMConfig() error {
 	if _, err := appConfig.ParseCreditsPerGwei(); err != nil {
 		return fmt.Errorf("llm.credits_per_gwei is invalid: %w", err)
 	}
-	if _, err := appConfig.MaxTaskFeeGwei(); err != nil {
-		return fmt.Errorf("llm.max_task_price_cnx is invalid: %w", err)
+	if err := checkMaxTaskPriceCNXConfig(); err != nil {
+		return err
 	}
 	if appConfig.LLM.JobSubmitTimeout == 0 {
 		return errors.New("llm.job_submit_timeout is not set")
@@ -370,10 +370,32 @@ func parseNonNegativeCNXDecimal(value string) (*big.Int, error) {
 	return new(big.Int).Set(scaled.Num()), nil
 }
 
+// MaxTaskPriceProviderCrynux is the llm.max_task_price_cnx map key for Crynux Network tasks.
+const MaxTaskPriceProviderCrynux = "crynux"
+
 var knownServiceProviders = map[string]struct{}{
 	"openai":    {},
 	"anthropic": {},
 	"google":    {},
+}
+
+func checkMaxTaskPriceCNXConfig() error {
+	prices := appConfig.LLM.MaxTaskPriceCNX
+	if len(prices) == 0 {
+		return errors.New("llm.max_task_price_cnx is not set")
+	}
+	if _, err := appConfig.MaxTaskFeeGwei(MaxTaskPriceProviderCrynux); err != nil {
+		return fmt.Errorf("llm.max_task_price_cnx.%s is invalid: %w", MaxTaskPriceProviderCrynux, err)
+	}
+	for providerID, price := range prices {
+		if providerID == MaxTaskPriceProviderCrynux {
+			continue
+		}
+		if _, err := MaxTaskFeeGweiFromPrice(price); err != nil {
+			return fmt.Errorf("llm.max_task_price_cnx.%s is invalid: %w", providerID, err)
+		}
+	}
+	return nil
 }
 
 func checkProviderConfig(v *viper.Viper) error {
@@ -417,10 +439,21 @@ func checkProviderConfig(v *viper.Viper) error {
 	if len(p.Services) == 0 {
 		return errors.New("provider services are not loaded")
 	}
+	for providerID := range appConfig.LLM.MaxTaskPriceCNX {
+		if providerID == MaxTaskPriceProviderCrynux {
+			continue
+		}
+		if _, ok := p.Services[providerID]; !ok {
+			return fmt.Errorf("llm.max_task_price_cnx.%s has no matching provider.services entry", providerID)
+		}
+	}
 	modelNames := make(map[string]string)
 	for serviceID, svc := range p.Services {
 		if _, ok := knownServiceProviders[serviceID]; !ok {
 			return fmt.Errorf("provider.services.%s is an unknown service provider", serviceID)
+		}
+		if _, err := appConfig.MaxTaskFeeGwei(serviceID); err != nil {
+			return fmt.Errorf("llm.max_task_price_cnx.%s is invalid: %w", serviceID, err)
 		}
 		if strings.TrimSpace(svc.DisplayName) == "" {
 			return fmt.Errorf("provider.services.%s.display_name is not set", serviceID)
@@ -589,10 +622,35 @@ func (cfg *AppConfig) ParseCreditsPerGwei() (*big.Rat, error) {
 	return ParsePositiveDecimalRate(cfg.LLM.CreditsPerGwei)
 }
 
-// MaxTaskFeeGwei converts llm.max_task_price_cnx to Gwei as floor(price_cnx * 1e9).
+// MaxTaskPriceCNXFor returns the configured max_task_price_cnx string for one provider ID.
+func (cfg *AppConfig) MaxTaskPriceCNXFor(providerID string) (string, error) {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return "", errors.New("provider id is not set")
+	}
+	if cfg.LLM.MaxTaskPriceCNX == nil {
+		return "", fmt.Errorf("llm.max_task_price_cnx.%s is not set", providerID)
+	}
+	price, ok := cfg.LLM.MaxTaskPriceCNX[providerID]
+	if !ok || strings.TrimSpace(price) == "" {
+		return "", fmt.Errorf("llm.max_task_price_cnx.%s is not set", providerID)
+	}
+	return price, nil
+}
+
+// MaxTaskFeeGwei converts llm.max_task_price_cnx.<provider> to Gwei as floor(price_cnx * 1e9).
 // 1 CNX = 1e18 wei and task_fee_gwei * 1e9 = wei, so 1 CNX = 1e9 Gwei.
-func (cfg *AppConfig) MaxTaskFeeGwei() (*big.Int, error) {
-	price, err := ParsePositiveDecimalRate(cfg.LLM.MaxTaskPriceCNX)
+func (cfg *AppConfig) MaxTaskFeeGwei(providerID string) (*big.Int, error) {
+	price, err := cfg.MaxTaskPriceCNXFor(providerID)
+	if err != nil {
+		return nil, err
+	}
+	return MaxTaskFeeGweiFromPrice(price)
+}
+
+// MaxTaskFeeGweiFromPrice converts one max_task_price_cnx decimal string to Gwei.
+func MaxTaskFeeGweiFromPrice(priceCNX string) (*big.Int, error) {
+	price, err := ParsePositiveDecimalRate(priceCNX)
 	if err != nil {
 		return nil, err
 	}

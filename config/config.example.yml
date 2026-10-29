@@ -76,7 +76,11 @@ llm:
   min_priority_gwei: "1"
   max_priority_gwei: "1000000000"
   credits_per_gwei: "1"
-  max_task_price_cnx: "0.001"
+  max_task_price_cnx:
+    crynux: "0.001"
+    openai: "0.001"
+    anthropic: "0.001"
+    google: "0.001"
   job_submit_timeout: 600
   job_retention_days: 30
   task_result_dir: "data/task_results"

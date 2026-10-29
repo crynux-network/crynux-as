@@ -288,7 +288,7 @@ func CalcCredits(
 	return CalcCreditsFromBillable(billableGwei, rate)
 }
 
-// applyMaxTaskFeeCap clamps billable_gwei and task_fee_gwei to llm.max_task_price_cnx.
+// applyMaxTaskFeeCap clamps billable_gwei and task_fee_gwei to llm.max_task_price_cnx.crynux.
 func applyMaxTaskFeeCap(billableGwei *big.Float, taskFeeGwei *big.Int) (*big.Float, *big.Int, error) {
 	if billableGwei == nil {
 		return nil, nil, errors.New("billable_gwei is required")
@@ -300,9 +300,9 @@ func applyMaxTaskFeeCap(billableGwei *big.Float, taskFeeGwei *big.Int) (*big.Flo
 	if appCfg == nil {
 		return nil, nil, errors.New("config is not initialized")
 	}
-	maxFeeGwei, err := appCfg.MaxTaskFeeGwei()
+	maxFeeGwei, err := appCfg.MaxTaskFeeGwei(config.MaxTaskPriceProviderCrynux)
 	if err != nil {
-		return nil, nil, fmt.Errorf("max_task_price_cnx: %w", err)
+		return nil, nil, fmt.Errorf("max_task_price_cnx.%s: %w", config.MaxTaskPriceProviderCrynux, err)
 	}
 	if taskFeeGwei.Cmp(maxFeeGwei) <= 0 {
 		return billableGwei, taskFeeGwei, nil

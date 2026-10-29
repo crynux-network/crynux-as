@@ -15,7 +15,7 @@ func TestAbortRawTaskJobPendingSubmit(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
-	cfg.LLM.MaxTaskPriceCNX = "1000"
+	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 

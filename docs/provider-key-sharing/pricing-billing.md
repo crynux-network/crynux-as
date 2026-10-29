@@ -9,7 +9,7 @@
 * `credits_per_gwei`;
 * Credits reservation;
 * Credits account locking;
-* the global `max_task_price_cnx` cap;
+* the per-provider `max_task_price_cnx` cap;
 * task charge ledger ownership.
 
 This document defines Provider workload units, Provider queue priority, actual-usage settlement, and Key Owner CNX earnings.
@@ -30,7 +30,7 @@ Platform economics remain determined by:
 * `blockchains.<network>.tokens.<token>.credits_per_token`, which determines Credits purchased per payment token;
 * `llm.credits_per_gwei`, which determines Credits charged per Gwei of task value.
 
-`max_task_price_cnx` MUST cap Provider consumer charge and Key Owner earning through the same post-cap `billable_gwei`.
+`llm.max_task_price_cnx.<service_provider>` MUST cap that Service Provider's consumer charge and Key Owner earning through the same post-cap `billable_gwei`. The job billing snapshot MUST store the configured CNX string used for that cap.
 
 ## Configured Usage Weights
 
@@ -130,7 +130,7 @@ Settlement MUST:
 1. decode the job's immutable pricing snapshot;
 2. calculate actual Provider units with exact rational arithmetic;
 3. multiply by the job's effective priority;
-4. apply `max_task_price_cnx`;
+4. apply `llm.max_task_price_cnx.<service_provider>`;
 5. calculate consumer Credits;
 6. calculate Key Owner earning wei;
 7. enter the common settlement transaction.

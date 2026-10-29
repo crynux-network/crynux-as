@@ -5,6 +5,7 @@ import (
 	"crynux_as/models"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 )
@@ -166,10 +167,10 @@ func EstimateProviderUnits(weights map[string]string, inputBytes, maxOutputToken
 	return units, nil
 }
 
-func ApplyMaxTaskPriceCap(billableGwei *big.Int) (*big.Int, error) {
-	maxFeeGwei, err := config.GetConfig().MaxTaskFeeGwei()
+func ApplyMaxTaskPriceCap(billableGwei *big.Int, maxTaskPriceCNX string) (*big.Int, error) {
+	maxFeeGwei, err := config.MaxTaskFeeGweiFromPrice(maxTaskPriceCNX)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("max_task_price_cnx: %w", err)
 	}
 	if billableGwei.Cmp(maxFeeGwei) > 0 {
 		return new(big.Int).Set(maxFeeGwei), nil
@@ -177,7 +178,7 @@ func ApplyMaxTaskPriceCap(billableGwei *big.Int) (*big.Int, error) {
 	return new(big.Int).Set(billableGwei), nil
 }
 
-func ProviderBillableGwei(effectivePriorityGwei *big.Int, providerUnits *big.Rat) (*big.Int, error) {
+func ProviderBillableGwei(effectivePriorityGwei *big.Int, providerUnits *big.Rat, maxTaskPriceCNX string) (*big.Int, error) {
 	if effectivePriorityGwei == nil || effectivePriorityGwei.Sign() <= 0 {
 		return nil, errors.New("effective priority is required")
 	}
@@ -186,7 +187,7 @@ func ProviderBillableGwei(effectivePriorityGwei *big.Int, providerUnits *big.Rat
 	}
 	product := new(big.Rat).Mul(new(big.Rat).SetInt(effectivePriorityGwei), providerUnits)
 	uncapped := new(big.Int).Quo(product.Num(), product.Denom())
-	return ApplyMaxTaskPriceCap(uncapped)
+	return ApplyMaxTaskPriceCap(uncapped, maxTaskPriceCNX)
 }
 
 func ProviderConsumerCredits(billableGwei *big.Int, creditsPerGwei string) (*big.Int, error) {
@@ -213,11 +214,15 @@ func BuildProviderBillingData(
 	lockedCredits *big.Int,
 ) (models.ProviderTaskBillingData, *big.Int, error) {
 	cfg := config.GetConfig()
+	maxTaskPriceCNX, err := cfg.MaxTaskPriceCNXFor(string(route.ServiceProvider))
+	if err != nil {
+		return models.ProviderTaskBillingData{}, nil, err
+	}
 	units, err := EstimateProviderUnits(route.UsageWeights, inputBytes, maxOutputTokens)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
-	billableGwei, err := ProviderBillableGwei(effectivePriority, units)
+	billableGwei, err := ProviderBillableGwei(effectivePriority, units, maxTaskPriceCNX)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
@@ -234,7 +239,7 @@ func BuildProviderBillingData(
 		UsageWeights:           route.UsageWeights,
 		EffectivePriorityGwei:  effectivePriority.String(),
 		CreditsPerGwei:         cfg.LLM.CreditsPerGwei,
-		MaxTaskPriceCNX:        cfg.LLM.MaxTaskPriceCNX,
+		MaxTaskPriceCNX:        maxTaskPriceCNX,
 		EstimatedInputBytes:    inputBytes,
 		EstimatedOutputTokens:  maxOutputTokens,
 		EstimatedProviderUnits: units.FloatString(18),

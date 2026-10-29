@@ -27,7 +27,7 @@ func setupRawImagePrepareEnv(t *testing.T, loadedRows []map[string]any) {
 	cfg.LLM.MinCatalogOnDiskNodeCount = 1
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.BaseVRAM = 8
-	cfg.LLM.MaxTaskPriceCNX = "1000"
+	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
 	cfg.LLM.EmptyQueueMedianPriorityGwei = "1"
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() {

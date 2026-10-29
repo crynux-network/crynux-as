@@ -43,7 +43,7 @@ func ReserveCreditsAndCreateProviderTaskJob(ctx context.Context, db *gorm.DB, in
 		return nil, errors.New("queue_timeout is required")
 	}
 	taskFeeWei := ProviderEarningWei(in.PriorityGwei) // placeholder overwritten by estimate; store priority-based snapshot fee
-	if billable, err := ProviderBillableGwei(in.PriorityGwei, big.NewRat(1, 1)); err == nil {
+	if billable, err := ProviderBillableGwei(in.PriorityGwei, big.NewRat(1, 1), in.BillingSnapshot.MaxTaskPriceCNX); err == nil {
 		taskFeeWei = ProviderEarningWei(billable)
 	}
 	billingData, err := models.EncodeTaskBillingData(models.TaskBillingData{
@@ -133,7 +133,7 @@ func SettleProviderTaskJob(
 	if !ok {
 		return errors.New("invalid effective priority in snapshot")
 	}
-	billableGwei, err := ProviderBillableGwei(priority, units)
+	billableGwei, err := ProviderBillableGwei(priority, units, billing.Provider.MaxTaskPriceCNX)
 	if err != nil {
 		return err
 	}
