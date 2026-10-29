@@ -56,16 +56,16 @@ func AuthorizationFingerprint(message string) string {
 }
 
 type PrepareWithdrawalResult struct {
-	Amount          string
-	WithdrawalFee   string
-	Total           string
-	Network         string
-	ChainID         uint64
-	Address         string
-	BenefitAddress  string
-	Timestamp       int64
-	Message         string
-	ExpiresAt       int64
+	Amount         string `json:"amount"`
+	WithdrawalFee  string `json:"withdrawal_fee"`
+	Total          string `json:"total"`
+	Network        string `json:"network"`
+	ChainID        uint64 `json:"chain_id"`
+	Address        string `json:"address"`
+	BenefitAddress string `json:"benefit_address"`
+	Timestamp      int64  `json:"timestamp"`
+	Message        string `json:"message"`
+	ExpiresAt      int64  `json:"expires_at"`
 }
 
 func PrepareWithdrawal(ctx context.Context, db *gorm.DB, user *models.User, amount *big.Int, network string) (*PrepareWithdrawalResult, error) {
