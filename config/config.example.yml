@@ -76,6 +76,7 @@ llm:
   min_priority_gwei: "1"
   max_priority_gwei: "1000000000"
   credits_per_gwei: "1"
+  default_auto_max_credits_per_task: "100"
   max_task_price_cnx:
     crynux: "0.001"
     openai: "0.001"

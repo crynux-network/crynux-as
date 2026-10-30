@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crynux_as/config"
 	"crynux_as/models"
 	"errors"
 	"math/big"
@@ -27,7 +26,21 @@ var (
 func GetProviderQueuePrioritySnapshot() ProviderQueuePrioritySnapshot {
 	providerQueuePriorityMu.RLock()
 	defer providerQueuePriorityMu.RUnlock()
-	return providerQueuePrioritySnapshot
+	return copyProviderQueuePrioritySnapshot(providerQueuePrioritySnapshot)
+}
+
+func copyProviderQueuePrioritySnapshot(src ProviderQueuePrioritySnapshot) ProviderQueuePrioritySnapshot {
+	dst := ProviderQueuePrioritySnapshot{
+		ObservedAt: src.ObservedAt,
+		HasJobs:    src.HasJobs,
+	}
+	if src.Lowest != nil {
+		dst.Lowest = new(big.Int).Set(src.Lowest)
+	}
+	if src.Highest != nil {
+		dst.Highest = new(big.Int).Set(src.Highest)
+	}
+	return dst
 }
 
 func RefreshProviderQueuePrioritySnapshot(ctx context.Context, db *gorm.DB) error {
@@ -40,12 +53,13 @@ func RefreshProviderQueuePrioritySnapshot(ctx context.Context, db *gorm.DB) erro
 		models.ExecutionSourceGoogle,
 	}
 
-	var lowestJob models.TaskJob
-	err := db.WithContext(dbCtx).
-		Where("execution_source IN ? AND status = ? AND phase = ?", sources, models.TaskJobStatusPendingSubmit, "queued").
-		Order("sortable_priority ASC, id ASC").
-		Limit(1).
-		First(&lowestJob).Error
+	lowestJob, err := firstNonExpiredProviderQueuedJob(
+		db.WithContext(dbCtx),
+		sources,
+		now,
+		"sortable_priority ASC, id ASC",
+		true,
+	)
 	snapshot := ProviderQueuePrioritySnapshot{ObservedAt: now}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		providerQueuePriorityMu.Lock()
@@ -56,19 +70,15 @@ func RefreshProviderQueuePrioritySnapshot(ctx context.Context, db *gorm.DB) erro
 	if err != nil {
 		return err
 	}
-	if lowestJob.CreatedAt.Add(time.Duration(lowestJob.QueueTimeout) * time.Second).Before(now) {
-		providerQueuePriorityMu.Lock()
-		providerQueuePrioritySnapshot = snapshot
-		providerQueuePriorityMu.Unlock()
-		return nil
-	}
 
-	var highestJob models.TaskJob
-	if err := db.WithContext(dbCtx).
-		Where("execution_source IN ? AND status = ? AND phase = ?", sources, models.TaskJobStatusPendingSubmit, "queued").
-		Order("sortable_priority DESC, id DESC").
-		Limit(1).
-		First(&highestJob).Error; err != nil {
+	highestJob, err := firstNonExpiredProviderQueuedJob(
+		db.WithContext(dbCtx),
+		sources,
+		now,
+		"sortable_priority DESC, id DESC",
+		false,
+	)
+	if err != nil {
 		return err
 	}
 	lowest, ok := new(big.Int).SetString(lowestJob.PriorityGwei.String(), 10)
@@ -85,6 +95,55 @@ func RefreshProviderQueuePrioritySnapshot(ctx context.Context, db *gorm.DB) erro
 	providerQueuePriorityMu.Lock()
 	providerQueuePrioritySnapshot = snapshot
 	providerQueuePriorityMu.Unlock()
-	_ = config.GetConfig()
 	return nil
+}
+
+func firstNonExpiredProviderQueuedJob(
+	db *gorm.DB,
+	sources []models.ExecutionSource,
+	now time.Time,
+	order string,
+	ascending bool,
+) (*models.TaskJob, error) {
+	const batchSize = 100
+	var lastPriority string
+	var lastID uint
+	haveCursor := false
+
+	for {
+		query := db.
+			Where("execution_source IN ? AND status = ? AND phase = ?", sources, models.TaskJobStatusPendingSubmit, "queued")
+		if haveCursor {
+			if ascending {
+				query = query.Where(
+					"(sortable_priority > ?) OR (sortable_priority = ? AND id > ?)",
+					lastPriority, lastPriority, lastID,
+				)
+			} else {
+				query = query.Where(
+					"(sortable_priority < ?) OR (sortable_priority = ? AND id < ?)",
+					lastPriority, lastPriority, lastID,
+				)
+			}
+		}
+		var jobs []models.TaskJob
+		if err := query.Order(order).Limit(batchSize).Find(&jobs).Error; err != nil {
+			return nil, err
+		}
+		if len(jobs) == 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		for i := range jobs {
+			job := &jobs[i]
+			if !job.CreatedAt.Add(time.Duration(job.QueueTimeout) * time.Second).Before(now) {
+				return job, nil
+			}
+			lastPriority = job.SortablePriority
+			lastID = job.ID
+			haveCursor = true
+		}
+		if len(jobs) < batchSize {
+			return nil, gorm.ErrRecordNotFound
+		}
+	}
 }

@@ -50,7 +50,7 @@ admission_min_task_fee_gwei =
 After the estimated post-cap `billable_gwei` is computed, when `admission_min_task_fee_gwei` is positive and the estimated fee is strictly below that scaled floor:
 
 * static Cost Level mode MUST reject with HTTP 400 and MUST NOT create a job or lock Credits;
-* auto Cost Level mode MUST raise the effective priority (and therefore the estimated fee) to the lowest value that meets the scaled floor, capped by the project's `auto_max_priority_gwei`, when that auto maximum can produce a fee at or above the scaled floor; otherwise it MUST reject with HTTP 400.
+* auto Cost Level mode MUST first lower the queue-target priority so estimated Credits stay within `auto_max_credits_per_task`, then raise priority within that Credits budget to the lowest value that meets the scaled floor when needed; when that budget cannot produce a fee at or above the scaled floor it MUST reject with HTTP 400.
 
 A configured minimum of `0` disables the gate for that Service Provider. Settlement MUST NOT raise Credits or Key Owner earnings to the scaled floor after admission. The job billing snapshot MUST store the configured base CNX string, the resolved maximum generated tokens, and the post-raise effective priority.
 
@@ -99,7 +99,7 @@ effective =
   + floor((highest - lowest) * auto_queue_position / 100)
 ```
 
-The result MUST be capped by `auto_max_priority_gwei` and clamped to the configured global bounds.
+The result MUST stay within `auto_max_credits_per_task` and MUST be clamped to the configured global Cost Level bounds.
 
 When the Provider queue is empty or its bounds are unusable, auto mode MUST use `llm.min_priority_gwei`.
 

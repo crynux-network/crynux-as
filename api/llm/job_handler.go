@@ -117,7 +117,7 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	)
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
-		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) || errors.Is(err, service.ErrAutoMaxCreditsInsufficient) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
 		}

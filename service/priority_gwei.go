@@ -31,6 +31,23 @@ func ParsePriorityGwei(value string) (*big.Int, error) {
 	return priority, nil
 }
 
+// ParseAutoMaxCreditsPerTask parses a positive decimal integer Credits string.
+func ParseAutoMaxCreditsPerTask(value string) (*big.Int, error) {
+	if value == "" {
+		return nil, errors.New("auto_max_credits_per_task must be a positive decimal integer")
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return nil, errors.New("auto_max_credits_per_task must be a positive decimal integer")
+		}
+	}
+	credits, ok := new(big.Int).SetString(value, 10)
+	if !ok || credits.Sign() <= 0 {
+		return nil, errors.New("auto_max_credits_per_task must be a positive decimal integer")
+	}
+	return credits, nil
+}
+
 // ValidatePriorityGwei checks priority is within configured inclusive bounds.
 func ValidatePriorityGwei(priority *big.Int) error {
 	if priority == nil || priority.Sign() <= 0 {
@@ -112,25 +129,18 @@ func InitialProjectPriorityGwei() (*big.Int, error) {
 	return ClampPriorityGwei(median)
 }
 
-// InitialProjectAutoMaxPriorityGwei returns the current queue highest priority when
-// usable, otherwise llm.min_priority_gwei, clamped to configured bounds.
-func InitialProjectAutoMaxPriorityGwei() (*big.Int, error) {
-	highest, _, ok := ResolveQueuePriorityBounds()
-	if ok && highest != nil && highest.Sign() > 0 {
-		return ClampPriorityGwei(highest)
-	}
+// DefaultAutoMaxCreditsPerTask returns llm.default_auto_max_credits_per_task.
+func DefaultAutoMaxCreditsPerTask() (*big.Int, error) {
 	cfg := config.GetConfig()
 	if cfg == nil {
-		return nil, errors.New("llm priority bounds are not configured")
+		return nil, errors.New("llm default auto max credits is not configured")
 	}
-	minPriority, err := cfg.ParseMinPriorityGwei()
-	if err != nil {
-		return nil, fmt.Errorf("llm.min_priority_gwei is invalid: %w", err)
-	}
-	return minPriority, nil
+	return cfg.ParseDefaultAutoMaxCreditsPerTask()
 }
 
 // ResolveEffectivePriorityGwei resolves the request Cost Level from the project mode.
+// Auto mode returns the queue-position target without applying Max Credits; that
+// cap is applied later during task-fee estimation for the concrete workload.
 func ResolveEffectivePriorityGwei(project *models.Project) (*big.Int, error) {
 	if project == nil {
 		return nil, errors.New("project is required")
@@ -153,11 +163,8 @@ func ResolveEffectivePriorityGwei(project *models.Project) (*big.Int, error) {
 }
 
 func resolveAutoPriorityGwei(project *models.Project) (*big.Int, error) {
-	if project.AutoMaxPriorityGwei == nil || project.AutoMaxPriorityGwei.Sign() <= 0 {
-		return nil, errors.New("auto_max_priority_gwei is required for auto mode")
-	}
-	if err := ValidatePriorityGwei(&project.AutoMaxPriorityGwei.Int); err != nil {
-		return nil, fmt.Errorf("auto_max_priority_gwei: %w", err)
+	if err := requireAutoMaxCreditsPerTask(project); err != nil {
+		return nil, err
 	}
 	position := DefaultAutoQueuePosition
 	if project.AutoQueuePosition != nil {
@@ -195,8 +202,12 @@ func resolveAutoPriorityGwei(project *models.Project) (*big.Int, error) {
 		effective = minPriority
 	}
 
-	if effective.Cmp(&project.AutoMaxPriorityGwei.Int) > 0 {
-		effective = new(big.Int).Set(&project.AutoMaxPriorityGwei.Int)
-	}
 	return ClampPriorityGwei(effective)
+}
+
+func requireAutoMaxCreditsPerTask(project *models.Project) error {
+	if project.AutoMaxCreditsPerTask == nil || project.AutoMaxCreditsPerTask.Sign() <= 0 {
+		return errors.New("auto_max_credits_per_task is required for auto mode")
+	}
+	return nil
 }

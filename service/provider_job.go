@@ -301,6 +301,9 @@ func ResolveProviderEffectivePriority(project *models.Project) (*big.Int, error)
 }
 
 func ResolveAutoPriorityFromBounds(project *models.Project, lowest, highest *big.Int) (*big.Int, error) {
+	if err := requireAutoMaxCreditsPerTask(project); err != nil {
+		return nil, err
+	}
 	position := DefaultAutoQueuePosition
 	if project.AutoQueuePosition != nil {
 		position = *project.AutoQueuePosition
@@ -312,8 +315,5 @@ func ResolveAutoPriorityFromBounds(project *models.Project, lowest, highest *big
 	offset := new(big.Int).Mul(span, big.NewInt(int64(position)))
 	offset.Div(offset, big.NewInt(100))
 	effective := new(big.Int).Add(lowest, offset)
-	if project.AutoMaxPriorityGwei != nil && project.AutoMaxPriorityGwei.Sign() > 0 && effective.Cmp(&project.AutoMaxPriorityGwei.Int) > 0 {
-		effective = new(big.Int).Set(&project.AutoMaxPriorityGwei.Int)
-	}
 	return ClampPriorityGwei(effective)
 }

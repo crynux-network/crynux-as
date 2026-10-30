@@ -24,7 +24,7 @@ type ProjectData struct {
 	CostLevelMode             string  `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
 	PriorityGwei              string  `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
 	AutoQueuePosition         *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
-	AutoMaxPriorityGwei       *string `json:"auto_max_priority_gwei" description:"Auto Cost Level max priority in Gwei"`
+	AutoMaxCreditsPerTask     *string `json:"auto_max_credits_per_task" description:"Auto Max Credits per task"`
 	Status                    int8    `json:"status" description:"The project status"`
 	CreatedAt                 int64   `json:"created_at" description:"The unix timestamp when the project is created"`
 	LastRequestAt             *int64  `json:"last_request_at" description:"Unix timestamp of the latest finished request that entered usage stats"`
@@ -79,24 +79,24 @@ func CreateProject(c *gin.Context, in *CreateProjectInput) (*CreateProjectRespon
 		log.Errorf("Error resolving initial project priority: %v", err)
 		return nil, response.NewExceptionResponse(err)
 	}
-	autoMaxPriorityGwei, err := service.InitialProjectAutoMaxPriorityGwei()
+	autoMaxCredits, err := service.DefaultAutoMaxCreditsPerTask()
 	if err != nil {
-		log.Errorf("Error resolving initial auto max priority: %v", err)
+		log.Errorf("Error resolving default auto max credits: %v", err)
 		return nil, response.NewExceptionResponse(err)
 	}
 	autoQueuePosition := service.DefaultAutoQueuePosition
 
 	project := models.Project{
-		UserID:              user.ID,
-		Name:                in.Name,
-		EndpointToken:       endpointToken,
-		APIKeyHash:          utils.HashToken(apiKey),
-		APIKeyPrefix:        apiKeyPrefix(apiKey),
-		CostLevelMode:       models.CostLevelModeStatic,
-		PriorityGwei:        models.BigInt{Int: *priorityGwei},
-		AutoQueuePosition:   &autoQueuePosition,
-		AutoMaxPriorityGwei: &models.BigInt{Int: *autoMaxPriorityGwei},
-		Status:              models.ProjectStatusActive,
+		UserID:                user.ID,
+		Name:                  in.Name,
+		EndpointToken:         endpointToken,
+		APIKeyHash:            utils.HashToken(apiKey),
+		APIKeyPrefix:          apiKeyPrefix(apiKey),
+		CostLevelMode:         models.CostLevelModeStatic,
+		PriorityGwei:          models.BigInt{Int: *priorityGwei},
+		AutoQueuePosition:     &autoQueuePosition,
+		AutoMaxCreditsPerTask: &models.BigInt{Int: *autoMaxCredits},
+		Status:                models.ProjectStatusActive,
 	}
 
 	db := config.GetDB()
@@ -178,12 +178,12 @@ func GetProject(c *gin.Context, in *GetProjectInput) (*ProjectResponse, error) {
 }
 
 type UpdateProjectInput struct {
-	ProjectID           uint    `path:"project_id" validate:"required" description:"The project ID"`
-	Name                *string `json:"name" description:"The new project name"`
-	CostLevelMode       *string `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
-	PriorityGwei        *string `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
-	AutoQueuePosition   *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
-	AutoMaxPriorityGwei *string `json:"auto_max_priority_gwei" description:"Auto Cost Level max priority in Gwei"`
+	ProjectID             uint    `path:"project_id" validate:"required" description:"The project ID"`
+	Name                  *string `json:"name" description:"The new project name"`
+	CostLevelMode         *string `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
+	PriorityGwei          *string `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
+	AutoQueuePosition     *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
+	AutoMaxCreditsPerTask *string `json:"auto_max_credits_per_task" description:"Auto Max Credits per task"`
 }
 
 func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, error) {
@@ -196,7 +196,7 @@ func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, er
 		in.CostLevelMode == nil &&
 		in.PriorityGwei == nil &&
 		in.AutoQueuePosition == nil &&
-		in.AutoMaxPriorityGwei == nil {
+		in.AutoMaxCreditsPerTask == nil {
 		return nil, response.NewValidationErrorResponse("body", "at least one field is required")
 	}
 
@@ -234,12 +234,12 @@ func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, er
 		project.AutoQueuePosition = &parsed
 	}
 
-	if in.AutoMaxPriorityGwei != nil {
-		parsed, err := service.ParsePriorityGwei(*in.AutoMaxPriorityGwei)
+	if in.AutoMaxCreditsPerTask != nil {
+		parsed, err := service.ParseAutoMaxCreditsPerTask(*in.AutoMaxCreditsPerTask)
 		if err != nil {
-			return nil, response.NewValidationErrorResponse("auto_max_priority_gwei", err.Error())
+			return nil, response.NewValidationErrorResponse("auto_max_credits_per_task", err.Error())
 		}
-		project.AutoMaxPriorityGwei = &models.BigInt{Int: *parsed}
+		project.AutoMaxCreditsPerTask = &models.BigInt{Int: *parsed}
 	}
 
 	if in.CostLevelMode != nil {
@@ -248,10 +248,10 @@ func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, er
 			return nil, response.NewValidationErrorResponse("cost_level_mode", err.Error())
 		}
 		if mode == models.CostLevelModeAuto {
-			if project.AutoMaxPriorityGwei == nil || project.AutoMaxPriorityGwei.Sign() <= 0 {
+			if project.AutoMaxCreditsPerTask == nil || project.AutoMaxCreditsPerTask.Sign() <= 0 {
 				return nil, response.NewValidationErrorResponse(
-					"auto_max_priority_gwei",
-					"auto_max_priority_gwei is required for auto mode",
+					"auto_max_credits_per_task",
+					"auto_max_credits_per_task is required for auto mode",
 				)
 			}
 			if project.AutoQueuePosition == nil {
@@ -424,9 +424,9 @@ func toProjectData(p *models.Project) ProjectData {
 		RecentWindowFailureCount:  p.RecentWindowFailureCount,
 		ElevatedRecentFailureRate: elevated,
 	}
-	if p.AutoMaxPriorityGwei != nil {
-		value := p.AutoMaxPriorityGwei.String()
-		data.AutoMaxPriorityGwei = &value
+	if p.AutoMaxCreditsPerTask != nil {
+		value := p.AutoMaxCreditsPerTask.String()
+		data.AutoMaxCreditsPerTask = &value
 	}
 	return data
 }

@@ -373,9 +373,9 @@ Each project stores a Cost Level configuration that determines the effective `pr
 | `cost_level_mode` | Yes | `static` or `auto`. Default at create and for migrated existing projects: `static`. |
 | `priority_gwei` | Yes | Static-mode Cost Level as a decimal integer Gwei string. Independent of auto fields. |
 | `auto_queue_position` | Nullable until Auto is configured | Integer in `[0, 100]`. Default at create: `50`. |
-| `auto_max_priority_gwei` | Nullable until Auto is configured | Auto-mode upper cap as a decimal integer Gwei string within `[llm.min_priority_gwei, llm.max_priority_gwei]`. |
+| `auto_max_credits_per_task` | Nullable until Auto is configured | Auto-mode upper Credits cap as a positive decimal integer string. |
 
-Switching mode MUST NOT overwrite the other mode's stored values. Project update MUST reject `cost_level_mode` values other than `static` or `auto`. Project update MUST reject a `priority_gwei` or `auto_max_priority_gwei` outside the inclusive range `[llm.min_priority_gwei, llm.max_priority_gwei]`. Project update MUST reject an `auto_queue_position` outside `[0, 100]`. Setting `cost_level_mode` to `auto` MUST be rejected when `auto_max_priority_gwei` is missing or invalid after applying the same update payload.
+Switching mode MUST NOT overwrite the other mode's stored values. Project update MUST reject `cost_level_mode` values other than `static` or `auto`. Project update MUST reject a `priority_gwei` outside the inclusive range `[llm.min_priority_gwei, llm.max_priority_gwei]`. Project update MUST reject an `auto_max_credits_per_task` that is not a positive decimal integer. Project update MUST reject an `auto_queue_position` outside `[0, 100]`. Setting `cost_level_mode` to `auto` MUST be rejected when `auto_max_credits_per_task` is missing or invalid after applying the same update payload.
 
 ### Create Defaults
 
@@ -384,15 +384,15 @@ When a project is created, the service MUST:
 1. Set `cost_level_mode` to `static`.
 2. Set `priority_gwei` to the Queue Median Hint resolved by `ResolveQueueMedianHint`, clamped into `[min_priority_gwei, max_priority_gwei]`.
 3. Set `auto_queue_position` to `50`.
-4. Set `auto_max_priority_gwei` from one consistent queued-priority snapshot: the live `highest_priority_gwei` when the queue is non-empty, both bounds are present, and `highest_priority_gwei` is positive; otherwise `llm.min_priority_gwei`. Clamp the result into `[min_priority_gwei, max_priority_gwei]`.
+4. Set `auto_max_credits_per_task` from `llm.default_auto_max_credits_per_task`.
 
 The create request MUST NOT require the client to supply Cost Level fields. After creation, only an explicit project update MUST change Cost Level fields.
 
-Migration of existing projects MUST set `cost_level_mode` to `static` and MUST preserve the existing `priority_gwei`. Migration MUST NOT invent Auto values for existing projects; `auto_queue_position` and `auto_max_priority_gwei` MAY remain null until the first Auto configuration update.
+The migration that replaces `auto_max_priority_gwei` with `auto_max_credits_per_task` MUST backfill every existing project to `100` and MUST drop `auto_max_priority_gwei`.
 
 ### Effective Priority Resolution
 
-Before Credits precheck and Task Fee Estimation for an LLM request, the service MUST resolve one effective `priority_gwei` for that request:
+Before Credits precheck and Task Fee Estimation for an LLM request, the service MUST resolve one uncapped target `priority_gwei` for that request:
 
 1. When `cost_level_mode` is `static`, the effective value MUST be the project's stored `priority_gwei`.
 2. When `cost_level_mode` is `auto`:
@@ -402,13 +402,13 @@ Before Credits precheck and Task Fee Estimation for an LLM request, the service 
       ```
       using integer arithmetic. The result MUST lie in `[lowest, highest]`. `lowest_priority_gwei` MAY be `0` when Relay truncates a sub-Gwei queue floor to zero; that value remains a usable bound.
    2. Otherwise the effective value MUST be `llm.min_priority_gwei`.
-   3. The service MUST then set `effective = min(effective, auto_max_priority_gwei)`.
-   4. The service MUST clamp the result into `[llm.min_priority_gwei, llm.max_priority_gwei]`.
-3. When `cost_level_mode` is `auto` and `auto_max_priority_gwei` is missing, the request MUST fail as a server error and MUST NOT forward to Bridge.
+   3. The service MUST clamp the result into `[llm.min_priority_gwei, llm.max_priority_gwei]`.
+   4. This resolution MUST NOT apply `auto_max_credits_per_task`. The Max Credits cap is applied later during task-fee estimation for the concrete request workload, as specified in [credits-billing.md](./credits-billing.md).
+3. When `cost_level_mode` is `auto` and `auto_max_credits_per_task` is missing, the request MUST fail as a server error and MUST NOT forward to Bridge.
 
-The resolved effective value MUST be snapshotted onto the LLM job and call record. Settle MUST use that snapshot and MUST NOT re-resolve from the project or live queue.
+The final create-time `priority_gwei` after Max Credits capping and minimum-fee raise MUST be snapshotted onto the LLM job and call record. Settle MUST use that snapshot and MUST NOT re-resolve from the project or live queue. `auto_max_credits_per_task` MUST NOT be written into `billing_data` and MUST NOT change settlement formulas.
 
-Project read APIs MUST return `cost_level_mode`, `priority_gwei`, `auto_queue_position` (null when unset), and `auto_max_priority_gwei` (null when unset). `priority_gwei` and `auto_max_priority_gwei` MUST be decimal integer strings when present. Project update MUST be a partial update: omitted Cost Level fields MUST remain unchanged, and a rename that omits Cost Level fields MUST NOT require or clear them.
+Project read APIs MUST return `cost_level_mode`, `priority_gwei`, `auto_queue_position` (null when unset), and `auto_max_credits_per_task` (null when unset). `priority_gwei` and `auto_max_credits_per_task` MUST be decimal integer strings when present. Project update MUST be a partial update: omitted Cost Level fields MUST remain unchanged, and a rename that omits Cost Level fields MUST NOT require or clear them.
 
 ## LLM Charging Rules
 
@@ -461,7 +461,8 @@ llm:
 * `min_priority_gwei` and `max_priority_gwei` are the hard bounds for project Cost Level values. They MUST be positive decimal integer strings. Configuration loading MUST fail when `min_priority_gwei` is greater than `max_priority_gwei`.
 * `credits_per_gwei` is specified in [credits-billing.md](./credits-billing.md). It MUST be a positive decimal string.
 * `max_task_price_cnx` is specified in [credits-billing.md](./credits-billing.md). It MUST be a map of provider ID to positive decimal CNX string, MUST include `crynux`, and MUST include one entry for every configured Service Provider. Configuration loading MUST fail when any required key is missing, any value is non-positive, or any value does not convert to a positive Gwei amount. Every YAML configuration template MUST set it.
-* `min_task_price_cnx` is specified in [credits-billing.md](./credits-billing.md). It MUST be a map of provider ID to non-negative decimal CNX string with the same keys as `max_task_price_cnx`. A value of `0` disables the admission floor for that provider. Static Cost Level requests below the floor MUST be rejected. Auto Cost Level requests below the floor MUST raise effective priority up to `auto_max_priority_gwei` when that maximum can meet the floor, otherwise MUST be rejected. Configuration loading MUST fail when any required key is missing, any value is negative, any value does not convert to a non-negative Gwei amount, or any provider's minimum exceeds that provider's maximum. Every YAML configuration template MUST set it.
+* `min_task_price_cnx` is specified in [credits-billing.md](./credits-billing.md). It MUST be a map of provider ID to non-negative decimal CNX string with the same keys as `max_task_price_cnx`. A value of `0` disables the admission floor for that provider. Static Cost Level requests below the floor MUST be rejected. Auto Cost Level requests MUST first lower the queue-target priority so estimated Credits stay within `auto_max_credits_per_task`, then raise priority within that Credits budget when needed to meet the floor; when that budget cannot meet the floor the request MUST be rejected. Configuration loading MUST fail when any required key is missing, any value is negative, any value does not convert to a non-negative Gwei amount, or any provider's minimum exceeds that provider's maximum. Every YAML configuration template MUST set it.
+* `default_auto_max_credits_per_task` MUST be a positive decimal integer Credits string. It is the create default and the WebUI default for Auto Max Credits per task.
 * `job_submit_timeout` is the maximum age in seconds of a `pending_submit` LLM job before the worker stops Bridge submit retries and marks the job failed. Every YAML configuration template MUST set it to a positive integer.
 * `job_retention_days` is the number of days a terminal settled job remains readable for Responses lookup and `previous_response_id`. Every YAML configuration template MUST set it to a positive integer. Example configurations MUST use `30`. After that window, retention cleanup MUST delete the `task_jobs` row and the matching `{task_result_dir}/{id}` directory when present, and MUST NOT delete `task_call_records`, `credit_events`, or `credit_accounts`.
 * `task_result_dir` is the local directory root for Image task PNG files at `{task_result_dir}/{task_jobs.id}/{index}.png`. Every YAML configuration template MUST set it to a non-empty path. Example configurations MUST use `data/task_results`. Configuration loading MUST fail when it is missing or empty.

@@ -69,7 +69,7 @@ func TestResolveEffectivePriorityGweiStatic(t *testing.T) {
 	}
 }
 
-func TestResolveEffectivePriorityGweiAutoLinearFloorAndCap(t *testing.T) {
+func TestResolveEffectivePriorityGweiAutoLinearFloor(t *testing.T) {
 	withPriorityBounds(t, "1", "1000")
 	resetQueuedPriorityCacheForTest()
 	t.Cleanup(resetQueuedPriorityCacheForTest)
@@ -82,11 +82,11 @@ func TestResolveEffectivePriorityGweiAutoLinearFloorAndCap(t *testing.T) {
 	}, big.NewInt(15))
 
 	position := 50
-	cap := models.BigInt{Int: *big.NewInt(1000)}
+	credits := models.BigInt{Int: *big.NewInt(100)}
 	project := &models.Project{
-		CostLevelMode:       models.CostLevelModeAuto,
-		AutoQueuePosition:   &position,
-		AutoMaxPriorityGwei: &cap,
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoQueuePosition:     &position,
+		AutoMaxCreditsPerTask: &credits,
 	}
 	got, err := ResolveEffectivePriorityGwei(project)
 	if err != nil {
@@ -99,14 +99,13 @@ func TestResolveEffectivePriorityGweiAutoLinearFloorAndCap(t *testing.T) {
 
 	position = 100
 	project.AutoQueuePosition = &position
-	lowCap := models.BigInt{Int: *big.NewInt(12)}
-	project.AutoMaxPriorityGwei = &lowCap
 	got, err = ResolveEffectivePriorityGwei(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Cmp(big.NewInt(12)) != 0 {
-		t.Fatalf("capped got %s, want 12", got.String())
+	// Resolve no longer caps by Max Credits; 10 + (21-10) = 21
+	if got.Cmp(big.NewInt(21)) != 0 {
+		t.Fatalf("got %s, want 21", got.String())
 	}
 }
 
@@ -120,11 +119,11 @@ func TestResolveEffectivePriorityGweiAutoEmptyQueueUsesMin(t *testing.T) {
 	}, nil)
 
 	position := 80
-	cap := models.BigInt{Int: *big.NewInt(500)}
+	credits := models.BigInt{Int: *big.NewInt(100)}
 	project := &models.Project{
-		CostLevelMode:       models.CostLevelModeAuto,
-		AutoQueuePosition:   &position,
-		AutoMaxPriorityGwei: &cap,
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoQueuePosition:     &position,
+		AutoMaxCreditsPerTask: &credits,
 	}
 	got, err := ResolveEffectivePriorityGwei(project)
 	if err != nil {
@@ -148,19 +147,19 @@ func TestResolveEffectivePriorityGweiAutoZeroLowestUsesLinearMap(t *testing.T) {
 	}, big.NewInt(35))
 
 	position := 97
-	cap := models.BigInt{Int: *big.NewInt(1345)}
+	credits := models.BigInt{Int: *big.NewInt(100)}
 	project := &models.Project{
-		CostLevelMode:       models.CostLevelModeAuto,
-		AutoQueuePosition:   &position,
-		AutoMaxPriorityGwei: &cap,
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoQueuePosition:     &position,
+		AutoMaxCreditsPerTask: &credits,
 	}
 	got, err := ResolveEffectivePriorityGwei(project)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 0 + floor((5596-0)*97/100) = 5428, then min(5428, 1345) = 1345
-	if got.Cmp(big.NewInt(1345)) != 0 {
-		t.Fatalf("got %s, want 1345", got.String())
+	// 0 + floor((5596-0)*97/100) = 5428
+	if got.Cmp(big.NewInt(5428)) != 0 {
+		t.Fatalf("got %s, want 5428", got.String())
 	}
 }
 
@@ -177,11 +176,11 @@ func TestResolveEffectivePriorityGweiAutoZeroHighestFallsBackToMin(t *testing.T)
 	}, big.NewInt(0))
 
 	position := 97
-	cap := models.BigInt{Int: *big.NewInt(500)}
+	credits := models.BigInt{Int: *big.NewInt(100)}
 	project := &models.Project{
-		CostLevelMode:       models.CostLevelModeAuto,
-		AutoQueuePosition:   &position,
-		AutoMaxPriorityGwei: &cap,
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoQueuePosition:     &position,
+		AutoMaxCreditsPerTask: &credits,
 	}
 	got, err := ResolveEffectivePriorityGwei(project)
 	if err != nil {
@@ -192,13 +191,13 @@ func TestResolveEffectivePriorityGweiAutoZeroHighestFallsBackToMin(t *testing.T)
 	}
 }
 
-func TestResolveEffectivePriorityGweiAutoRequiresMax(t *testing.T) {
+func TestResolveEffectivePriorityGweiAutoRequiresMaxCredits(t *testing.T) {
 	withPriorityBounds(t, "1", "1000")
 	project := &models.Project{
 		CostLevelMode: models.CostLevelModeAuto,
 	}
 	if _, err := ResolveEffectivePriorityGwei(project); err == nil {
-		t.Fatal("expected error when auto max is missing")
+		t.Fatal("expected error when auto max credits is missing")
 	}
 }
 
@@ -212,6 +211,25 @@ func TestParseAutoQueuePosition(t *testing.T) {
 	got, err := ParseAutoQueuePosition(0)
 	if err != nil || got != 0 {
 		t.Fatalf("got %d err %v", got, err)
+	}
+}
+
+func TestParseAutoMaxCreditsPerTask(t *testing.T) {
+	got, err := ParseAutoMaxCreditsPerTask("100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("got %s, want 100", got.String())
+	}
+	if _, err := ParseAutoMaxCreditsPerTask("0"); err == nil {
+		t.Fatal("expected error for 0")
+	}
+	if _, err := ParseAutoMaxCreditsPerTask("1.5"); err == nil {
+		t.Fatal("expected error for fractional value")
+	}
+	if _, err := ParseAutoMaxCreditsPerTask(""); err == nil {
+		t.Fatal("expected error for empty value")
 	}
 }
 

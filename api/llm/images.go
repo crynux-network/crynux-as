@@ -111,7 +111,7 @@ func ImagesGenerations(c *gin.Context) {
 	})
 	if err != nil {
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), priorityGwei, nil)
-		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) || errors.Is(err, service.ErrAutoMaxCreditsInsufficient) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -276,7 +276,7 @@ func ImagesEdits(c *gin.Context) {
 	})
 	if err != nil {
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), priorityGwei, nil)
-		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) || errors.Is(err, service.ErrAutoMaxCreditsInsufficient) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
 		}

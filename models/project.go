@@ -27,7 +27,7 @@ type Project struct {
 	CostLevelMode            string        `json:"cost_level_mode" gorm:"type:string;size:16;not null;default:static"`
 	PriorityGwei             BigInt        `json:"priority_gwei" gorm:"type:string;size:255;not null"`
 	AutoQueuePosition        *int          `json:"auto_queue_position"`
-	AutoMaxPriorityGwei      *BigInt       `json:"auto_max_priority_gwei" gorm:"type:string;size:255"`
+	AutoMaxCreditsPerTask    *BigInt       `json:"auto_max_credits_per_task" gorm:"type:string;size:255"`
 	Status                   ProjectStatus `json:"status" gorm:"not null;default:0;index"`
 	LastRequestAt            *int64        `json:"last_request_at"`
 	RequestCountDay          uint64        `json:"request_count_day" gorm:"not null;default:0"`

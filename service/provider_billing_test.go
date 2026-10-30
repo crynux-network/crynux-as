@@ -32,16 +32,19 @@ func TestEnforceAdmissionMinTaskFeeStaticRejects(t *testing.T) {
 
 func TestEnforceAdmissionMinTaskFeeAutoRaisesToMinimum(t *testing.T) {
 	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
 	cfg.LLM.MinTaskPriceCNX = map[string]string{
 		"anthropic": "0.001",
 	}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
-	autoMax := models.BigInt{Int: *big.NewInt(20_000)}
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(2_000_000)}
 	project := &models.Project{
-		CostLevelMode:       models.CostLevelModeAuto,
-		AutoMaxPriorityGwei: &autoMax,
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
 	// fee = priority * 100; need priority >= 10000 for min 1e6 gwei
 	adjusted, fee, err := EnforceAdmissionMinTaskFee(
@@ -63,18 +66,129 @@ func TestEnforceAdmissionMinTaskFeeAutoRaisesToMinimum(t *testing.T) {
 	}
 }
 
-func TestEnforceAdmissionMinTaskFeeAutoRejectsWhenMaxTooLow(t *testing.T) {
+func TestCapPriorityByAutoMaxCreditsLowersPriority(t *testing.T) {
 	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(500)}
+	project := &models.Project{
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
+	// fee = priority * 100 => Credits = priority * 100 with G=1.
+	capped, err := CapPriorityByAutoMaxCredits(
+		project,
+		big.NewInt(20),
+		func(priority *big.Int) (*big.Int, error) {
+			return new(big.Int).Mul(priority, big.NewInt(100)), nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capped.Cmp(big.NewInt(5)) != 0 {
+		t.Fatalf("capped=%s, want 5", capped.String())
+	}
+}
+
+func TestMaxPriorityWithinAutoMaxCreditsRejectsWhenMinExceedsBudget(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(50)}
+	project := &models.Project{
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
+	_, err := MaxPriorityWithinAutoMaxCredits(
+		project,
+		func(priority *big.Int) (*big.Int, error) {
+			return new(big.Int).Mul(priority, big.NewInt(100)), nil
+		},
+	)
+	if !errors.Is(err, ErrAutoMaxCreditsInsufficient) {
+		t.Fatalf("err=%v, want ErrAutoMaxCreditsInsufficient", err)
+	}
+}
+
+func TestProviderQueueBoundsForUIEmpty(t *testing.T) {
+	providerQueuePriorityMu.Lock()
+	providerQueuePrioritySnapshot = ProviderQueuePrioritySnapshot{}
+	providerQueuePriorityMu.Unlock()
+
+	lowest, highest, hasJobs := ProviderQueueBoundsForUI()
+	if hasJobs || lowest != nil || highest != nil {
+		t.Fatalf("want empty queue, got hasJobs=%v lowest=%v highest=%v", hasJobs, lowest, highest)
+	}
+}
+
+func TestProviderQueueBoundsForUINonEmpty(t *testing.T) {
+	providerQueuePriorityMu.Lock()
+	providerQueuePrioritySnapshot = ProviderQueuePrioritySnapshot{
+		HasJobs: true,
+		Lowest:  big.NewInt(10),
+		Highest: big.NewInt(40),
+	}
+	providerQueuePriorityMu.Unlock()
+	t.Cleanup(func() {
+		providerQueuePriorityMu.Lock()
+		providerQueuePrioritySnapshot = ProviderQueuePrioritySnapshot{}
+		providerQueuePriorityMu.Unlock()
+	})
+
+	lowest, highest, hasJobs := ProviderQueueBoundsForUI()
+	if !hasJobs {
+		t.Fatal("want hasJobs")
+	}
+	if lowest.Cmp(big.NewInt(10)) != 0 || highest.Cmp(big.NewInt(40)) != 0 {
+		t.Fatalf("got %s-%s, want 10-40", lowest.String(), highest.String())
+	}
+}
+
+func TestResolveProviderCostHintsEmptyProvidersUsesMinPriority(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MinPriorityGwei = "3"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
+	cfg.LLM.DefaultMaxTokens = 2048
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	hints, err := ResolveProviderCostHints()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.MinPriorityGwei.Cmp(big.NewInt(3)) != 0 {
+		t.Fatalf("MinPriorityGwei=%s, want 3", hints.MinPriorityGwei.String())
+	}
+	if hints.MinCredits.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("MinCredits=%s, want 1", hints.MinCredits.String())
+	}
+}
+
+func TestEnforceAdmissionMinTaskFeeAutoRejectsWhenMaxCreditsTooLow(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
 	cfg.LLM.MinTaskPriceCNX = map[string]string{
 		"anthropic": "0.001",
 	}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
-	autoMax := models.BigInt{Int: *big.NewInt(100)}
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(50)}
 	project := &models.Project{
-		CostLevelMode:       models.CostLevelModeAuto,
-		AutoMaxPriorityGwei: &autoMax,
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
 	_, _, err := EnforceAdmissionMinTaskFee(
 		"anthropic",
@@ -84,8 +198,8 @@ func TestEnforceAdmissionMinTaskFeeAutoRejectsWhenMaxTooLow(t *testing.T) {
 			return new(big.Int).Mul(priority, big.NewInt(100)), nil
 		},
 	)
-	if !errors.Is(err, ErrTaskFeeBelowMinimum) {
-		t.Fatalf("err=%v, want ErrTaskFeeBelowMinimum", err)
+	if !errors.Is(err, ErrAutoMaxCreditsInsufficient) {
+		t.Fatalf("err=%v, want ErrAutoMaxCreditsInsufficient", err)
 	}
 }
 
@@ -119,6 +233,8 @@ func TestBuildProviderBillingDataAutoRaisesPriority(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "0.00000125"
 	cfg.LLM.DefaultMaxTokens = 10
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{"anthropic": "100"}
 	cfg.LLM.MinTaskPriceCNX = map[string]string{"anthropic": "0.001"}
 	config.SetConfigForTest(cfg)
@@ -134,10 +250,10 @@ func TestBuildProviderBillingDataAutoRaisesPriority(t *testing.T) {
 			"cache_write_input_tokens": "1.25",
 		},
 	}
-	autoMax := models.BigInt{Int: *big.NewInt(1_000_000_000)}
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(100)}
 	project := &models.Project{
-		CostLevelMode:       models.CostLevelModeAuto,
-		AutoMaxPriorityGwei: &autoMax,
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
 	snapshot, credits, err := BuildProviderBillingData(project, route, big.NewInt(1), 100, 10, nil)
 	if err != nil {
@@ -156,6 +272,8 @@ func TestBuildProviderBillingDataScalesMinimumWithMaxOutputTokens(t *testing.T) 
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "0.00000125"
 	cfg.LLM.DefaultMaxTokens = 10
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{"anthropic": "100"}
 	cfg.LLM.MinTaskPriceCNX = map[string]string{"anthropic": "0.001"}
 	config.SetConfigForTest(cfg)
@@ -171,10 +289,10 @@ func TestBuildProviderBillingDataScalesMinimumWithMaxOutputTokens(t *testing.T) 
 			"cache_write_input_tokens": "1.25",
 		},
 	}
-	autoMax := models.BigInt{Int: *big.NewInt(1_000_000_000)}
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(100)}
 	project := &models.Project{
-		CostLevelMode:       models.CostLevelModeAuto,
-		AutoMaxPriorityGwei: &autoMax,
+		CostLevelMode:         models.CostLevelModeAuto,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
 
 	defaultSnapshot, _, err := BuildProviderBillingData(project, route, big.NewInt(1), 0, 10, nil)

@@ -254,6 +254,9 @@ func checkLLMConfig() error {
 	if _, err := appConfig.ParseCreditsPerGwei(); err != nil {
 		return fmt.Errorf("llm.credits_per_gwei is invalid: %w", err)
 	}
+	if _, err := appConfig.ParseDefaultAutoMaxCreditsPerTask(); err != nil {
+		return fmt.Errorf("llm.default_auto_max_credits_per_task is invalid: %w", err)
+	}
 	if err := checkMaxTaskPriceCNXConfig(); err != nil {
 		return err
 	}
@@ -671,6 +674,12 @@ func (cfg *AppConfig) ParseMaxPriorityGwei() (*big.Int, error) {
 
 func (cfg *AppConfig) ParseCreditsPerGwei() (*big.Rat, error) {
 	return ParsePositiveDecimalRate(cfg.LLM.CreditsPerGwei)
+}
+
+// ParseDefaultAutoMaxCreditsPerTask parses llm.default_auto_max_credits_per_task
+// as a positive decimal integer Credits amount.
+func (cfg *AppConfig) ParseDefaultAutoMaxCreditsPerTask() (*big.Int, error) {
+	return parsePositiveDecimalGwei(cfg.LLM.DefaultAutoMaxCreditsPerTask)
 }
 
 // MaxTaskPriceCNXFor returns the configured max_task_price_cnx string for one provider ID.

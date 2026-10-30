@@ -54,12 +54,18 @@ type CalcImageTaskFeeInput struct {
 // llm.min_task_price_cnx and cannot be raised under the project's Cost Level rules.
 var ErrTaskFeeBelowMinimum = errors.New("Task fee is below the minimum for this provider; increase the project Cost Level")
 
+// ErrAutoMaxCreditsInsufficient is returned when Auto Max Credits per task cannot
+// cover the provider minimum fee for the request workload.
+var ErrAutoMaxCreditsInsufficient = errors.New("Task fee is below the minimum for this provider; increase Max Credits per task")
+
 // EnforceAdmissionMinTaskFee compares the post-max-cap fee at the resolved
 // priority against llm.min_task_price_cnx.<providerID>.
 //
 // Static mode below the minimum returns ErrTaskFeeBelowMinimum.
-// Auto mode raises priority up to auto_max_priority_gwei when that cap can
-// produce a fee at or above the minimum; otherwise it returns the same error.
+// Auto mode first lowers priority so estimated Credits stay within
+// auto_max_credits_per_task, then raises priority within that Credits budget
+// when needed to meet the minimum fee. When the Credits budget cannot meet the
+// minimum, it returns ErrAutoMaxCreditsInsufficient.
 // feeAtPriority MUST return the post-max-cap billable/task fee for one priority.
 func EnforceAdmissionMinTaskFee(
 	providerID string,
@@ -126,37 +132,47 @@ func enforceAdmissionMinTaskFee(
 	if feeAtPriority == nil {
 		return nil, nil, errors.New("fee calculator is required")
 	}
-	billable, err := feeAtPriority(priority)
-	if err != nil {
-		return nil, nil, err
-	}
-	if minFee.Sign() <= 0 || billable.Cmp(minFee) >= 0 {
-		return new(big.Int).Set(priority), billable, nil
-	}
 
 	mode := project.CostLevelMode
 	if mode == "" {
 		mode = models.CostLevelModeStatic
 	}
+	workingPriority := new(big.Int).Set(priority)
+	if mode == models.CostLevelModeAuto {
+		capped, err := CapPriorityByAutoMaxCredits(project, workingPriority, feeAtPriority)
+		if err != nil {
+			return nil, nil, err
+		}
+		workingPriority = capped
+	}
+
+	billable, err := feeAtPriority(workingPriority)
+	if err != nil {
+		return nil, nil, err
+	}
+	if minFee.Sign() <= 0 || billable.Cmp(minFee) >= 0 {
+		return workingPriority, billable, nil
+	}
+
 	if mode != models.CostLevelModeAuto {
 		return nil, nil, ErrTaskFeeBelowMinimum
 	}
-	if project.AutoMaxPriorityGwei == nil || project.AutoMaxPriorityGwei.Sign() <= 0 {
-		return nil, nil, ErrTaskFeeBelowMinimum
+	autoMax, err := MaxPriorityWithinAutoMaxCredits(project, feeAtPriority)
+	if err != nil {
+		return nil, nil, err
 	}
-	autoMax := new(big.Int).Set(&project.AutoMaxPriorityGwei.Int)
-	if autoMax.Cmp(priority) < 0 {
-		autoMax = new(big.Int).Set(priority)
+	if autoMax.Cmp(workingPriority) < 0 {
+		autoMax = new(big.Int).Set(workingPriority)
 	}
 	feeAtMax, err := feeAtPriority(autoMax)
 	if err != nil {
 		return nil, nil, err
 	}
 	if feeAtMax.Cmp(minFee) < 0 {
-		return nil, nil, ErrTaskFeeBelowMinimum
+		return nil, nil, ErrAutoMaxCreditsInsufficient
 	}
 
-	lo := new(big.Int).Set(priority)
+	lo := new(big.Int).Set(workingPriority)
 	hi := new(big.Int).Set(autoMax)
 	for lo.Cmp(hi) < 0 {
 		mid := new(big.Int).Rsh(new(big.Int).Add(lo, hi), 1)
@@ -175,9 +191,95 @@ func enforceAdmissionMinTaskFee(
 		return nil, nil, err
 	}
 	if billable.Cmp(minFee) < 0 {
-		return nil, nil, ErrTaskFeeBelowMinimum
+		return nil, nil, ErrAutoMaxCreditsInsufficient
 	}
 	return hi, billable, nil
+}
+
+// CapPriorityByAutoMaxCredits lowers priority so estimated Credits stay within
+// the project's auto_max_credits_per_task. Static projects are unchanged.
+func CapPriorityByAutoMaxCredits(
+	project *models.Project,
+	priority *big.Int,
+	feeAtPriority func(priority *big.Int) (*big.Int, error),
+) (*big.Int, error) {
+	if project == nil {
+		return nil, errors.New("project is required")
+	}
+	if priority == nil || priority.Sign() <= 0 {
+		return nil, errors.New("priority_gwei must be positive")
+	}
+	maxWithin, err := MaxPriorityWithinAutoMaxCredits(project, feeAtPriority)
+	if err != nil {
+		return nil, err
+	}
+	if priority.Cmp(maxWithin) > 0 {
+		return maxWithin, nil
+	}
+	return new(big.Int).Set(priority), nil
+}
+
+// MaxPriorityWithinAutoMaxCredits returns the highest Cost Level whose estimated
+// Credits are at most auto_max_credits_per_task.
+func MaxPriorityWithinAutoMaxCredits(
+	project *models.Project,
+	feeAtPriority func(priority *big.Int) (*big.Int, error),
+) (*big.Int, error) {
+	if err := requireAutoMaxCreditsPerTask(project); err != nil {
+		return nil, err
+	}
+	if feeAtPriority == nil {
+		return nil, errors.New("fee calculator is required")
+	}
+	appCfg := config.GetConfig()
+	if appCfg == nil {
+		return nil, errors.New("config is not initialized")
+	}
+	rate, err := appCfg.ParseCreditsPerGwei()
+	if err != nil {
+		return nil, fmt.Errorf("credits_per_gwei: %w", err)
+	}
+	minPriority, err := appCfg.ParseMinPriorityGwei()
+	if err != nil {
+		return nil, fmt.Errorf("llm.min_priority_gwei is invalid: %w", err)
+	}
+	maxPriority, err := appCfg.ParseMaxPriorityGwei()
+	if err != nil {
+		return nil, fmt.Errorf("llm.max_priority_gwei is invalid: %w", err)
+	}
+	maxCredits := &project.AutoMaxCreditsPerTask.Int
+
+	creditsForPriority := func(priority *big.Int) (*big.Int, error) {
+		fee, err := feeAtPriority(priority)
+		if err != nil {
+			return nil, err
+		}
+		return CalcCreditsFromBillable(new(big.Float).SetInt(fee), rate)
+	}
+
+	minCredits, err := creditsForPriority(minPriority)
+	if err != nil {
+		return nil, err
+	}
+	if minCredits.Cmp(maxCredits) > 0 {
+		return nil, ErrAutoMaxCreditsInsufficient
+	}
+
+	lo := new(big.Int).Set(minPriority)
+	hi := new(big.Int).Set(maxPriority)
+	for lo.Cmp(hi) < 0 {
+		mid := new(big.Int).Rsh(new(big.Int).Add(lo, new(big.Int).Add(hi, big.NewInt(1))), 1)
+		credits, err := creditsForPriority(mid)
+		if err != nil {
+			return nil, err
+		}
+		if credits.Cmp(maxCredits) <= 0 {
+			lo = mid
+		} else {
+			hi = new(big.Int).Sub(mid, big.NewInt(1))
+		}
+	}
+	return lo, nil
 }
 
 type imageTaskArgs struct {

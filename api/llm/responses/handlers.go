@@ -144,7 +144,7 @@ func CreateResponse(c *gin.Context) {
 	)
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
-		if errors.Is(err, service.ErrTaskFeeBelowMinimum) {
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) || errors.Is(err, service.ErrAutoMaxCreditsInsufficient) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
 		}
