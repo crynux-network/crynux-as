@@ -38,6 +38,10 @@ func loadUser(c *gin.Context) (*models.User, error) {
 }
 
 func keyItem(key models.SharedAPIKey) gin.H {
+	var cooldownUntil any
+	if key.CooldownUntil != nil && key.CooldownUntil.After(time.Now()) {
+		cooldownUntil = key.CooldownUntil.UTC().Format(time.RFC3339)
+	}
 	return gin.H{
 		"id":                 key.PublicID,
 		"service_provider":   key.ServiceProvider,
@@ -47,6 +51,7 @@ func keyItem(key models.SharedAPIKey) gin.H {
 		"used_output_tokens": key.UsedOutputTokens,
 		"max_input_tokens":   key.MaxInputTokens,
 		"max_output_tokens":  key.MaxOutputTokens,
+		"cooldown_until":     cooldownUntil,
 	}
 }
 

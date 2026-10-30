@@ -93,11 +93,12 @@ Response item:
   "used_input_tokens": 1200,
   "used_output_tokens": 300,
   "max_input_tokens": 1000000,
-  "max_output_tokens": null
+  "max_output_tokens": null,
+  "cooldown_until": null
 }
 ```
 
-The list is account-scoped, excludes soft-deleted Keys, and is ordered by ID descending. Cooldown, concurrency, encryption, and internal health fields MUST NOT be returned. `used_input_tokens` and `used_output_tokens` are cumulative counters since the last usage reset. `max_input_tokens` and `max_output_tokens` are null when that side has no limit.
+The list is account-scoped, excludes soft-deleted Keys, and is ordered by ID descending. Concurrency, encryption, consecutive unavailable counts, and other internal health fields MUST NOT be returned. `used_input_tokens` and `used_output_tokens` are cumulative counters since the last usage reset. `max_input_tokens` and `max_output_tokens` are null when that side has no limit. `cooldown_until` MUST be an RFC3339 UTC timestamp while the key is in cooldown, and MUST be null when the key is not in cooldown or the cooldown has expired.
 
 ## Create Shared API Key
 
