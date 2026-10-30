@@ -93,6 +93,10 @@ Required fields:
 * `deleted_at`, nullable;
 * `consecutive_unavailable_count`;
 * `cooldown_until`, nullable;
+* `used_input_tokens`, non-negative integer, default `0`;
+* `used_output_tokens`, non-negative integer, default `0`;
+* `max_input_tokens`, nullable positive integer; null means unlimited;
+* `max_output_tokens`, nullable positive integer; null means unlimited;
 * `fingerprint`, nullable after deletion;
 * `key_ciphertext`, nullable after deletion;
 * `key_nonce`, nullable after deletion;
@@ -109,6 +113,8 @@ UNIQUE(service_provider, fingerprint)
 Delete MUST atomically set `deleted_at`, set `owner_enabled = false`, and clear `fingerprint`, key ciphertext, and key nonce. The retained row preserves ownership, Provider, masked suffix, and historical call-record lookup. Deleted rows MUST not be listed or selected for execution.
 
 Active slot counts MUST be maintained only in process memory. `consecutive_unavailable_count` MUST count only authentication failure, permission denial, rate limiting, and quota exhaustion. Each qualifying failure MUST atomically update the count before the current job selects another Key. On the third consecutive unavailable result, AS MUST reset the count to zero and set `cooldown_until` using `provider.key_cooldown_seconds`. A successful Provider call MUST clear the count. A failed Key below the threshold remains eligible for later jobs but MUST NOT be selected again by the current job. Cooldown expiry MUST require no database transition.
+
+`used_input_tokens` and `used_output_tokens` MUST accumulate only from successful Provider settlement in the same transaction that creates the billable call record and Key Owner earning. Settlement MUST lock the Shared API Key row, add the settled call's input tokens to `used_input_tokens`, and add its output tokens to `used_output_tokens`. Failed settlement MUST NOT change either counter. Eligibility queries MUST exclude a key when a set `max_input_tokens` satisfies `used_input_tokens >= max_input_tokens` or a set `max_output_tokens` satisfies `used_output_tokens >= max_output_tokens`. Resetting usage MUST set both used counters to zero and MUST NOT change either max.
 
 ### `earning_accounts`
 
@@ -225,7 +231,7 @@ Daily-limit indexes MUST support bounded counts by `(user_id, network, created_a
 The following MUST be atomic:
 
 * Credits reserve and job create;
-* successful consumer settlement, available earning creation, and TaskIncome publication;
+* successful consumer settlement, Shared API Key usage counter increment, available earning creation, and TaskIncome publication;
 * failure record and Credits hold release;
 * withdrawal create, available-to-locked transfer, and Withdraw event;
 * fulfill, locked release, and fee-income event;

@@ -156,6 +156,8 @@ func InitRoutes(r *fizz.Fizz) {
 	earnGroup.POST("/keys/:key_id/enable", []fizz.OperationOption{fizz.Summary("Enable a Shared API Key")}, tonic.Handler(earn.EnableKey, 200))
 	earnGroup.POST("/keys/:key_id/disable", []fizz.OperationOption{fizz.Summary("Disable a Shared API Key")}, tonic.Handler(earn.DisableKey, 200))
 	earnGroup.DELETE("/keys/:key_id", []fizz.OperationOption{fizz.Summary("Delete a Shared API Key")}, tonic.Handler(earn.DeleteKey, 200))
+	earnGroup.POST("/keys/:key_id/limits", []fizz.OperationOption{fizz.Summary("Set Shared API Key token limits")}, tonic.Handler(earn.SetKeyLimits, 200))
+	earnGroup.POST("/keys/:key_id/usage/reset", []fizz.OperationOption{fizz.Summary("Reset Shared API Key usage counters")}, tonic.Handler(earn.ResetKeyUsage, 200))
 	earnGroup.GET("/calls", []fizz.OperationOption{fizz.Summary("List Key Owner call records")}, tonic.Handler(earn.ListCalls, 200))
 	earnGroup.GET("/events", []fizz.OperationOption{fizz.Summary("List TaskIncome earning events")}, tonic.Handler(earn.ListEvents, 200))
 	earnGroup.GET("/withdrawal_networks", []fizz.OperationOption{fizz.Summary("List withdrawal networks")}, tonic.Handler(earn.ListWithdrawalNetworks, 200))

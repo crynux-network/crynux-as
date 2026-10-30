@@ -39,10 +39,14 @@ func loadUser(c *gin.Context) (*models.User, error) {
 
 func keyItem(key models.SharedAPIKey) gin.H {
 	return gin.H{
-		"id":               key.PublicID,
-		"service_provider": key.ServiceProvider,
-		"masked_suffix":    key.MaskedSuffix,
-		"owner_enabled":    key.OwnerEnabled,
+		"id":                 key.PublicID,
+		"service_provider":   key.ServiceProvider,
+		"masked_suffix":      key.MaskedSuffix,
+		"owner_enabled":      key.OwnerEnabled,
+		"used_input_tokens":  key.UsedInputTokens,
+		"used_output_tokens": key.UsedOutputTokens,
+		"max_input_tokens":   key.MaxInputTokens,
+		"max_output_tokens":  key.MaxOutputTokens,
 	}
 }
 
@@ -178,12 +182,71 @@ func DeleteKey(c *gin.Context) (*successResponse, error) {
 	return &successResponse{Data: gin.H{}}, nil
 }
 
+func parseOptionalUint64Limit(raw map[string]any, field string) (*uint64, error) {
+	v, ok := raw[field]
+	if !ok {
+		return nil, response.NewValidationErrorResponse(field, "is required")
+	}
+	if v == nil {
+		return nil, nil
+	}
+	switch n := v.(type) {
+	case float64:
+		if n != float64(uint64(n)) || n <= 0 {
+			return nil, response.NewValidationErrorResponse(field, "must be a positive integer or null")
+		}
+		u := uint64(n)
+		return &u, nil
+	default:
+		return nil, response.NewValidationErrorResponse(field, "must be a positive integer or null")
+	}
+}
+
+func SetKeyLimits(c *gin.Context) (*successResponse, error) {
+	user, err := loadUser(c)
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]any
+	if err := c.ShouldBindJSON(&raw); err != nil {
+		return nil, response.NewValidationErrorResponse("body", err.Error())
+	}
+	maxInput, err := parseOptionalUint64Limit(raw, "max_input_tokens")
+	if err != nil {
+		return nil, err
+	}
+	maxOutput, err := parseOptionalUint64Limit(raw, "max_output_tokens")
+	if err != nil {
+		return nil, err
+	}
+	key, err := service.UpdateSharedAPIKeyLimits(c.Request.Context(), config.GetDB(), user.ID, c.Param("key_id"), maxInput, maxOutput)
+	if err != nil {
+		return mapKeyErr(err)
+	}
+	return &successResponse{Data: keyItem(*key)}, nil
+}
+
+func ResetKeyUsage(c *gin.Context) (*successResponse, error) {
+	user, err := loadUser(c)
+	if err != nil {
+		return nil, err
+	}
+	key, err := service.ResetSharedAPIKeyUsage(c.Request.Context(), config.GetDB(), user.ID, c.Param("key_id"))
+	if err != nil {
+		return mapKeyErr(err)
+	}
+	return &successResponse{Data: keyItem(*key)}, nil
+}
+
 func mapKeyErr(err error) (*successResponse, error) {
 	if errors.Is(err, service.ErrSharedAPIKeyNotFound) {
 		return nil, response.NewNotFoundErrorResponse()
 	}
 	if errors.Is(err, service.ErrSharedAPIKeyDeleted) {
 		return nil, response.NewValidationErrorResponse("key_id", err.Error())
+	}
+	if errors.Is(err, service.ErrSharedAPIKeyInvalidLimit) {
+		return nil, response.NewValidationErrorResponse("max_input_tokens", err.Error())
 	}
 	return nil, response.NewExceptionResponse(err)
 }

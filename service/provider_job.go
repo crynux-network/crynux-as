@@ -186,6 +186,9 @@ func SettleProviderTaskJob(
 		if err != nil {
 			return err
 		}
+		if err := AddSharedAPIKeyUsageTx(tx, sharedAPIKeyID, usage.InputTokens, usage.OutputTokens); err != nil {
+			return err
+		}
 		if err := CreateTaskIncomeEarningTx(tx, keyOwnerUserID, keyOwnerAddress, earningWei, recordID); err != nil {
 			return err
 		}

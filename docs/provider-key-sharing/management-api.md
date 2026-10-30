@@ -89,11 +89,15 @@ Response item:
   "id": "key_public_id",
   "service_provider": "openai",
   "masked_suffix": "abcd",
-  "owner_enabled": true
+  "owner_enabled": true,
+  "used_input_tokens": 1200,
+  "used_output_tokens": 300,
+  "max_input_tokens": 1000000,
+  "max_output_tokens": null
 }
 ```
 
-The list is account-scoped, excludes soft-deleted Keys, and is ordered by ID descending. Cooldown, concurrency, encryption, and internal health fields MUST NOT be returned.
+The list is account-scoped, excludes soft-deleted Keys, and is ordered by ID descending. Cooldown, concurrency, encryption, and internal health fields MUST NOT be returned. `used_input_tokens` and `used_output_tokens` are cumulative counters since the last usage reset. `max_input_tokens` and `max_output_tokens` are null when that side has no limit.
 
 ## Create Shared API Key
 
@@ -142,6 +146,43 @@ DELETE /v1/earn/keys/:key_id
 Delete is idempotent. It soft-deletes and disables the Key, clears its encrypted secret and fingerprint fields, excludes it from later scheduler and in-worker Key-switch eligibility queries, and retains its history and earnings.
 
 Active calls that already loaded key material continue to completion. A deleted Key is omitted from the list and cannot be enabled.
+
+## Set Token Limits
+
+```http
+POST /v1/earn/keys/:key_id/limits
+```
+
+Request:
+
+```json
+{
+  "max_input_tokens": 1000000,
+  "max_output_tokens": null
+}
+```
+
+Requirements:
+
+* both fields are required keys in the JSON object;
+* each value MUST be either `null` or a positive integer;
+* zero and negative values MUST return HTTP 400;
+* the update replaces both limits in one request;
+* changing a limit takes effect for subsequent eligibility queries immediately.
+
+The response returns the updated list-item shape.
+
+## Reset Usage Counters
+
+```http
+POST /v1/earn/keys/:key_id/usage/reset
+```
+
+The request body is empty.
+
+Reset sets `used_input_tokens` and `used_output_tokens` to zero and MUST NOT change either max. Reset is idempotent. After reset, the key is eligible again when it is enabled, outside cooldown, and under its limits.
+
+The response returns the updated list-item shape.
 
 ## Key Owner Call Records
 

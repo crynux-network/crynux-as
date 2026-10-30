@@ -92,9 +92,11 @@ For each candidate, the scheduler MUST find a Shared API Key that:
 * belongs to the job's Service Provider;
 * has `owner_enabled = true`;
 * is not deleted;
-* has `cooldown_until IS NULL OR cooldown_until <= now`.
+* has `cooldown_until IS NULL OR cooldown_until <= now`;
+* has `max_input_tokens IS NULL OR used_input_tokens < max_input_tokens`;
+* has `max_output_tokens IS NULL OR used_output_tokens < max_output_tokens`.
 
-The database query MUST exclude keys in cooldown. From the returned keys, the process-local key-slot manager MUST exclude keys with no available slot and keys already tried by the current job. The scheduler MUST select one remaining key uniformly at random. It MUST NOT persist fairness counters or last-assigned state.
+The database query MUST exclude keys in cooldown and keys whose set token limits are exhausted. From the returned keys, the process-local key-slot manager MUST exclude keys with no available slot and keys already tried by the current job. The scheduler MUST select one remaining key uniformly at random. It MUST NOT persist fairness counters or last-assigned state.
 
 The scheduler MUST claim each job at most once. Switching to another Key after a definitely unaccepted key-specific failure belongs to the Provider job goroutine, not to a second scheduler claim.
 
@@ -109,7 +111,7 @@ Claim MUST run in one database transaction:
 
 The transaction MUST fail without database side effects when any condition changes. Any failed claim transaction MUST release the reserved process-local slot.
 
-The claim transaction MUST NOT lock or re-check the selected Shared API Key row. A key selected by the preceding eligibility query MAY still receive this claim when enable, delete, or cooldown state changes concurrently after that query.
+The claim transaction MUST NOT lock or re-check the selected Shared API Key row. A key selected by the preceding eligibility query MAY still receive this claim when enable, delete, cooldown, or token-limit state changes concurrently after that query.
 
 Only a successful commit MAY start `RunProviderJob(job_id, shared_api_key_id)`. A queued job MUST have no goroutine.
 
@@ -195,11 +197,12 @@ The common settlement transaction MUST:
 2. confirm that no terminal call record exists;
 3. release the Credits hold;
 4. create one success `task_call_records` row;
-5. create the consumer task-charge event and debit Credits;
-6. create one processed Key Owner earning event referencing the new call record and increase the available balance;
-7. update the earning account;
-8. write final temporary job result fields;
-9. mark the job completed and billed.
+5. lock the final Shared API Key row and add the settled input and output token totals to its usage counters;
+6. create the consumer task-charge event and debit Credits;
+7. create one processed Key Owner earning event referencing the new call record and increase the available balance;
+8. update the earning account;
+9. write final temporary job result fields;
+10. mark the job completed and billed.
 
 This transaction MUST run after a completed Service Provider response even when the API Consumer has disconnected or no subscriber remains.
 
@@ -211,11 +214,11 @@ The failure transaction MUST release the hold, create a failed call record, and 
 
 The job MUST fail without consumer charge or Key Owner earning. Observed partial usage and upstream request identity MUST NOT be persisted.
 
-## Disable and Delete
+## Disable, Delete, and Token Limits
 
-Disable or delete after claim MUST NOT interrupt a request that already loaded its key material.
+Disable, delete, or token-limit exhaustion after claim MUST NOT interrupt a request that already loaded its key material.
 
-The key MUST become unavailable for new claims and for in-worker key switches immediately after the lifecycle update commits.
+The key MUST become unavailable for new claims and for in-worker key switches immediately after the lifecycle update commits, or after settlement pushes a set limit to `used >= max`.
 
 ## Shutdown and Recovery
 

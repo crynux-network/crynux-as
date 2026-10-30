@@ -20,6 +20,7 @@ var (
 	ErrSharedAPIKeyDeleted       = errors.New("shared api key is deleted")
 	ErrSharedAPIKeyInvalidSecret = errors.New("shared api key secret is invalid")
 	ErrSharedAPIKeyProvider      = errors.New("service provider is not configured")
+	ErrSharedAPIKeyInvalidLimit  = errors.New("shared api key token limit is invalid")
 )
 
 type SharedAPIKeyCredentialValidator interface {
@@ -198,9 +199,104 @@ func ListEligibleSharedAPIKeys(ctx context.Context, db *gorm.DB, provider models
 	err := db.WithContext(dbCtx).
 		Where("service_provider = ? AND owner_enabled = ? AND deleted_at IS NULL AND (cooldown_until IS NULL OR cooldown_until <= ?)",
 			provider, true, now).
+		Where("(max_input_tokens IS NULL OR used_input_tokens < max_input_tokens)").
+		Where("(max_output_tokens IS NULL OR used_output_tokens < max_output_tokens)").
 		Order("id ASC").
 		Find(&rows).Error
 	return rows, err
+}
+
+// UpdateSharedAPIKeyLimits replaces both max input and max output token limits.
+// A nil pointer means unlimited for that side. Zero is invalid.
+func UpdateSharedAPIKeyLimits(ctx context.Context, db *gorm.DB, userID uint, publicID string, maxInput, maxOutput *uint64) (*models.SharedAPIKey, error) {
+	if maxInput != nil && *maxInput == 0 {
+		return nil, ErrSharedAPIKeyInvalidLimit
+	}
+	if maxOutput != nil && *maxOutput == 0 {
+		return nil, ErrSharedAPIKeyInvalidLimit
+	}
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var row models.SharedAPIKey
+	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND public_id = ?", userID, publicID).
+			First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrSharedAPIKeyNotFound
+			}
+			return err
+		}
+		if row.DeletedAt != nil {
+			return ErrSharedAPIKeyDeleted
+		}
+		updates := map[string]interface{}{
+			"max_input_tokens":  nil,
+			"max_output_tokens": nil,
+		}
+		if maxInput != nil {
+			updates["max_input_tokens"] = *maxInput
+		}
+		if maxOutput != nil {
+			updates["max_output_tokens"] = *maxOutput
+		}
+		if err := tx.Model(&row).Updates(updates).Error; err != nil {
+			return err
+		}
+		return tx.First(&row, row.ID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// ResetSharedAPIKeyUsage sets used input and output token counters to zero.
+func ResetSharedAPIKeyUsage(ctx context.Context, db *gorm.DB, userID uint, publicID string) (*models.SharedAPIKey, error) {
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var row models.SharedAPIKey
+	err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND public_id = ?", userID, publicID).
+			First(&row).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrSharedAPIKeyNotFound
+			}
+			return err
+		}
+		if row.DeletedAt != nil {
+			return ErrSharedAPIKeyDeleted
+		}
+		if err := tx.Model(&row).Updates(map[string]interface{}{
+			"used_input_tokens":  uint64(0),
+			"used_output_tokens": uint64(0),
+		}).Error; err != nil {
+			return err
+		}
+		row.UsedInputTokens = 0
+		row.UsedOutputTokens = 0
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// AddSharedAPIKeyUsageTx locks the key row and adds settled input/output tokens.
+func AddSharedAPIKeyUsageTx(tx *gorm.DB, keyID uint, inputTokens, outputTokens uint64) error {
+	if inputTokens == 0 && outputTokens == 0 {
+		return nil
+	}
+	var row models.SharedAPIKey
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, keyID).Error; err != nil {
+		return err
+	}
+	return tx.Model(&row).Updates(map[string]interface{}{
+		"used_input_tokens":  row.UsedInputTokens + inputTokens,
+		"used_output_tokens": row.UsedOutputTokens + outputTokens,
+	}).Error
 }
 
 // SelectRandomEligibleKey chooses one key uniformly at random after excluding full slots and tried IDs.

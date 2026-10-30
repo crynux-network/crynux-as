@@ -27,6 +27,7 @@ The first release:
 * routes Crynux repository model names through the existing Bridge path;
 * routes configured Provider model names through the corresponding Service Provider adapter;
 * applies one global concurrency limit to every Shared API Key;
+* lets Key Owners set per-key maximum input and output token limits and reset usage counters;
 * supports create, list, enable, disable, and soft-delete Key management;
 * streams Provider output in real time;
 * charges API Consumers in Credits;

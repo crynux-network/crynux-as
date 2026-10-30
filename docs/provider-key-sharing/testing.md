@@ -56,7 +56,16 @@ Tests MUST cover:
 * deleted Key cannot be enabled;
 * delete retains the soft-deleted row, history, and earnings;
 * every key uses the global concurrency limit;
-* Key Owner cannot modify concurrency or pricing.
+* Key Owner cannot modify concurrency or pricing;
+* setting max input or output to null leaves that side unlimited;
+* zero or negative max values are rejected;
+* successful settlement increments used input and output counters by the call record totals;
+* failed settlement does not change usage counters;
+* repeating settlement for a terminal job does not double-count usage;
+* a key with `used_input_tokens >= max_input_tokens` or `used_output_tokens >= max_output_tokens` is excluded from eligibility;
+* resetting usage zeros both counters without changing limits and restores eligibility when under limits;
+* lowering a max below current used excludes the key without a reset;
+* token-limit exhaustion does not cancel an in-flight claim and does not remove catalog membership.
 
 ## Model Routing Tests
 

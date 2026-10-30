@@ -62,6 +62,10 @@ type SharedAPIKey struct {
 	DeletedAt                   *time.Time      `json:"deleted_at" gorm:"index:idx_shared_api_keys_eligibility,priority:3"`
 	ConsecutiveUnavailableCount int             `json:"consecutive_unavailable_count" gorm:"not null;default:0"`
 	CooldownUntil               *time.Time      `json:"cooldown_until" gorm:"index:idx_shared_api_keys_eligibility,priority:4"`
+	UsedInputTokens             uint64          `json:"used_input_tokens" gorm:"not null;default:0"`
+	UsedOutputTokens            uint64          `json:"used_output_tokens" gorm:"not null;default:0"`
+	MaxInputTokens              *uint64         `json:"max_input_tokens"`
+	MaxOutputTokens             *uint64         `json:"max_output_tokens"`
 	Fingerprint                 *string         `json:"-" gorm:"type:string;size:64;uniqueIndex:idx_shared_api_keys_provider_fingerprint,priority:2"`
 	KeyCiphertext               []byte          `json:"-" gorm:"type:blob"`
 	KeyNonce                    []byte          `json:"-" gorm:"type:blob"`
