@@ -98,6 +98,7 @@ Tests MUST cover:
 * Crynux LLM admission floor scales by maximum completion tokens over `llm.default_max_tokens`;
 * Crynux Image admission floor scales by pixel-step units over `1 * 1024 * 1024 * 30`;
 * global task price minimum: scaled-Gwei calculation rounds down;
+* global task price minimum: static mode rejects when estimated Credits exceed `auto_max_credits_per_task` without changing priority;
 * global task price minimum: static mode rejects when the final estimated fee is below the scaled floor;
 * global task price minimum: auto mode first caps priority by `auto_max_credits_per_task`, then raises within that Credits budget when the budget can meet the scaled floor, otherwise rejects;
 * `min_task_price_cnx` of `0` disables the admission floor;

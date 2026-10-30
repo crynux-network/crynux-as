@@ -47,7 +47,9 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 	snapshot, credits, err := service.BuildProviderBillingData(project, route, priorityGwei, inputBytes, maxCompletion, nil)
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), priorityGwei, nil)
-		if errors.Is(err, service.ErrTaskFeeBelowMinimum) || errors.Is(err, service.ErrAutoMaxCreditsInsufficient) {
+		if errors.Is(err, service.ErrTaskFeeBelowMinimum) ||
+			errors.Is(err, service.ErrAutoMaxCreditsInsufficient) ||
+			errors.Is(err, service.ErrMaxCreditsExceeded) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
 		}

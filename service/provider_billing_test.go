@@ -10,13 +10,18 @@ import (
 
 func TestEnforceAdmissionMinTaskFeeStaticRejects(t *testing.T) {
 	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.MinTaskPriceCNX = map[string]string{
 		config.MaxTaskPriceProviderCrynux: "0.001",
 	}
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
 
-	project := &models.Project{CostLevelMode: models.CostLevelModeStatic}
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(1_000_000)}
+	project := &models.Project{
+		CostLevelMode:         models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
 	_, _, err := EnforceAdmissionMinTaskFee(
 		config.MaxTaskPriceProviderCrynux,
 		project,
@@ -27,6 +32,70 @@ func TestEnforceAdmissionMinTaskFeeStaticRejects(t *testing.T) {
 	)
 	if !errors.Is(err, ErrTaskFeeBelowMinimum) {
 		t.Fatalf("err=%v, want ErrTaskFeeBelowMinimum", err)
+	}
+}
+
+func TestEnforceAdmissionMinTaskFeeStaticRejectsMaxCreditsExceeded(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MinTaskPriceCNX = map[string]string{
+		config.MaxTaskPriceProviderCrynux: "0",
+	}
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(50)}
+	project := &models.Project{
+		CostLevelMode:         models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
+	priority := big.NewInt(100)
+	gotPriority, _, err := EnforceAdmissionMinTaskFee(
+		config.MaxTaskPriceProviderCrynux,
+		project,
+		priority,
+		func(p *big.Int) (*big.Int, error) {
+			return new(big.Int).Mul(p, big.NewInt(1)), nil
+		},
+	)
+	if !errors.Is(err, ErrMaxCreditsExceeded) {
+		t.Fatalf("err=%v, want ErrMaxCreditsExceeded", err)
+	}
+	if gotPriority != nil {
+		t.Fatalf("priority=%v, want nil on Max Credits reject", gotPriority)
+	}
+}
+
+func TestEnforceAdmissionMinTaskFeeStaticPassesWithinMaxCredits(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MinTaskPriceCNX = map[string]string{
+		config.MaxTaskPriceProviderCrynux: "0",
+	}
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(100)}
+	project := &models.Project{
+		CostLevelMode:         models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
+	gotPriority, fee, err := EnforceAdmissionMinTaskFee(
+		config.MaxTaskPriceProviderCrynux,
+		project,
+		big.NewInt(40),
+		func(p *big.Int) (*big.Int, error) {
+			return new(big.Int).Set(p), nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if gotPriority.Cmp(big.NewInt(40)) != 0 {
+		t.Fatalf("priority=%s, want 40", gotPriority.String())
+	}
+	if fee.Cmp(big.NewInt(40)) != 0 {
+		t.Fatalf("fee=%s, want 40", fee.String())
 	}
 }
 
@@ -222,7 +291,11 @@ func TestBuildProviderBillingDataRejectsStaticBelowMinimum(t *testing.T) {
 			"cache_write_input_tokens": "1.25",
 		},
 	}
-	project := &models.Project{CostLevelMode: models.CostLevelModeStatic}
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(1_000_000)}
+	project := &models.Project{
+		CostLevelMode:         models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
 	_, _, err := BuildProviderBillingData(project, route, big.NewInt(1), 100, 10, nil)
 	if !errors.Is(err, ErrTaskFeeBelowMinimum) {
 		t.Fatalf("err=%v, want ErrTaskFeeBelowMinimum", err)
@@ -341,7 +414,11 @@ func TestBuildProviderBillingDataAllowsZeroMinimum(t *testing.T) {
 			"cache_write_input_tokens": "1.25",
 		},
 	}
-	project := &models.Project{CostLevelMode: models.CostLevelModeStatic}
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(1_000_000)}
+	project := &models.Project{
+		CostLevelMode:         models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
 	snapshot, credits, err := BuildProviderBillingData(project, route, big.NewInt(1), 100, 10, nil)
 	if err != nil {
 		t.Fatal(err)

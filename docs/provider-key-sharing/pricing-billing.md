@@ -47,7 +47,7 @@ admission_min_task_fee_gwei =
   )
 ```
 
-After the estimated post-cap `billable_gwei` is computed, when `admission_min_task_fee_gwei` is positive and the estimated fee is strictly below that scaled floor:
+After the estimated post-cap `billable_gwei` is computed, static Cost Level mode MUST reject with HTTP 400 when estimated Credits at the fixed priority are strictly greater than `auto_max_credits_per_task`, without changing Cost Level. When `admission_min_task_fee_gwei` is positive and the estimated fee is strictly below that scaled floor:
 
 * static Cost Level mode MUST reject with HTTP 400 and MUST NOT create a job or lock Credits;
 * auto Cost Level mode MUST first lower the queue-target priority so estimated Credits stay within `auto_max_credits_per_task`, then raise priority within that Credits budget to the lowest value that meets the scaled floor when needed; when that budget cannot produce a fee at or above the scaled floor it MUST reject with HTTP 400.

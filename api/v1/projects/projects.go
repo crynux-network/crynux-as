@@ -24,7 +24,7 @@ type ProjectData struct {
 	CostLevelMode             string  `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
 	PriorityGwei              string  `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
 	AutoQueuePosition         *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
-	AutoMaxCreditsPerTask     *string `json:"auto_max_credits_per_task" description:"Auto Max Credits per task"`
+	AutoMaxCreditsPerTask     *string `json:"auto_max_credits_per_task" description:"Max Credits per task for static and auto Cost Level modes"`
 	Status                    int8    `json:"status" description:"The project status"`
 	CreatedAt                 int64   `json:"created_at" description:"The unix timestamp when the project is created"`
 	LastRequestAt             *int64  `json:"last_request_at" description:"Unix timestamp of the latest finished request that entered usage stats"`
@@ -183,7 +183,7 @@ type UpdateProjectInput struct {
 	CostLevelMode         *string `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
 	PriorityGwei          *string `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
 	AutoQueuePosition     *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
-	AutoMaxCreditsPerTask *string `json:"auto_max_credits_per_task" description:"Auto Max Credits per task"`
+	AutoMaxCreditsPerTask *string `json:"auto_max_credits_per_task" description:"Max Credits per task for static and auto Cost Level modes"`
 }
 
 func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, error) {
@@ -247,13 +247,13 @@ func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, er
 		if err != nil {
 			return nil, response.NewValidationErrorResponse("cost_level_mode", err.Error())
 		}
+		if project.AutoMaxCreditsPerTask == nil || project.AutoMaxCreditsPerTask.Sign() <= 0 {
+			return nil, response.NewValidationErrorResponse(
+				"auto_max_credits_per_task",
+				"auto_max_credits_per_task is required",
+			)
+		}
 		if mode == models.CostLevelModeAuto {
-			if project.AutoMaxCreditsPerTask == nil || project.AutoMaxCreditsPerTask.Sign() <= 0 {
-				return nil, response.NewValidationErrorResponse(
-					"auto_max_credits_per_task",
-					"auto_max_credits_per_task is required for auto mode",
-				)
-			}
 			if project.AutoQueuePosition == nil {
 				pos := service.DefaultAutoQueuePosition
 				project.AutoQueuePosition = &pos

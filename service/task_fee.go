@@ -58,10 +58,16 @@ var ErrTaskFeeBelowMinimum = errors.New("Task fee is below the minimum for this 
 // cover the provider minimum fee for the request workload.
 var ErrAutoMaxCreditsInsufficient = errors.New("Task fee is below the minimum for this provider; increase Max Credits per task")
 
+// ErrMaxCreditsExceeded is returned when Static Max Credits per task is below
+// the estimated Credits at the project's fixed Cost Level.
+var ErrMaxCreditsExceeded = errors.New("Estimated Credits exceed Max Credits per task; lower the Cost Level or increase Max Credits per task")
+
 // EnforceAdmissionMinTaskFee compares the post-max-cap fee at the resolved
 // priority against llm.min_task_price_cnx.<providerID>.
 //
-// Static mode below the minimum returns ErrTaskFeeBelowMinimum.
+// Static mode rejects when estimated Credits exceed auto_max_credits_per_task
+// (ErrMaxCreditsExceeded) without changing priority, then rejects below the
+// minimum with ErrTaskFeeBelowMinimum.
 // Auto mode first lowers priority so estimated Credits stay within
 // auto_max_credits_per_task, then raises priority within that Credits budget
 // when needed to meet the minimum fee. When the Credits budget cannot meet the
@@ -150,12 +156,17 @@ func enforceAdmissionMinTaskFee(
 	if err != nil {
 		return nil, nil, err
 	}
-	if minFee.Sign() <= 0 || billable.Cmp(minFee) >= 0 {
+	if mode != models.CostLevelModeAuto {
+		if err := rejectIfStaticCreditsExceedMax(project, billable); err != nil {
+			return nil, nil, err
+		}
+		if minFee.Sign() > 0 && billable.Cmp(minFee) < 0 {
+			return nil, nil, ErrTaskFeeBelowMinimum
+		}
 		return workingPriority, billable, nil
 	}
-
-	if mode != models.CostLevelModeAuto {
-		return nil, nil, ErrTaskFeeBelowMinimum
+	if minFee.Sign() <= 0 || billable.Cmp(minFee) >= 0 {
+		return workingPriority, billable, nil
 	}
 	autoMax, err := MaxPriorityWithinAutoMaxCredits(project, feeAtPriority)
 	if err != nil {
@@ -194,6 +205,33 @@ func enforceAdmissionMinTaskFee(
 		return nil, nil, ErrAutoMaxCreditsInsufficient
 	}
 	return hi, billable, nil
+}
+
+// rejectIfStaticCreditsExceedMax rejects when estimated Credits at the fixed
+// Static Cost Level exceed auto_max_credits_per_task.
+func rejectIfStaticCreditsExceedMax(project *models.Project, billableGwei *big.Int) error {
+	if err := requireAutoMaxCreditsPerTask(project); err != nil {
+		return err
+	}
+	if billableGwei == nil || billableGwei.Sign() < 0 {
+		return errors.New("billable gwei must be non-negative")
+	}
+	appCfg := config.GetConfig()
+	if appCfg == nil {
+		return errors.New("config is not initialized")
+	}
+	rate, err := appCfg.ParseCreditsPerGwei()
+	if err != nil {
+		return fmt.Errorf("credits_per_gwei: %w", err)
+	}
+	credits, err := CalcCreditsFromBillable(new(big.Float).SetInt(billableGwei), rate)
+	if err != nil {
+		return err
+	}
+	if credits.Cmp(&project.AutoMaxCreditsPerTask.Int) > 0 {
+		return ErrMaxCreditsExceeded
+	}
+	return nil
 }
 
 // CapPriorityByAutoMaxCredits lowers priority so estimated Credits stay within

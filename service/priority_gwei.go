@@ -207,7 +207,7 @@ func resolveAutoPriorityGwei(project *models.Project) (*big.Int, error) {
 
 func requireAutoMaxCreditsPerTask(project *models.Project) error {
 	if project.AutoMaxCreditsPerTask == nil || project.AutoMaxCreditsPerTask.Sign() <= 0 {
-		return errors.New("auto_max_credits_per_task is required for auto mode")
+		return errors.New("auto_max_credits_per_task is required")
 	}
 	return nil
 }
