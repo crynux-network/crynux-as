@@ -10,6 +10,7 @@ func setTaskFeeTestConfig(t *testing.T, maxTaskPriceCNX string) {
 	t.Helper()
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.DefaultMaxTokens = 2048
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{
 		config.MaxTaskPriceProviderCrynux: maxTaskPriceCNX,
 	}
@@ -19,6 +20,33 @@ func setTaskFeeTestConfig(t *testing.T, maxTaskPriceCNX string) {
 	cfg.LLM.BaseVRAM = 8
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() { config.SetConfigForTest(nil) })
+}
+
+func TestScaleAdmissionMinTaskFeeForCrynuxLLMAndImageBaselines(t *testing.T) {
+	base := big.NewInt(1_000_000_000) // 1 CNX in Gwei
+
+	llmScaled, err := scaleAdmissionMinTaskFee(base, 8192, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if llmScaled.Cmp(big.NewInt(4_000_000_000)) != 0 {
+		t.Fatalf("llm scaled minimum=%s, want 4000000000", llmScaled.String())
+	}
+
+	imageScaled, err := scaleAdmissionMinTaskFee(
+		base,
+		2*1024*1024*30,
+		imageAdmissionBaselineUnits(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imageScaled.Cmp(big.NewInt(2_000_000_000)) != 0 {
+		t.Fatalf("image scaled minimum=%s, want 2000000000", imageScaled.String())
+	}
+	if imageAdmissionBaselineUnits() != 31_457_280 {
+		t.Fatalf("image baseline units=%d, want 31457280", imageAdmissionBaselineUnits())
+	}
 }
 
 func TestCalcBillableAndCreditsBasic(t *testing.T) {

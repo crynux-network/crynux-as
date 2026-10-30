@@ -230,10 +230,22 @@ func BuildProviderBillingData(
 	feeAtPriority := func(priority *big.Int) (*big.Int, error) {
 		return ProviderBillableGwei(priority, units, maxTaskPriceCNX)
 	}
-	adjustedPriority, billableGwei, err := EnforceAdmissionMinTaskFee(
-		string(route.ServiceProvider),
+	baseMinFeeGwei, err := cfg.MinTaskFeeGwei(string(route.ServiceProvider))
+	if err != nil {
+		return models.ProviderTaskBillingData{}, nil, fmt.Errorf("min_task_price_cnx.%s: %w", route.ServiceProvider, err)
+	}
+	minFeeGwei, err := scaleAdmissionMinTaskFee(
+		baseMinFeeGwei,
+		maxOutputTokens,
+		cfg.LLM.DefaultMaxTokens,
+	)
+	if err != nil {
+		return models.ProviderTaskBillingData{}, nil, err
+	}
+	adjustedPriority, billableGwei, err := enforceAdmissionMinTaskFee(
 		project,
 		effectivePriority,
+		minFeeGwei,
 		feeAtPriority,
 	)
 	if err != nil {

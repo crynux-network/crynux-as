@@ -67,15 +67,6 @@ func EnforceAdmissionMinTaskFee(
 	priority *big.Int,
 	feeAtPriority func(priority *big.Int) (*big.Int, error),
 ) (*big.Int, *big.Int, error) {
-	if project == nil {
-		return nil, nil, errors.New("project is required")
-	}
-	if priority == nil || priority.Sign() <= 0 {
-		return nil, nil, errors.New("priority_gwei must be positive")
-	}
-	if feeAtPriority == nil {
-		return nil, nil, errors.New("fee calculator is required")
-	}
 	appCfg := config.GetConfig()
 	if appCfg == nil {
 		return nil, nil, errors.New("config is not initialized")
@@ -83,6 +74,57 @@ func EnforceAdmissionMinTaskFee(
 	minFee, err := appCfg.MinTaskFeeGwei(providerID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("min_task_price_cnx.%s: %w", providerID, err)
+	}
+	return enforceAdmissionMinTaskFee(project, priority, minFee, feeAtPriority)
+}
+
+// scaleAdmissionMinTaskFee scales a configured base minimum by request_units / baseline_units,
+// rounding down to integer Gwei.
+func scaleAdmissionMinTaskFee(baseMinFeeGwei *big.Int, requestUnits, baselineUnits uint64) (*big.Int, error) {
+	if baseMinFeeGwei == nil || baseMinFeeGwei.Sign() < 0 {
+		return nil, errors.New("minimum task fee must be non-negative")
+	}
+	if requestUnits == 0 {
+		return nil, errors.New("request units must be positive")
+	}
+	if baselineUnits == 0 {
+		return nil, errors.New("baseline units must be positive")
+	}
+	scaled := new(big.Int).Mul(baseMinFeeGwei, new(big.Int).SetUint64(requestUnits))
+	return scaled.Quo(scaled, new(big.Int).SetUint64(baselineUnits)), nil
+}
+
+const (
+	imageAdmissionBaselineWidth     uint64 = 1024
+	imageAdmissionBaselineHeight    uint64 = 1024
+	imageAdmissionBaselineSteps     uint64 = 30
+	imageAdmissionBaselineNumImages uint64 = 1
+)
+
+func imageAdmissionBaselineUnits() uint64 {
+	return imageAdmissionBaselineNumImages *
+		imageAdmissionBaselineWidth *
+		imageAdmissionBaselineHeight *
+		imageAdmissionBaselineSteps
+}
+
+func enforceAdmissionMinTaskFee(
+	project *models.Project,
+	priority *big.Int,
+	minFee *big.Int,
+	feeAtPriority func(priority *big.Int) (*big.Int, error),
+) (*big.Int, *big.Int, error) {
+	if project == nil {
+		return nil, nil, errors.New("project is required")
+	}
+	if priority == nil || priority.Sign() <= 0 {
+		return nil, nil, errors.New("priority_gwei must be positive")
+	}
+	if minFee == nil || minFee.Sign() < 0 {
+		return nil, nil, errors.New("minimum task fee must be non-negative")
+	}
+	if feeAtPriority == nil {
+		return nil, nil, errors.New("fee calculator is required")
 	}
 	billable, err := feeAtPriority(priority)
 	if err != nil {
@@ -235,10 +277,18 @@ func EstimateImageTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcT
 		}
 		return got.TaskFeeGwei, nil
 	}
-	adjustedPriority, _, err := EnforceAdmissionMinTaskFee(
-		config.MaxTaskPriceProviderCrynux,
+	baseMinFeeGwei, err := appCfg.MinTaskFeeGwei(config.MaxTaskPriceProviderCrynux)
+	if err != nil {
+		return nil, fmt.Errorf("min_task_price_cnx.%s: %w", config.MaxTaskPriceProviderCrynux, err)
+	}
+	minFeeGwei, err := scaleAdmissionMinTaskFee(baseMinFeeGwei, units, imageAdmissionBaselineUnits())
+	if err != nil {
+		return nil, err
+	}
+	adjustedPriority, _, err := enforceAdmissionMinTaskFee(
 		in.Project,
 		in.PriorityGwei,
+		minFeeGwei,
 		feeAtPriority,
 	)
 	if err != nil {
@@ -499,10 +549,22 @@ func EstimateLLMTaskFeeWithQuery(
 		}
 		return got.TaskFeeGwei, nil
 	}
-	adjustedPriority, _, err := EnforceAdmissionMinTaskFee(
-		config.MaxTaskPriceProviderCrynux,
+	baseMinFeeGwei, err := appCfg.MinTaskFeeGwei(config.MaxTaskPriceProviderCrynux)
+	if err != nil {
+		return nil, fmt.Errorf("min_task_price_cnx.%s: %w", config.MaxTaskPriceProviderCrynux, err)
+	}
+	minFeeGwei, err := scaleAdmissionMinTaskFee(
+		baseMinFeeGwei,
+		maxCompletionTokens,
+		appCfg.LLM.DefaultMaxTokens,
+	)
+	if err != nil {
+		return nil, err
+	}
+	adjustedPriority, _, err := enforceAdmissionMinTaskFee(
 		project,
 		priorityGwei,
+		minFeeGwei,
 		feeAtPriority,
 	)
 	if err != nil {

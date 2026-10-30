@@ -33,12 +33,26 @@ Platform economics remain determined by:
 
 `llm.max_task_price_cnx.<service_provider>` MUST cap that Service Provider's consumer charge and Key Owner earning through the same post-cap `billable_gwei`. The job billing snapshot MUST store the configured CNX string used for that cap.
 
-`llm.min_task_price_cnx.<service_provider>` MUST gate Provider admission. After the estimated post-cap `billable_gwei` is computed, when the configured minimum converts to a positive `min_task_fee_gwei` and the estimated fee is strictly below that minimum:
+`llm.min_task_price_cnx.<service_provider>` MUST define the Provider admission floor for a request whose maximum generated tokens equal `llm.default_max_tokens`. Admission MUST scale this configured base floor by the request's resolved maximum generated tokens:
+
+```text
+base_min_task_fee_gwei =
+  floor(min_task_price_cnx.<service_provider> * 1e9)
+
+admission_min_task_fee_gwei =
+  floor(
+    base_min_task_fee_gwei
+    * maximum_generated_tokens
+    / llm.default_max_tokens
+  )
+```
+
+After the estimated post-cap `billable_gwei` is computed, when `admission_min_task_fee_gwei` is positive and the estimated fee is strictly below that scaled floor:
 
 * static Cost Level mode MUST reject with HTTP 400 and MUST NOT create a job or lock Credits;
-* auto Cost Level mode MUST raise the effective priority (and therefore the estimated fee) to the lowest value that meets the minimum, capped by the project's `auto_max_priority_gwei`, when that auto maximum can produce a fee at or above the minimum; otherwise it MUST reject with HTTP 400.
+* auto Cost Level mode MUST raise the effective priority (and therefore the estimated fee) to the lowest value that meets the scaled floor, capped by the project's `auto_max_priority_gwei`, when that auto maximum can produce a fee at or above the scaled floor; otherwise it MUST reject with HTTP 400.
 
-A configured minimum of `0` disables the gate for that Service Provider. Settlement MUST NOT raise Credits or Key Owner earnings to the minimum after admission. The job billing snapshot MUST store the configured CNX string used for that floor and the post-raise effective priority.
+A configured minimum of `0` disables the gate for that Service Provider. Settlement MUST NOT raise Credits or Key Owner earnings to the scaled floor after admission. The job billing snapshot MUST store the configured base CNX string, the resolved maximum generated tokens, and the post-raise effective priority.
 
 ## Configured Usage Weights
 
@@ -120,7 +134,7 @@ estimated_input_bytes * maximum_input_weight
 + maximum_generated_tokens * maximum_generated_weight
 ```
 
-The estimated billable amount MUST then use the same Cost Level and cap rules as final settlement. Admission MUST then apply the Service Provider `min_task_price_cnx` floor to that final estimated fee before Credits reservation.
+The estimated billable amount MUST then use the same Cost Level and cap rules as final settlement. Admission MUST scale the Service Provider `min_task_price_cnx` floor by `maximum_generated_tokens / llm.default_max_tokens` and apply that scaled floor to the final estimated fee before Credits reservation.
 
 The reservation MUST be:
 
@@ -167,7 +181,8 @@ The implementation MUST:
 
 * multiply integers and rationals without floating-point conversion;
 * apply the CNX max cap before Credits or earning conversion;
-* apply the CNX min floor only at admission against the final estimated fee, never by raising settle amounts;
+* scale the Provider CNX min floor to integer Gwei by rounding down once after multiplying by the maximum-generated-token ratio;
+* apply the scaled CNX min floor only at admission against the final estimated fee, never by raising settle amounts;
 * round consumer Credits down once at the final Credits conversion;
 * round earning wei down once at the final wei conversion;
 * persist decimal integer strings for Credits, Gwei, and wei amounts.

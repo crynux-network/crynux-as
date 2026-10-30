@@ -92,6 +92,7 @@ func TestEnforceAdmissionMinTaskFeeAutoRejectsWhenMaxTooLow(t *testing.T) {
 func TestBuildProviderBillingDataRejectsStaticBelowMinimum(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "0.00000125"
+	cfg.LLM.DefaultMaxTokens = 10
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{"anthropic": "100"}
 	cfg.LLM.MinTaskPriceCNX = map[string]string{"anthropic": "0.001"}
 	config.SetConfigForTest(cfg)
@@ -117,6 +118,7 @@ func TestBuildProviderBillingDataRejectsStaticBelowMinimum(t *testing.T) {
 func TestBuildProviderBillingDataAutoRaisesPriority(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "0.00000125"
+	cfg.LLM.DefaultMaxTokens = 10
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{"anthropic": "100"}
 	cfg.LLM.MinTaskPriceCNX = map[string]string{"anthropic": "0.001"}
 	config.SetConfigForTest(cfg)
@@ -150,9 +152,62 @@ func TestBuildProviderBillingDataAutoRaisesPriority(t *testing.T) {
 	}
 }
 
+func TestBuildProviderBillingDataScalesMinimumWithMaxOutputTokens(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "0.00000125"
+	cfg.LLM.DefaultMaxTokens = 10
+	cfg.LLM.MaxTaskPriceCNX = map[string]string{"anthropic": "100"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{"anthropic": "0.001"}
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	route := ProviderModelRoute{
+		ServiceProvider: models.ServiceProviderAnthropic,
+		ModelName:       "claude-haiku-5-5",
+		UsageWeights: map[string]string{
+			"input_tokens":             "1",
+			"output_tokens":            "5",
+			"cached_input_tokens":      "0.1",
+			"cache_write_input_tokens": "1.25",
+		},
+	}
+	autoMax := models.BigInt{Int: *big.NewInt(1_000_000_000)}
+	project := &models.Project{
+		CostLevelMode:       models.CostLevelModeAuto,
+		AutoMaxPriorityGwei: &autoMax,
+	}
+
+	defaultSnapshot, _, err := BuildProviderBillingData(project, route, big.NewInt(1), 0, 10, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scaledSnapshot, _, err := BuildProviderBillingData(project, route, big.NewInt(1), 0, 40, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scaledSnapshot.EffectivePriorityGwei != defaultSnapshot.EffectivePriorityGwei {
+		t.Fatalf(
+			"scaled effective priority=%s, default effective priority=%s",
+			scaledSnapshot.EffectivePriorityGwei,
+			defaultSnapshot.EffectivePriorityGwei,
+		)
+	}
+}
+
+func TestScaleAdmissionMinTaskFeeRoundsDownToGwei(t *testing.T) {
+	got, err := scaleAdmissionMinTaskFee(big.NewInt(10), 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cmp(big.NewInt(3)) != 0 {
+		t.Fatalf("scaled minimum=%s, want 3", got.String())
+	}
+}
+
 func TestBuildProviderBillingDataAllowsZeroMinimum(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.CreditsPerGwei = "0.00000125"
+	cfg.LLM.DefaultMaxTokens = 10
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{"anthropic": "100"}
 	cfg.LLM.MinTaskPriceCNX = map[string]string{"anthropic": "0"}
 	config.SetConfigForTest(cfg)

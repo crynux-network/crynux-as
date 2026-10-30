@@ -93,8 +93,13 @@ Tests MUST cover:
 * final usage equal to estimate;
 * final usage greater than estimate and uncollected balance shortfall;
 * global task price cap;
-* global task price minimum: static mode rejects when the final estimated fee is below a non-zero `min_task_price_cnx`;
-* global task price minimum: auto mode raises priority up to `auto_max_priority_gwei` when that maximum can meet the floor, otherwise rejects;
+* global task price minimum: the configured floor applies unchanged when maximum generated tokens equal `llm.default_max_tokens`;
+* global task price minimum: the admission floor scales proportionally when maximum generated tokens are below or above `llm.default_max_tokens`;
+* Crynux LLM admission floor scales by maximum completion tokens over `llm.default_max_tokens`;
+* Crynux Image admission floor scales by pixel-step units over `1 * 1024 * 1024 * 30`;
+* global task price minimum: scaled-Gwei calculation rounds down;
+* global task price minimum: static mode rejects when the final estimated fee is below the scaled floor;
+* global task price minimum: auto mode raises priority up to `auto_max_priority_gwei` when that maximum can meet the scaled floor, otherwise rejects;
 * `min_task_price_cnx` of `0` disables the admission floor;
 * one-Credit minimum;
 * no floating-point ledger arithmetic.

@@ -92,10 +92,32 @@ The following items MUST NOT appear in configuration and MUST NOT be used for Cr
 
 `max_task_price_cnx` is the operator hard cap on one request's submitted task fee and Credits, keyed by provider ID. Each value is a positive decimal string in CNX units. Crynux Network OpenAI-compatible LLM, Raw LLM, and Raw Image fee paths MUST use `max_task_price_cnx.crynux`. Provider Key Sharing paths MUST use the cap for that Service Provider ID. After `billable_gwei` / `task_fee_gwei` are computed from Cost Level, estimated node seconds, and VRAM weight, the service MUST clamp both to that provider's `max_task_fee_gwei` when the uncapped `task_fee_gwei` is greater. The cap MUST NOT change the snapshotted request `priority_gwei`. `billing_config` MUST NOT return `max_task_price_cnx`.
 
-`min_task_price_cnx` is the operator admission floor for one request's final task fee, keyed by provider ID. Each value is a non-negative decimal string in CNX units. `0` disables the floor for that provider. Crynux Network OpenAI-compatible LLM, Raw LLM, and Raw Image admission MUST use `min_task_price_cnx.crynux`. Provider Key Sharing admission MUST use the floor for that Service Provider ID. After the max-cap final `task_fee_gwei` / post-cap `billable_gwei` is computed at admission, when `min_task_fee_gwei` is greater than zero and the final fee is strictly below that minimum:
+`min_task_price_cnx` is the operator admission floor keyed by provider ID. Each value is a non-negative decimal string in CNX units. `0` disables the floor for that provider.
+
+`min_task_price_cnx.crynux` and each Provider `min_task_price_cnx.<service_provider>` MUST be a base floor. Admission MUST scale that base floor before comparing it with the post-cap estimated fee:
+
+```text
+base_min_task_fee_gwei =
+  floor(min_task_price_cnx.<provider> * 1e9)
+
+admission_min_task_fee_gwei =
+  floor(
+    base_min_task_fee_gwei
+    * request_units
+    / baseline_units
+  )
+```
+
+Request and baseline units MUST be:
+
+* Crynux Network OpenAI-compatible LLM and Raw LLM: `request_units` is the resolved maximum completion tokens (`max_completion_tokens` if present and positive; otherwise `max_tokens` if present and positive; otherwise `llm.default_max_tokens`). `baseline_units` is `llm.default_max_tokens`.
+* Crynux Network OpenAI-compatible Image and Raw Image: `request_units` is `num_images_per_prompt * image_width * image_height * steps`, using `num_images_per_prompt = 1` when the field is omitted. `baseline_units` is `1 * 1024 * 1024 * 30`, matching the Image TaskArgs schema defaults for width, height, and steps.
+* Provider Key Sharing: `request_units` is the resolved maximum generated tokens (`max_completion_tokens` if present and positive; otherwise `max_tokens` if present and positive; otherwise `llm.default_max_tokens`). `baseline_units` is `llm.default_max_tokens`.
+
+Admission MUST compare the post-cap estimated fee with `admission_min_task_fee_gwei`. When that scaled floor is greater than zero and the final fee is strictly below it:
 
 * static Cost Level mode MUST reject with HTTP 400 and MUST NOT create a job or lock Credits;
-* auto Cost Level mode MUST raise the effective `priority_gwei` (and therefore the final fee) to the lowest value that meets the minimum, capped by the project's `auto_max_priority_gwei`, when that auto maximum can produce a fee at or above the minimum; otherwise it MUST reject with HTTP 400.
+* auto Cost Level mode MUST raise the effective `priority_gwei` (and therefore the final fee) to the lowest value that meets the scaled floor, capped by the project's `auto_max_priority_gwei`, when that auto maximum can produce a fee at or above the scaled floor; otherwise it MUST reject with HTTP 400.
 
 Settlement MUST NOT raise Credits or earnings to the minimum after admission. The raised auto-mode `priority_gwei` MUST be the value snapshotted on the job. `billing_config` MUST NOT return `min_task_price_cnx`.
 
@@ -162,7 +184,7 @@ For each LLM request that requires Credits precheck and task fee, the service MU
 1. Resolve effective VRAM and precheck token estimates (`P` estimate and `C` estimate).
 2. Resolve the request effective `priority_gwei` from the project Cost Level mode as specified in [llm-api.md](./llm-api.md) Project Cost Level.
 3. Fetch and validate execution-time coefficients for `(model, quantization_config, dtype, effective_vram)`.
-4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and uncapped `billable_gwei` using the request's resolved effective `priority_gwei`. Apply `llm.max_task_price_cnx.crynux` so that when `floor(uncapped_billable_gwei) > max_task_fee_gwei`, both `billable_gwei` and `task_fee_gwei` become `max_task_fee_gwei`; otherwise `task_fee_gwei = floor(uncapped_billable_gwei)` and Credits use the uncapped floating-point `billable_gwei`. When `llm.min_task_price_cnx.crynux` converts to a positive `min_task_fee_gwei` and the final `task_fee_gwei` is strictly below that minimum, static mode MUST reject with HTTP 400, and auto mode MUST raise `priority_gwei` up to `auto_max_priority_gwei` when that maximum can meet the floor, otherwise reject with HTTP 400. The snapshotted effective `priority_gwei` MUST be the post-raise value when auto mode raises it, and otherwise the uncapped Cost Level value.
+4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and uncapped `billable_gwei` using the request's resolved effective `priority_gwei`. Apply `llm.max_task_price_cnx.crynux` so that when `floor(uncapped_billable_gwei) > max_task_fee_gwei`, both `billable_gwei` and `task_fee_gwei` become `max_task_fee_gwei`; otherwise `task_fee_gwei = floor(uncapped_billable_gwei)` and Credits use the uncapped floating-point `billable_gwei`. Scale `llm.min_task_price_cnx.crynux` by `maximum_completion_tokens / llm.default_max_tokens` for LLM requests, or by `pixel_step_units / (1 * 1024 * 1024 * 30)` for Image requests. When that scaled floor is positive and the final `task_fee_gwei` is strictly below it, static mode MUST reject with HTTP 400, and auto mode MUST raise `priority_gwei` up to `auto_max_priority_gwei` when that maximum can meet the scaled floor, otherwise reject with HTTP 400. The snapshotted effective `priority_gwei` MUST be the post-raise value when auto mode raises it, and otherwise the uncapped Cost Level value.
 5. Let `estimate = max(1, floor(billable_gwei * G))` using the post-cap `billable_gwei`. In one database transaction, lock the user's `credit_accounts` row with `SELECT ... FOR UPDATE`, reject with HTTP 402 when `available = balance - locked` is strictly less than `estimate`, increase `credit_accounts.locked` by `estimate`, and create the `task_jobs` row with `credits_locked = estimate` and `credits_lock_status = held`. The pre-lock MUST NOT write a `credit_events` row and MUST NOT change `credit_accounts.balance`.
 6. Use the post-cap `task_fee_gwei` from step 4 as the submitted task fee in Gwei.
 7. Resolve `median_priority_gwei` with the Queue Median Hint rules in [llm-api.md](./llm-api.md). This resolution MUST always produce a value and MUST NOT fail the request.

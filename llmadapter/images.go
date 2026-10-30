@@ -332,9 +332,9 @@ func mapImagesQualityToSteps(quality string) (steps int, echo string, err error)
 	trimmed := strings.TrimSpace(strings.ToLower(quality))
 	switch trimmed {
 	case "":
-		return 40, "auto", nil
+		return 30, "auto", nil
 	case "auto", "medium", "standard":
-		return 40, trimmed, nil
+		return 30, trimmed, nil
 	case "low":
 		return 20, "low", nil
 	case "high", "hd", "xhigh", "max":

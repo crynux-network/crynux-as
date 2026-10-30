@@ -30,7 +30,7 @@ func TestParseImagesEditsJSONRequestDefaults(t *testing.T) {
 	if req.Model != "qwen/qwen-image-2.1" {
 		t.Fatalf("model = %q", req.Model)
 	}
-	if req.N != 1 || req.Width != 1024 || req.Height != 1024 || req.Steps != 40 {
+	if req.N != 1 || req.Width != 1024 || req.Height != 1024 || req.Steps != 30 {
 		t.Fatalf("defaults = n=%d size=%dx%d steps=%d", req.N, req.Width, req.Height, req.Steps)
 	}
 	if len(req.Images) != 1 || req.Images[0] != dataURL {
