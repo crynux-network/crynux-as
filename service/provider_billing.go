@@ -207,6 +207,150 @@ func ProviderEarningWei(billableGwei *big.Int) *big.Int {
 	return new(big.Int).Mul(billableGwei, big.NewInt(1_000_000_000))
 }
 
+// ceilPriorityFromFeeAndUnits returns ceil(minFeeGwei / units).
+func ceilPriorityFromFeeAndUnits(minFeeGwei *big.Int, units *big.Rat) (*big.Int, error) {
+	if minFeeGwei == nil || minFeeGwei.Sign() < 0 {
+		return nil, errors.New("minimum task fee must be non-negative")
+	}
+	if units == nil || units.Sign() <= 0 {
+		return nil, errors.New("provider units must be positive")
+	}
+	if minFeeGwei.Sign() == 0 {
+		return big.NewInt(0), nil
+	}
+	required := new(big.Rat).SetInt(minFeeGwei)
+	required.Quo(required, units)
+	priority := new(big.Int).Quo(required.Num(), required.Denom())
+	if new(big.Rat).SetInt(priority).Cmp(required) < 0 {
+		priority.Add(priority, big.NewInt(1))
+	}
+	if priority.Sign() <= 0 {
+		priority = big.NewInt(1)
+	}
+	return priority, nil
+}
+
+// CheapestProviderUnits returns the smallest estimated Provider units across all
+// configured Provider models for the same input and maximum-output estimates.
+func CheapestProviderUnits(inputBytes, maxOutputTokens uint64) (*big.Rat, error) {
+	routes := ListConfiguredProviderModels()
+	var cheapest *big.Rat
+	for _, route := range routes {
+		units, err := EstimateProviderUnits(route.UsageWeights, inputBytes, maxOutputTokens)
+		if err != nil {
+			return nil, fmt.Errorf("estimate units for %s: %w", route.ModelName, err)
+		}
+		if units.Sign() <= 0 {
+			continue
+		}
+		if cheapest == nil || units.Cmp(cheapest) < 0 {
+			cheapest = units
+		}
+	}
+	if cheapest == nil {
+		return nil, nil
+	}
+	return new(big.Rat).Set(cheapest), nil
+}
+
+// ResolveProviderSharedMinPriority converts llm.min_task_price_cnx.providers into
+// the shared Cost Level lower bound for one request workload. When the configured
+// providers minimum is 0 or no Provider models are configured, it returns nil.
+func ResolveProviderSharedMinPriority(inputBytes, maxOutputTokens uint64) (*big.Int, error) {
+	cfg := config.GetConfig()
+	if cfg == nil {
+		return nil, errors.New("config is not initialized")
+	}
+	minFeeGwei, err := cfg.MinTaskFeeGwei(config.MinTaskPriceProviders)
+	if err != nil {
+		return nil, fmt.Errorf("min_task_price_cnx.%s: %w", config.MinTaskPriceProviders, err)
+	}
+	if minFeeGwei.Sign() <= 0 {
+		return nil, nil
+	}
+	cheapestUnits, err := CheapestProviderUnits(inputBytes, maxOutputTokens)
+	if err != nil {
+		return nil, err
+	}
+	if cheapestUnits == nil {
+		return nil, nil
+	}
+	priority, err := ceilPriorityFromFeeAndUnits(minFeeGwei, cheapestUnits)
+	if err != nil {
+		return nil, err
+	}
+	return ClampPriorityGwei(priority)
+}
+
+// enforceAdmissionSharedMinPriority applies the shared Provider Cost Level lower
+// bound while remaining within Max Credits for the selected model.
+func enforceAdmissionSharedMinPriority(
+	project *models.Project,
+	priority *big.Int,
+	minPriority *big.Int,
+	feeAtPriority func(priority *big.Int) (*big.Int, error),
+) (*big.Int, *big.Int, error) {
+	if project == nil {
+		return nil, nil, errors.New("project is required")
+	}
+	if priority == nil || priority.Sign() <= 0 {
+		return nil, nil, errors.New("priority_gwei must be positive")
+	}
+	if feeAtPriority == nil {
+		return nil, nil, errors.New("fee calculator is required")
+	}
+	mode := project.CostLevelMode
+	if mode == "" {
+		mode = models.CostLevelModeStatic
+	}
+	workingPriority := new(big.Int).Set(priority)
+	if mode != models.CostLevelModeAuto {
+		billable, err := feeAtPriority(workingPriority)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := rejectIfStaticCreditsExceedMax(project, billable); err != nil {
+			return nil, nil, err
+		}
+		if minPriority != nil && minPriority.Sign() > 0 && workingPriority.Cmp(minPriority) < 0 {
+			return nil, nil, ErrTaskFeeBelowMinimum
+		}
+		return workingPriority, billable, nil
+	}
+
+	upper, err := MaxPriorityWithinAutoMaxCredits(project, feeAtPriority)
+	if err != nil {
+		return nil, nil, err
+	}
+	lower := big.NewInt(0)
+	if minPriority != nil && minPriority.Sign() > 0 {
+		lower = new(big.Int).Set(minPriority)
+	} else {
+		appCfg := config.GetConfig()
+		if appCfg == nil {
+			return nil, nil, errors.New("config is not initialized")
+		}
+		lower, err = appCfg.ParseMinPriorityGwei()
+		if err != nil {
+			return nil, nil, fmt.Errorf("llm.min_priority_gwei is invalid: %w", err)
+		}
+	}
+	if lower.Cmp(upper) > 0 {
+		return nil, nil, ErrAutoMaxCreditsInsufficient
+	}
+	if workingPriority.Cmp(lower) < 0 {
+		workingPriority = new(big.Int).Set(lower)
+	}
+	if workingPriority.Cmp(upper) > 0 {
+		workingPriority = new(big.Int).Set(upper)
+	}
+	billable, err := feeAtPriority(workingPriority)
+	if err != nil {
+		return nil, nil, err
+	}
+	return workingPriority, billable, nil
+}
+
 func BuildProviderBillingData(
 	project *models.Project,
 	route ProviderModelRoute,
@@ -219,10 +363,6 @@ func BuildProviderBillingData(
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
-	minTaskPriceCNX, err := cfg.MinTaskPriceCNXFor(string(route.ServiceProvider))
-	if err != nil {
-		return models.ProviderTaskBillingData{}, nil, err
-	}
 	units, err := EstimateProviderUnits(route.UsageWeights, inputBytes, maxOutputTokens)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
@@ -230,22 +370,14 @@ func BuildProviderBillingData(
 	feeAtPriority := func(priority *big.Int) (*big.Int, error) {
 		return ProviderBillableGwei(priority, units, maxTaskPriceCNX)
 	}
-	baseMinFeeGwei, err := cfg.MinTaskFeeGwei(string(route.ServiceProvider))
-	if err != nil {
-		return models.ProviderTaskBillingData{}, nil, fmt.Errorf("min_task_price_cnx.%s: %w", route.ServiceProvider, err)
-	}
-	minFeeGwei, err := scaleAdmissionMinTaskFee(
-		baseMinFeeGwei,
-		maxOutputTokens,
-		cfg.LLM.DefaultMaxTokens,
-	)
+	sharedMinPriority, err := ResolveProviderSharedMinPriority(inputBytes, maxOutputTokens)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
-	adjustedPriority, billableGwei, err := enforceAdmissionMinTaskFee(
+	adjustedPriority, billableGwei, err := enforceAdmissionSharedMinPriority(
 		project,
 		effectivePriority,
-		minFeeGwei,
+		sharedMinPriority,
 		feeAtPriority,
 	)
 	if err != nil {
@@ -265,7 +397,6 @@ func BuildProviderBillingData(
 		EffectivePriorityGwei:  adjustedPriority.String(),
 		CreditsPerGwei:         cfg.LLM.CreditsPerGwei,
 		MaxTaskPriceCNX:        maxTaskPriceCNX,
-		MinTaskPriceCNX:        minTaskPriceCNX,
 		EstimatedInputBytes:    inputBytes,
 		EstimatedOutputTokens:  maxOutputTokens,
 		EstimatedProviderUnits: units.FloatString(18),

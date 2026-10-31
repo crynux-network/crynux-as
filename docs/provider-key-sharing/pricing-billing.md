@@ -10,7 +10,7 @@
 * Credits reservation;
 * Credits account locking;
 * the per-provider `max_task_price_cnx` cap;
-* the per-provider `min_task_price_cnx` admission floor;
+* the shared `min_task_price_cnx.providers` admission floor;
 * task charge ledger ownership.
 
 This document defines Provider workload units, Provider queue priority, actual-usage settlement, and Key Owner CNX earnings.
@@ -33,26 +33,16 @@ Platform economics remain determined by:
 
 `llm.max_task_price_cnx.<service_provider>` MUST cap that Service Provider's consumer charge and Key Owner earning through the same post-cap `billable_gwei`. The job billing snapshot MUST store the configured CNX string used for that cap.
 
-`llm.min_task_price_cnx.<service_provider>` MUST define the Provider admission floor for a request whose maximum generated tokens equal `llm.default_max_tokens`. Admission MUST scale this configured base floor by the request's resolved maximum generated tokens:
+`llm.min_task_price_cnx.providers` MUST define the shared Provider admission floor in CNX units. For the current request's estimated input bytes and maximum generated tokens, admission MUST:
 
-```text
-base_min_task_fee_gwei =
-  floor(min_task_price_cnx.<service_provider> * 1e9)
+1. estimate Provider units for every configured Provider model under those same request parameters;
+2. select the cheapest positive unit estimate;
+3. convert the shared CNX floor into one Cost Level lower bound as `ceil(min_task_fee_gwei / cheapest_units)`;
+4. apply that shared Cost Level lower bound to the current request for every selected Provider model.
 
-admission_min_task_fee_gwei =
-  floor(
-    base_min_task_fee_gwei
-    * maximum_generated_tokens
-    / llm.default_max_tokens
-  )
-```
+After the estimated post-cap `billable_gwei` is computed for the selected model, static Cost Level mode MUST reject with HTTP 400 when estimated Credits at the fixed priority are strictly greater than `auto_max_credits_per_task`, or when the fixed priority is strictly below the shared Cost Level lower bound. Auto Cost Level mode MUST clamp the queue-target priority into `[shared_min_priority_gwei, max_priority_within_auto_max_credits]` for the selected model; when that interval is empty it MUST reject with HTTP 400.
 
-After the estimated post-cap `billable_gwei` is computed, static Cost Level mode MUST reject with HTTP 400 when estimated Credits at the fixed priority are strictly greater than `auto_max_credits_per_task`, without changing Cost Level. When `admission_min_task_fee_gwei` is positive and the estimated fee is strictly below that scaled floor:
-
-* static Cost Level mode MUST reject with HTTP 400 and MUST NOT create a job or lock Credits;
-* auto Cost Level mode MUST first lower the queue-target priority so estimated Credits stay within `auto_max_credits_per_task`, then raise priority within that Credits budget to the lowest value that meets the scaled floor when needed; when that budget cannot produce a fee at or above the scaled floor it MUST reject with HTTP 400.
-
-A configured minimum of `0` disables the gate for that Service Provider. Settlement MUST NOT raise Credits or Key Owner earnings to the scaled floor after admission. The job billing snapshot MUST store the configured base CNX string, the resolved maximum generated tokens, and the post-raise effective priority.
+A configured providers minimum of `0` disables the shared Cost Level lower bound. Settlement MUST NOT raise Credits or Key Owner earnings to the floor after admission. The job billing snapshot MUST store the selected model weights, the effective priority, Credits rate, max-price CNX string, and estimated request units. It MUST NOT store a per-Service-Provider minimum CNX string.
 
 ## Configured Usage Weights
 
@@ -134,7 +124,7 @@ estimated_input_bytes * maximum_input_weight
 + maximum_generated_tokens * maximum_generated_weight
 ```
 
-The estimated billable amount MUST then use the same Cost Level and cap rules as final settlement. Admission MUST scale the Service Provider `min_task_price_cnx` floor by `maximum_generated_tokens / llm.default_max_tokens` and apply that scaled floor to the final estimated fee before Credits reservation.
+The estimated billable amount MUST then use the same Cost Level and cap rules as final settlement. Admission MUST apply the shared `min_task_price_cnx.providers` Cost Level lower bound derived from the cheapest configured Provider model under the current request's estimated input and maximum generated tokens before Credits reservation.
 
 The reservation MUST be:
 
@@ -233,9 +223,10 @@ Every Provider job MUST persist a versioned billing snapshot containing:
 * effective priority;
 * `credits_per_gwei`;
 * maximum task price;
-* minimum task price;
 * estimated usage;
 * estimated Provider units;
 * locked Credits.
+
+The snapshot MUST NOT store a per-Service-Provider minimum task price. Older snapshots that still contain that field MUST ignore it during settlement.
 
 Settlement MUST use only this snapshot and final normalized usage. It MUST NOT read current model pricing configuration.

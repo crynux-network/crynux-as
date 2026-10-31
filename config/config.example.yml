@@ -84,9 +84,7 @@ llm:
     google: "0.001"
   min_task_price_cnx:
     crynux: "0"
-    openai: "0"
-    anthropic: "0"
-    google: "0"
+    providers: "0"
   job_submit_timeout: 600
   job_retention_days: 30
   task_result_dir: "data/task_results"

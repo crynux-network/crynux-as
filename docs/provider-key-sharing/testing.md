@@ -102,15 +102,18 @@ Tests MUST cover:
 * final usage equal to estimate;
 * final usage greater than estimate and uncollected balance shortfall;
 * global task price cap;
-* global task price minimum: the configured floor applies unchanged when maximum generated tokens equal `llm.default_max_tokens`;
-* global task price minimum: the admission floor scales proportionally when maximum generated tokens are below or above `llm.default_max_tokens`;
+* Provider shared admission floor: `min_task_price_cnx.providers` converts into one Cost Level lower bound from the cheapest configured Provider model under the current request's estimated input and maximum generated tokens;
+* Provider shared admission floor: model order does not change the shared Cost Level lower bound;
+* Provider shared admission floor: every selected Provider model uses the same shared Cost Level lower bound for one request;
+* Provider shared admission floor: weights keep relative model price ratios when Cost Level is held at that shared lower bound;
 * Crynux LLM admission floor scales by maximum completion tokens over `llm.default_max_tokens`;
 * Crynux Image admission floor scales by pixel-step units over `1 * 1024 * 1024 * 30`;
-* global task price minimum: scaled-Gwei calculation rounds down;
-* global task price minimum: static mode rejects when estimated Credits exceed `auto_max_credits_per_task` without changing priority;
-* global task price minimum: static mode rejects when the final estimated fee is below the scaled floor;
-* global task price minimum: auto mode first caps priority by `auto_max_credits_per_task`, then raises within that Credits budget when the budget can meet the scaled floor, otherwise rejects;
-* `min_task_price_cnx` of `0` disables the admission floor;
+* Provider shared admission floor: static mode rejects when estimated Credits exceed `auto_max_credits_per_task` without changing priority;
+* Provider shared admission floor: static mode rejects when fixed Cost Level is below the shared lower bound;
+* Provider shared admission floor: auto mode clamps queue-target Cost Level into `[shared_min_priority, max_priority_within_auto_max_credits]` and rejects when that interval is empty;
+* billing_config Provider min hints use the fixed reference request `10 input + 50 output`;
+* `min_task_price_cnx.crynux` or `min_task_price_cnx.providers` of `0` disables that admission floor;
+* configuration accepts only the fixed keys `crynux` and `providers` for `min_task_price_cnx`;
 * one-Credit minimum;
 * no floating-point ledger arithmetic.
 

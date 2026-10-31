@@ -58,9 +58,7 @@ llm:
     google: "0.001"
   min_task_price_cnx:
     crynux: "0"
-    openai: "0"
-    anthropic: "0"
-    google: "0"
+    providers: "0"
   job_submit_timeout: 600
   job_retention_days: 30
   task_result_dir: "data/task_results"
@@ -74,7 +72,7 @@ Configuration loading MUST fail when any of these values is missing or invalid:
 * `max_priority_gwei`
 * `credits_per_gwei` (MUST parse as a positive decimal string)
 * `max_task_price_cnx` (MUST be a map of provider ID to positive decimal CNX string; MUST include `crynux`; MUST include one entry for every `provider.services` key; every value MUST convert to a positive `max_task_fee_gwei`)
-* `min_task_price_cnx` (MUST be a map of provider ID to non-negative decimal CNX string; MUST include the same keys as `max_task_price_cnx`; every value MUST convert to a non-negative `min_task_fee_gwei`; for each provider ID, `min_task_fee_gwei` MUST be less than or equal to that provider's `max_task_fee_gwei`)
+* `min_task_price_cnx` (MUST be a map that contains exactly the keys `crynux` and `providers`; every value MUST be a non-negative decimal CNX string that converts to a non-negative `min_task_fee_gwei`; `min_task_price_cnx.crynux` MUST be less than or equal to `max_task_price_cnx.crynux`; `min_task_price_cnx.providers` MUST be less than or equal to every Service Provider `max_task_price_cnx.<service_provider>` value)
 
 Configuration loading MUST fail when `min_priority_gwei` is greater than `max_priority_gwei`.
 
@@ -92,13 +90,13 @@ The following items MUST NOT appear in configuration and MUST NOT be used for Cr
 
 `max_task_price_cnx` is the operator hard cap on one request's submitted task fee and Credits, keyed by provider ID. Each value is a positive decimal string in CNX units. Crynux Network OpenAI-compatible LLM, Raw LLM, and Raw Image fee paths MUST use `max_task_price_cnx.crynux`. Provider Key Sharing paths MUST use the cap for that Service Provider ID. After `billable_gwei` / `task_fee_gwei` are computed from Cost Level, estimated node seconds, and VRAM weight, the service MUST clamp both to that provider's `max_task_fee_gwei` when the uncapped `task_fee_gwei` is greater. The cap MUST NOT change the snapshotted request `priority_gwei`. `billing_config` MUST NOT return `max_task_price_cnx`.
 
-`min_task_price_cnx` is the operator admission floor keyed by provider ID. Each value is a non-negative decimal string in CNX units. `0` disables the floor for that provider.
+`min_task_price_cnx` is the operator admission floor. Each value is a non-negative decimal string in CNX units. `0` disables that floor.
 
-`min_task_price_cnx.crynux` and each Provider `min_task_price_cnx.<service_provider>` MUST be a base floor. Admission MUST scale that base floor before comparing it with the post-cap estimated fee:
+`min_task_price_cnx.crynux` MUST remain a Crynux Network base floor. Admission MUST scale that base floor before comparing it with the post-cap estimated fee:
 
 ```text
 base_min_task_fee_gwei =
-  floor(min_task_price_cnx.<provider> * 1e9)
+  floor(min_task_price_cnx.crynux * 1e9)
 
 admission_min_task_fee_gwei =
   floor(
@@ -108,20 +106,33 @@ admission_min_task_fee_gwei =
   )
 ```
 
-Request and baseline units MUST be:
+Crynux request and baseline units MUST be:
 
 * Crynux Network OpenAI-compatible LLM and Raw LLM: `request_units` is the resolved maximum completion tokens (`max_completion_tokens` if present and positive; otherwise `max_tokens` if present and positive; otherwise `llm.default_max_tokens`). `baseline_units` is `llm.default_max_tokens`.
 * Crynux Network OpenAI-compatible Image and Raw Image: `request_units` is `num_images_per_prompt * image_width * image_height * steps`, using `num_images_per_prompt = 1` when the field is omitted. `baseline_units` is `1 * 1024 * 1024 * 30`, matching the Image TaskArgs schema defaults for width, height, and steps.
-* Provider Key Sharing: `request_units` is the resolved maximum generated tokens (`max_completion_tokens` if present and positive; otherwise `max_tokens` if present and positive; otherwise `llm.default_max_tokens`). `baseline_units` is `llm.default_max_tokens`.
 
-Admission MUST compare the post-cap estimated fee with `admission_min_task_fee_gwei`. Before that comparison for static mode, estimated Credits at the fixed `priority_gwei` MUST be checked against `auto_max_credits_per_task`: when estimated Credits are strictly greater than Max Credits, static mode MUST reject with HTTP 400 without changing `priority_gwei` and MUST NOT create a job or lock Credits.
+For Crynux Network requests, admission MUST compare the post-cap estimated fee with `admission_min_task_fee_gwei`. Before that comparison for static mode, estimated Credits at the fixed `priority_gwei` MUST be checked against `auto_max_credits_per_task`: when estimated Credits are strictly greater than Max Credits, static mode MUST reject with HTTP 400 without changing `priority_gwei` and MUST NOT create a job or lock Credits.
 
-When the scaled floor is greater than zero and the final fee is strictly below it:
+When the Crynux scaled floor is greater than zero and the final fee is strictly below it:
 
 * static Cost Level mode MUST reject with HTTP 400 and MUST NOT create a job or lock Credits;
 * auto Cost Level mode MUST first lower the queue-target `priority_gwei` so estimated Credits stay within `auto_max_credits_per_task`, then raise `priority_gwei` within that Credits budget to the lowest value that meets the scaled floor when needed; when that budget cannot produce a fee at or above the scaled floor it MUST reject with HTTP 400.
 
-Settlement MUST NOT raise Credits or earnings to the minimum after admission. The raised auto-mode `priority_gwei` MUST be the value snapshotted on the job. `billing_config` MUST NOT return `min_task_price_cnx`.
+`min_task_price_cnx.providers` MUST be the shared Service Provider CNX floor for every configured Provider model. Provider admission MUST NOT scale that CNX floor by the selected model's weights. Instead, for the current request's estimated input bytes and maximum generated tokens, AS MUST:
+
+1. estimate Provider units for every configured Provider model under those same request parameters;
+2. select the cheapest positive unit estimate;
+3. convert `min_task_price_cnx.providers` into a shared Cost Level lower bound as `ceil(min_task_fee_gwei / cheapest_units)`, clamped into `[min_priority_gwei, max_priority_gwei]`;
+4. apply that shared Cost Level lower bound to the current request regardless of which Provider model was selected.
+
+When `min_task_price_cnx.providers` is `0`, or when no configured Provider model yields positive units, Provider admission MUST NOT apply a shared Cost Level lower bound beyond the global `min_priority_gwei` used by Max Credits search.
+
+For Provider Key Sharing requests:
+
+* static Cost Level mode MUST reject with HTTP 400 when estimated Credits at the fixed `priority_gwei` exceed `auto_max_credits_per_task`, or when `priority_gwei` is strictly below the shared Cost Level lower bound;
+* auto Cost Level mode MUST clamp the queue-target `priority_gwei` into `[shared_min_priority_gwei, max_priority_within_auto_max_credits]` for the selected model; when that interval is empty it MUST reject with HTTP 400.
+
+Settlement MUST NOT raise Credits or earnings to the minimum after admission. The effective auto-mode `priority_gwei` MUST be the value snapshotted on the job. `billing_config` MUST NOT return `min_task_price_cnx`.
 
 `empty_queue_median_priority_gwei`, `min_priority_gwei`, `max_priority_gwei`, and every API or persisted field whose name ends in `_gwei` MUST be encoded as a decimal integer string (the same representation used for other Gwei amounts in Crynux AS). `credits_per_gwei` and every `max_task_price_cnx` map value MUST be positive decimal strings. Every `min_task_price_cnx` map value MUST be a non-negative decimal string. Configuration, `billing_config`, and the call-record snapshot MUST store the configured string value for `credits_per_gwei`. Integer forms such as `"1"` and fractional forms such as `"0.000001"` are both valid for `credits_per_gwei`, `max_task_price_cnx` values, and `min_task_price_cnx` values.
 
@@ -257,7 +268,7 @@ When mode is `static`, the panel MUST provide:
 1. A logarithmic slider bound to `priority_gwei`, mapped on a visible axis packed from Crynux queue bounds, Provider queue bounds, the Provider admission threshold, and the current setting, then clamped to `[min_priority_gwei, max_priority_gwei]` from `GET /v1/llm/billing_config`.
 2. A numeric input bound to the same `priority_gwei`. On blur or save, the value MUST be parsed as a positive decimal integer and clamped into `[min_priority_gwei, max_priority_gwei]`.
 3. Under the slider, a bordered muted Task queue panel MUST contain the `Task queue` heading and separate Open source models and Provider models queue range bars. Each bar MUST map its own low/high pair onto the same logarithmic axis. Each queue title (`Open source models`, `Provider models`) MUST sit in a fixed-width left column inside the panel. Each bar MUST always render a thicker full-width track. When a queue is empty, that bar MUST keep the track, MUST NOT invent bounds, MUST NOT draw red/blue queue segments or min/max markers, and MUST show `Queue empty` centered inside the track.
-4. A Provider admission marker for `provider_min_priority_gwei` MUST be drawn on the Provider models bar. Its label MUST be `Provider min` and MUST sit below the track. Queue min/max labels MUST sit above the track, with the min label entirely to the left of its tick and the max label entirely to the right of its tick. The track segment to the left of the Provider admission marker MUST always be red. The Cost Level number for that marker MUST be secondary text or a tooltip. Below the queue bars inside the Task queue panel, the panel MUST show one small explanatory line for the current setting: when the current `priority_gwei` is at least `provider_min_priority_gwei`, it MUST state that Provider models such as OpenAI, Google, and Anthropic are available at this Cost Level; otherwise it MUST state that open source models are available, that requests to Provider models such as OpenAI, Google, and Anthropic will be rejected, and that the user must raise Cost Level to Provider min or higher.
+4. A Provider admission marker for `provider_min_priority_gwei` MUST be drawn on the Provider models bar. Its label MUST be `Provider min` and MUST sit below the track. Queue min/max labels MUST sit above the track, with the min label entirely to the left of its tick and the max label entirely to the right of its tick. The track segment to the left of the Provider admission marker MUST always be red. The Cost Level number for that marker MUST be secondary text or a tooltip. The marker and its tooltip MUST state that the value is a UI reference for the fixed request size of `provider_min_reference_input_tokens` input tokens and `provider_min_reference_output_tokens` output tokens, not the final admission result for an arbitrary request. Below the queue bars inside the Task queue panel, the panel MUST show one small explanatory line for the current setting based on that same reference: when the current `priority_gwei` is at least `provider_min_priority_gwei`, it MUST state that Provider models such as OpenAI, Google, and Anthropic are available at this Cost Level for the reference request; otherwise it MUST state that open source models are available, that requests to Provider models such as OpenAI, Google, and Anthropic may be rejected for that reference request, and that the user must raise Cost Level to Provider min or higher. The explanatory line MUST also state that actual availability depends on the selected model and request size.
 5. Below the Task queue panel, Static mode MUST show the same Max Credits per task control group as Auto, bound to `auto_max_credits_per_task`. Static mode MUST NOT auto-adjust Cost Level when Max Credits is exceeded; the backend MUST reject the request instead.
 
 Static control layout:
@@ -298,8 +309,8 @@ When mode is `auto`, the panel MUST provide two separate setting groups.
 
 1. A positive integer numeric input bound to `auto_max_credits_per_task`, with a logarithmic Credits slider to its right. The slider visible axis MUST pack the current Max Credits value and `provider_min_credits` with margin, then clamp to hard bounds `[1, 10000]`. Side labels MUST be `Lower` and `Higher`.
 2. When the project has no stored `auto_max_credits_per_task` and the user first selects Auto or Static, the WebUI MUST initialize the value from `default_auto_max_credits_per_task` in `billing_config`, then save that value with the mode change.
-3. Under the slider track, a range bar MUST mark `provider_min_credits` with under-label `Provider min` and MUST paint the track segment to the left of that marker red. Below the slider and that bar, the group MUST show the Provider availability explanation for Max Credits: when Max Credits is at least `provider_min_credits`, that Provider models such as OpenAI, Google, and Anthropic are available at this Max Credits; otherwise that open source models are available, Provider models such as OpenAI, Google, and Anthropic will be rejected, and Max Credits must be raised to Provider min or higher.
-4. For Auto, the group description MUST state that within Max Credits the system tries to reach the chosen queue position, that a low budget lowers queue placement, and that requests are rejected when Max Credits cannot cover the Provider minimum fee. For Static, the group description MUST state that estimated Credits above Max Credits are rejected without changing Cost Level, and that requests are rejected when Max Credits cannot cover the Provider minimum fee.
+3. Under the slider track, a range bar MUST mark `provider_min_credits` with under-label `Provider min` and MUST paint the track segment to the left of that marker red. The marker and its tooltip MUST state that the value is a UI reference for the fixed request size of `provider_min_reference_input_tokens` input tokens and `provider_min_reference_output_tokens` output tokens. Below the slider and that bar, the group MUST show the Provider availability explanation for Max Credits based on that same reference: when Max Credits is at least `provider_min_credits`, that Provider models such as OpenAI, Google, and Anthropic are available at this Max Credits for the reference request; otherwise that open source models are available, Provider models such as OpenAI, Google, and Anthropic may be rejected for that reference request, and Max Credits must be raised to Provider min or higher. The explanation MUST also state that actual availability depends on the selected model and request size.
+4. For Auto, the group description MUST state that within Max Credits the system tries to reach the chosen queue position, that a low budget lowers queue placement, and that requests are rejected when Max Credits cannot cover the shared Provider Cost Level lower bound for the real request. For Static, the group description MUST state that estimated Credits above Max Credits are rejected without changing Cost Level, and that requests are rejected when Max Credits cannot cover that shared lower bound for the real request.
 
 #### Auto control layout
 
@@ -357,6 +368,8 @@ Credits and task fee MUST remain separate ledger outcomes. Credits debit the use
     "default_auto_max_credits_per_task": "100",
     "provider_min_priority_gwei": "12",
     "provider_min_credits": "8",
+    "provider_min_reference_input_tokens": "10",
+    "provider_min_reference_output_tokens": "50",
     "provider_highest_priority_gwei": "40",
     "provider_lowest_priority_gwei": "15",
     "provider_queue_has_jobs": true
@@ -366,10 +379,14 @@ Credits and task fee MUST remain separate ledger outcomes. Credits debit the use
 
 * `base_vram`, `credits_per_gwei`, `min_priority_gwei`, `max_priority_gwei`, and `default_auto_max_credits_per_task` MUST come from configuration.
 * `min_priority_gwei`, `max_priority_gwei`, `median_priority_gwei`, `highest_priority_gwei`, `lowest_priority_gwei`, `provider_min_priority_gwei`, `provider_highest_priority_gwei`, and `provider_lowest_priority_gwei` MUST be decimal integer strings when present.
+* `provider_min_reference_input_tokens` and `provider_min_reference_output_tokens` MUST be positive decimal integer strings.
 * `median_priority_gwei` MUST be the current Crynux queued-priority cache median used for UI hints: the latest non-empty median when one exists; otherwise `empty_queue_median_priority_gwei`.
 * `highest_priority_gwei` and `lowest_priority_gwei` MUST be the current non-empty Crynux queue bounds from the queued-priority cache. When the live Crynux queue is empty or either bound is unavailable, both fields MUST be `null`.
-* `provider_min_priority_gwei` MUST be the conservative Cost Level at which every configured Provider model meets its minimum task fee.
-* `provider_min_credits` MUST be the conservative Credits amount covering every configured Provider minimum task fee.
+* `provider_min_priority_gwei` MUST be the shared Provider Cost Level lower bound derived from `min_task_price_cnx.providers` for the fixed reference workload of `10` input tokens and `50` output tokens.
+* `provider_min_credits` MUST be the Credits amount covering every configured Provider model at `provider_min_priority_gwei` for that same reference workload.
+* `provider_min_reference_input_tokens` MUST be `"10"`.
+* `provider_min_reference_output_tokens` MUST be `"50"`.
+* These Provider minimum fields are WebUI reference hints. Real request admission MUST recompute the shared Cost Level lower bound from the request's estimated input and maximum generated tokens.
 * `provider_highest_priority_gwei` and `provider_lowest_priority_gwei` MUST be the current non-expired Provider queue bounds. When the Provider queue has no non-expired jobs, both fields MUST be `null` and `provider_queue_has_jobs` MUST be `false`.
 * The response MUST NOT split Provider hints by Service Provider and MUST NOT return raw model price configuration.
 

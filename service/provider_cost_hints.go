@@ -6,18 +6,29 @@ import (
 	"math/big"
 )
 
+// Fixed UI reference workload for Provider minimum Cost Level and Credits hints.
+const (
+	ProviderMinReferenceInputTokens  uint64 = 10
+	ProviderMinReferenceOutputTokens uint64 = 50
+)
+
 // ProviderCostHints are derived UI values for project Cost Level controls.
 type ProviderCostHints struct {
-	// MinPriorityGwei is the conservative Cost Level at which every configured
-	// Provider model meets its minimum task fee for an empty input and
-	// llm.default_max_tokens maximum output.
+	// MinPriorityGwei is the shared Cost Level lower bound for the fixed
+	// reference workload of ProviderMinReferenceInputTokens input tokens and
+	// ProviderMinReferenceOutputTokens output tokens.
 	MinPriorityGwei *big.Int
-	// MinCredits is the conservative Credits amount covering every configured
-	// Provider minimum task fee at llm.default_max_tokens.
+	// MinCredits is the Credits required to cover every configured Provider
+	// model at MinPriorityGwei for the same reference workload.
 	MinCredits *big.Int
+	// ReferenceInputTokens is the input size used to derive the hints.
+	ReferenceInputTokens uint64
+	// ReferenceOutputTokens is the maximum output size used to derive the hints.
+	ReferenceOutputTokens uint64
 }
 
-// ResolveProviderCostHints aggregates admission thresholds across configured Provider models.
+// ResolveProviderCostHints derives Stable WebUI Provider minimum hints from the
+// shared providers floor and the fixed 10-input / 50-output reference request.
 func ResolveProviderCostHints() (*ProviderCostHints, error) {
 	appCfg := config.GetConfig()
 	if appCfg == nil {
@@ -27,69 +38,63 @@ func ResolveProviderCostHints() (*ProviderCostHints, error) {
 	if err != nil {
 		return nil, fmt.Errorf("credits_per_gwei: %w", err)
 	}
-	defaultMaxTokens := appCfg.LLM.DefaultMaxTokens
-	if defaultMaxTokens == 0 {
-		return nil, fmt.Errorf("llm.default_max_tokens is not set")
-	}
 
-	routes := ListConfiguredProviderModels()
-	var maxMinPriority *big.Int
-	var maxMinCredits *big.Int
-	for _, route := range routes {
-		baseMinFee, err := appCfg.MinTaskFeeGwei(string(route.ServiceProvider))
-		if err != nil {
-			return nil, fmt.Errorf("min_task_price_cnx.%s: %w", route.ServiceProvider, err)
-		}
-		if baseMinFee.Sign() <= 0 {
-			continue
-		}
-		minCredits, err := CalcCreditsFromBillable(new(big.Float).SetInt(baseMinFee), rate)
+	sharedMinPriority, err := ResolveProviderSharedMinPriority(
+		ProviderMinReferenceInputTokens,
+		ProviderMinReferenceOutputTokens,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if sharedMinPriority == nil {
+		minPriority, err := appCfg.ParseMinPriorityGwei()
 		if err != nil {
 			return nil, err
 		}
-		if maxMinCredits == nil || minCredits.Cmp(maxMinCredits) > 0 {
-			maxMinCredits = minCredits
-		}
+		return &ProviderCostHints{
+			MinPriorityGwei:       minPriority,
+			MinCredits:            big.NewInt(1),
+			ReferenceInputTokens:  ProviderMinReferenceInputTokens,
+			ReferenceOutputTokens: ProviderMinReferenceOutputTokens,
+		}, nil
+	}
 
-		units, err := EstimateProviderUnits(route.UsageWeights, 0, defaultMaxTokens)
+	routes := ListConfiguredProviderModels()
+	maxMinCredits := big.NewInt(1)
+	for _, route := range routes {
+		units, err := EstimateProviderUnits(
+			route.UsageWeights,
+			ProviderMinReferenceInputTokens,
+			ProviderMinReferenceOutputTokens,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("estimate units for %s: %w", route.ModelName, err)
 		}
 		if units.Sign() <= 0 {
 			continue
 		}
-		// priority = ceil(min_fee / units)
-		required := new(big.Rat).SetInt(baseMinFee)
-		required.Quo(required, units)
-		priority := new(big.Int).Quo(required.Num(), required.Denom())
-		if new(big.Rat).SetInt(priority).Cmp(required) < 0 {
-			priority.Add(priority, big.NewInt(1))
-		}
-		if priority.Sign() <= 0 {
-			priority = big.NewInt(1)
-		}
-		clamped, err := ClampPriorityGwei(priority)
+		maxTaskPriceCNX, err := appCfg.MaxTaskPriceCNXFor(string(route.ServiceProvider))
 		if err != nil {
 			return nil, err
 		}
-		if maxMinPriority == nil || clamped.Cmp(maxMinPriority) > 0 {
-			maxMinPriority = clamped
+		billable, err := ProviderBillableGwei(sharedMinPriority, units, maxTaskPriceCNX)
+		if err != nil {
+			return nil, err
+		}
+		credits, err := CalcCreditsFromBillable(new(big.Float).SetInt(billable), rate)
+		if err != nil {
+			return nil, err
+		}
+		if credits.Cmp(maxMinCredits) > 0 {
+			maxMinCredits = credits
 		}
 	}
 
-	if maxMinPriority == nil {
-		minPriority, err := appCfg.ParseMinPriorityGwei()
-		if err != nil {
-			return nil, err
-		}
-		maxMinPriority = minPriority
-	}
-	if maxMinCredits == nil {
-		maxMinCredits = big.NewInt(1)
-	}
 	return &ProviderCostHints{
-		MinPriorityGwei: maxMinPriority,
-		MinCredits:      maxMinCredits,
+		MinPriorityGwei:       sharedMinPriority,
+		MinCredits:            maxMinCredits,
+		ReferenceInputTokens:  ProviderMinReferenceInputTokens,
+		ReferenceOutputTokens: ProviderMinReferenceOutputTokens,
 	}, nil
 }
 

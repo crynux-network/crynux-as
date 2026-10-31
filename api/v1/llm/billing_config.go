@@ -1,6 +1,8 @@
 package llm
 
 import (
+	"fmt"
+
 	"crynux_as/api/v1/response"
 	"crynux_as/config"
 	"crynux_as/service"
@@ -17,8 +19,10 @@ type BillingConfigData struct {
 	HighestPriorityGwei          *string `json:"highest_priority_gwei" description:"Current Crynux queue highest priority in Gwei when the queue is non-empty"`
 	LowestPriorityGwei           *string `json:"lowest_priority_gwei" description:"Current Crynux queue lowest priority in Gwei when the queue is non-empty"`
 	DefaultAutoMaxCreditsPerTask string  `json:"default_auto_max_credits_per_task" description:"Default Auto Max Credits per task for new projects"`
-	ProviderMinPriorityGwei      string  `json:"provider_min_priority_gwei" description:"Conservative Cost Level at which all configured Provider models meet their minimum task fee"`
-	ProviderMinCredits           string  `json:"provider_min_credits" description:"Conservative Credits covering all configured Provider minimum task fees"`
+	ProviderMinPriorityGwei      string  `json:"provider_min_priority_gwei" description:"Shared Provider Cost Level lower bound for the reference 10-input / 50-output workload"`
+	ProviderMinCredits           string  `json:"provider_min_credits" description:"Credits covering every configured Provider model at provider_min_priority_gwei for the reference 10-input / 50-output workload"`
+	ProviderMinReferenceInput    string  `json:"provider_min_reference_input_tokens" description:"Input token count used to derive Provider minimum Cost Level and Credits hints"`
+	ProviderMinReferenceOutput   string  `json:"provider_min_reference_output_tokens" description:"Maximum output token count used to derive Provider minimum Cost Level and Credits hints"`
 	ProviderHighestPriorityGwei  *string `json:"provider_highest_priority_gwei" description:"Current Provider queue highest priority in Gwei when the queue is non-empty"`
 	ProviderLowestPriorityGwei   *string `json:"provider_lowest_priority_gwei" description:"Current Provider queue lowest priority in Gwei when the queue is non-empty"`
 	ProviderQueueHasJobs         bool    `json:"provider_queue_has_jobs" description:"True when the Provider queue snapshot contains non-expired queued jobs"`
@@ -52,6 +56,8 @@ func GetBillingConfig(c *gin.Context) (*GetBillingConfigResponse, error) {
 		DefaultAutoMaxCreditsPerTask: defaultAutoMax.String(),
 		ProviderMinPriorityGwei:      hints.MinPriorityGwei.String(),
 		ProviderMinCredits:           hints.MinCredits.String(),
+		ProviderMinReferenceInput:    fmt.Sprintf("%d", hints.ReferenceInputTokens),
+		ProviderMinReferenceOutput:   fmt.Sprintf("%d", hints.ReferenceOutputTokens),
 	}
 	if highest, lowest, ok := service.ResolveQueuePriorityBounds(); ok {
 		highestStr := highest.String()
