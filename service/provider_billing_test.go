@@ -263,8 +263,11 @@ func TestResolveProviderCostHintsEmptyProvidersUsesMinPriority(t *testing.T) {
 	if hints.MinPriorityGwei.Cmp(big.NewInt(3)) != 0 {
 		t.Fatalf("MinPriorityGwei=%s, want 3", hints.MinPriorityGwei.String())
 	}
-	if hints.MinCredits.Cmp(big.NewInt(1)) != 0 {
-		t.Fatalf("MinCredits=%s, want 1", hints.MinCredits.String())
+	if hints.MinCreditsCheapest.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("MinCreditsCheapest=%s, want 1", hints.MinCreditsCheapest.String())
+	}
+	if hints.MinCreditsExpensive.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("MinCreditsExpensive=%s, want 1", hints.MinCreditsExpensive.String())
 	}
 	if hints.ReferenceInputTokens != ProviderMinReferenceInputTokens {
 		t.Fatalf("ReferenceInputTokens=%d, want %d", hints.ReferenceInputTokens, ProviderMinReferenceInputTokens)
@@ -318,9 +321,14 @@ func TestResolveProviderCostHintsUsesReferenceWorkloadAndCheapestModel(t *testin
 		t.Fatalf("MinPriorityGwei=%s, want %s", hints.MinPriorityGwei.String(), wantPriority.String())
 	}
 	// expensive units = 10*10 + 50*10 = 600; fee = 16667 * 600 = 10_000_200
-	wantCredits := big.NewInt(10_000_200)
-	if hints.MinCredits.Cmp(wantCredits) != 0 {
-		t.Fatalf("MinCredits=%s, want %s", hints.MinCredits.String(), wantCredits.String())
+	// cheap units = 60; fee = 16667 * 60 = 1_000_020
+	wantExpensive := big.NewInt(10_000_200)
+	wantCheapest := big.NewInt(1_000_020)
+	if hints.MinCreditsExpensive.Cmp(wantExpensive) != 0 {
+		t.Fatalf("MinCreditsExpensive=%s, want %s", hints.MinCreditsExpensive.String(), wantExpensive.String())
+	}
+	if hints.MinCreditsCheapest.Cmp(wantCheapest) != 0 {
+		t.Fatalf("MinCreditsCheapest=%s, want %s", hints.MinCreditsCheapest.String(), wantCheapest.String())
 	}
 }
 

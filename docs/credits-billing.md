@@ -307,9 +307,9 @@ When mode is `auto`, the panel MUST provide two separate setting groups.
 
 #### Max Credits per task group
 
-1. A positive integer numeric input bound to `auto_max_credits_per_task`, with a logarithmic Credits slider to its right. The slider visible axis MUST pack the current Max Credits value and `provider_min_credits` with margin, then clamp to hard bounds `[1, 10000]`. Side labels MUST be `Lower` and `Higher`.
+1. A positive integer numeric input bound to `auto_max_credits_per_task`, with a logarithmic Credits slider to its right. The slider visible axis MUST pack the current Max Credits value, `provider_min_credits_cheapest`, and `provider_min_credits_expensive` with margin, then clamp to hard bounds `[1, 10000]`. Side labels MUST be `Lower` and `Higher`.
 2. When the project has no stored `auto_max_credits_per_task` and the user first selects Auto or Static, the WebUI MUST initialize the value from `default_auto_max_credits_per_task` in `billing_config`, then save that value with the mode change.
-3. Under the slider track, a range bar MUST mark `provider_min_credits` with under-label `Provider min` and MUST paint the track segment to the left of that marker red. The marker and its tooltip MUST state that the value is a UI reference for the fixed request size of `provider_min_reference_input_tokens` input tokens and `provider_min_reference_output_tokens` output tokens. Below the slider and that bar, the group MUST show the Provider availability explanation for Max Credits based on that same reference: when Max Credits is at least `provider_min_credits`, that Provider models such as OpenAI, Google, and Anthropic are available at this Max Credits for the reference request; otherwise that open source models are available, Provider models such as OpenAI, Google, and Anthropic may be rejected for that reference request, and Max Credits must be raised to Provider min or higher. The explanation MUST also state that actual availability depends on the selected model and request size.
+3. Under the slider track, a range bar MUST mark `provider_min_credits_cheapest` and `provider_min_credits_expensive` with under-labels `Cheapest min` and `Expensive min`, and MUST paint the track segment to the left of the cheaper marker red. The markers and tooltips MUST state that the values are UI references for the fixed request size of `provider_min_reference_input_tokens` input tokens and `provider_min_reference_output_tokens` output tokens. Below the slider and that bar, the group MUST show the Provider availability explanation for Max Credits based on that same reference in three states: all Provider models covered, only cheapest Provider models covered, or no Provider models covered.
 4. For Auto, the group description MUST state that within Max Credits the system tries to reach the chosen queue position, that a low budget lowers queue placement, and that requests are rejected when Max Credits cannot cover the shared Provider Cost Level lower bound for the real request. For Static, the group description MUST state that estimated Credits above Max Credits are rejected without changing Cost Level, and that requests are rejected when Max Credits cannot cover that shared lower bound for the real request.
 
 #### Auto control layout
@@ -367,7 +367,8 @@ Credits and task fee MUST remain separate ledger outcomes. Credits debit the use
     "lowest_priority_gwei": "18",
     "default_auto_max_credits_per_task": "100",
     "provider_min_priority_gwei": "12",
-    "provider_min_credits": "8",
+    "provider_min_credits_cheapest": "1",
+    "provider_min_credits_expensive": "8",
     "provider_min_reference_input_tokens": "10",
     "provider_min_reference_output_tokens": "50",
     "provider_highest_priority_gwei": "40",
@@ -383,7 +384,8 @@ Credits and task fee MUST remain separate ledger outcomes. Credits debit the use
 * `median_priority_gwei` MUST be the current Crynux queued-priority cache median used for UI hints: the latest non-empty median when one exists; otherwise `empty_queue_median_priority_gwei`.
 * `highest_priority_gwei` and `lowest_priority_gwei` MUST be the current non-empty Crynux queue bounds from the queued-priority cache. When the live Crynux queue is empty or either bound is unavailable, both fields MUST be `null`.
 * `provider_min_priority_gwei` MUST be the shared Provider Cost Level lower bound derived from `min_task_price_cnx.providers` for the fixed reference workload of `10` input tokens and `50` output tokens.
-* `provider_min_credits` MUST be the Credits amount covering every configured Provider model at `provider_min_priority_gwei` for that same reference workload.
+* `provider_min_credits_cheapest` MUST be the Credits amount for the cheapest configured Provider model at `provider_min_priority_gwei` for that same reference workload.
+* `provider_min_credits_expensive` MUST be the Credits amount for the most expensive configured Provider model at `provider_min_priority_gwei` for that same reference workload.
 * `provider_min_reference_input_tokens` MUST be `"10"`.
 * `provider_min_reference_output_tokens` MUST be `"50"`.
 * These Provider minimum fields are WebUI reference hints. Real request admission MUST recompute the shared Cost Level lower bound from the request's estimated input and maximum generated tokens.

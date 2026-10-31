@@ -18,9 +18,13 @@ type ProviderCostHints struct {
 	// reference workload of ProviderMinReferenceInputTokens input tokens and
 	// ProviderMinReferenceOutputTokens output tokens.
 	MinPriorityGwei *big.Int
-	// MinCredits is the Credits required to cover every configured Provider
-	// model at MinPriorityGwei for the same reference workload.
-	MinCredits *big.Int
+	// MinCreditsCheapest is the Credits required for the cheapest configured
+	// Provider model at MinPriorityGwei for the same reference workload.
+	MinCreditsCheapest *big.Int
+	// MinCreditsExpensive is the Credits required for the most expensive
+	// configured Provider model at MinPriorityGwei for the same reference
+	// workload.
+	MinCreditsExpensive *big.Int
 	// ReferenceInputTokens is the input size used to derive the hints.
 	ReferenceInputTokens uint64
 	// ReferenceOutputTokens is the maximum output size used to derive the hints.
@@ -51,16 +55,19 @@ func ResolveProviderCostHints() (*ProviderCostHints, error) {
 		if err != nil {
 			return nil, err
 		}
+		one := big.NewInt(1)
 		return &ProviderCostHints{
 			MinPriorityGwei:       minPriority,
-			MinCredits:            big.NewInt(1),
+			MinCreditsCheapest:    new(big.Int).Set(one),
+			MinCreditsExpensive:   new(big.Int).Set(one),
 			ReferenceInputTokens:  ProviderMinReferenceInputTokens,
 			ReferenceOutputTokens: ProviderMinReferenceOutputTokens,
 		}, nil
 	}
 
 	routes := ListConfiguredProviderModels()
-	maxMinCredits := big.NewInt(1)
+	var minCredits *big.Int
+	var maxCredits *big.Int
 	for _, route := range routes {
 		units, err := EstimateProviderUnits(
 			route.UsageWeights,
@@ -85,14 +92,27 @@ func ResolveProviderCostHints() (*ProviderCostHints, error) {
 		if err != nil {
 			return nil, err
 		}
-		if credits.Cmp(maxMinCredits) > 0 {
-			maxMinCredits = credits
+		if credits.Sign() <= 0 {
+			credits = big.NewInt(1)
 		}
+		if minCredits == nil || credits.Cmp(minCredits) < 0 {
+			minCredits = new(big.Int).Set(credits)
+		}
+		if maxCredits == nil || credits.Cmp(maxCredits) > 0 {
+			maxCredits = new(big.Int).Set(credits)
+		}
+	}
+	if minCredits == nil {
+		minCredits = big.NewInt(1)
+	}
+	if maxCredits == nil {
+		maxCredits = big.NewInt(1)
 	}
 
 	return &ProviderCostHints{
 		MinPriorityGwei:       sharedMinPriority,
-		MinCredits:            maxMinCredits,
+		MinCreditsCheapest:    minCredits,
+		MinCreditsExpensive:   maxCredits,
 		ReferenceInputTokens:  ProviderMinReferenceInputTokens,
 		ReferenceOutputTokens: ProviderMinReferenceOutputTokens,
 	}, nil

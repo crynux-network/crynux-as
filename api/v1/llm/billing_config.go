@@ -20,7 +20,8 @@ type BillingConfigData struct {
 	LowestPriorityGwei           *string `json:"lowest_priority_gwei" description:"Current Crynux queue lowest priority in Gwei when the queue is non-empty"`
 	DefaultAutoMaxCreditsPerTask string  `json:"default_auto_max_credits_per_task" description:"Default Auto Max Credits per task for new projects"`
 	ProviderMinPriorityGwei      string  `json:"provider_min_priority_gwei" description:"Shared Provider Cost Level lower bound for the reference 10-input / 50-output workload"`
-	ProviderMinCredits           string  `json:"provider_min_credits" description:"Credits covering every configured Provider model at provider_min_priority_gwei for the reference 10-input / 50-output workload"`
+	ProviderMinCreditsCheapest   string  `json:"provider_min_credits_cheapest" description:"Credits for the cheapest configured Provider model at provider_min_priority_gwei for the reference 10-input / 50-output workload"`
+	ProviderMinCreditsExpensive  string  `json:"provider_min_credits_expensive" description:"Credits for the most expensive configured Provider model at provider_min_priority_gwei for the reference 10-input / 50-output workload"`
 	ProviderMinReferenceInput    string  `json:"provider_min_reference_input_tokens" description:"Input token count used to derive Provider minimum Cost Level and Credits hints"`
 	ProviderMinReferenceOutput   string  `json:"provider_min_reference_output_tokens" description:"Maximum output token count used to derive Provider minimum Cost Level and Credits hints"`
 	ProviderHighestPriorityGwei  *string `json:"provider_highest_priority_gwei" description:"Current Provider queue highest priority in Gwei when the queue is non-empty"`
@@ -55,7 +56,8 @@ func GetBillingConfig(c *gin.Context) (*GetBillingConfigResponse, error) {
 		MedianPriorityGwei:           median.String(),
 		DefaultAutoMaxCreditsPerTask: defaultAutoMax.String(),
 		ProviderMinPriorityGwei:      hints.MinPriorityGwei.String(),
-		ProviderMinCredits:           hints.MinCredits.String(),
+		ProviderMinCreditsCheapest:   hints.MinCreditsCheapest.String(),
+		ProviderMinCreditsExpensive:  hints.MinCreditsExpensive.String(),
 		ProviderMinReferenceInput:    fmt.Sprintf("%d", hints.ReferenceInputTokens),
 		ProviderMinReferenceOutput:   fmt.Sprintf("%d", hints.ReferenceOutputTokens),
 	}
