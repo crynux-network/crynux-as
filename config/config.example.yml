@@ -111,6 +111,8 @@ provider:
   scheduler_interval_milliseconds: 100
   scheduler_batch_size: 100
   default_queue_timeout_seconds: 600
+  default_max_input_tokens: 10000000
+  default_max_output_tokens: 2000000
   max_attempts_per_job: 2
   key_cooldown_seconds: 3600
   stream_subscriber_buffer: 128

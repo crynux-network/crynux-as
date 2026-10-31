@@ -83,24 +83,24 @@ type AppConfig struct {
 	} `mapstructure:"huggingface"`
 
 	LLM struct {
-		DefaultMaxTokens              uint64 `mapstructure:"default_max_tokens"`
-		DefaultVramLimit              uint64 `mapstructure:"default_vram_limit"`
-		LoadedModelsRefreshInterval   uint64 `mapstructure:"loaded_models_refresh_interval"`
-		QueuedPriorityRefreshInterval uint64 `mapstructure:"queued_priority_refresh_interval"`
-		ExecutionTimeCacheTTL         uint64 `mapstructure:"execution_time_cache_ttl"`
-		MinCatalogOnDiskNodeCount     uint64 `mapstructure:"min_catalog_on_disk_node_count"`
-		BaseVRAM                      uint64 `mapstructure:"base_vram"`
-		EmptyQueueMedianPriorityGwei  string `mapstructure:"empty_queue_median_priority_gwei"`
-		MinPriorityGwei               string `mapstructure:"min_priority_gwei"`
-		MaxPriorityGwei               string `mapstructure:"max_priority_gwei"`
-		CreditsPerGwei                string `mapstructure:"credits_per_gwei"`
-		DefaultAutoMaxCreditsPerTask  string `mapstructure:"default_auto_max_credits_per_task"`
+		DefaultMaxTokens              uint64            `mapstructure:"default_max_tokens"`
+		DefaultVramLimit              uint64            `mapstructure:"default_vram_limit"`
+		LoadedModelsRefreshInterval   uint64            `mapstructure:"loaded_models_refresh_interval"`
+		QueuedPriorityRefreshInterval uint64            `mapstructure:"queued_priority_refresh_interval"`
+		ExecutionTimeCacheTTL         uint64            `mapstructure:"execution_time_cache_ttl"`
+		MinCatalogOnDiskNodeCount     uint64            `mapstructure:"min_catalog_on_disk_node_count"`
+		BaseVRAM                      uint64            `mapstructure:"base_vram"`
+		EmptyQueueMedianPriorityGwei  string            `mapstructure:"empty_queue_median_priority_gwei"`
+		MinPriorityGwei               string            `mapstructure:"min_priority_gwei"`
+		MaxPriorityGwei               string            `mapstructure:"max_priority_gwei"`
+		CreditsPerGwei                string            `mapstructure:"credits_per_gwei"`
+		DefaultAutoMaxCreditsPerTask  string            `mapstructure:"default_auto_max_credits_per_task"`
 		MaxTaskPriceCNX               map[string]string `mapstructure:"max_task_price_cnx"`
 		MinTaskPriceCNX               map[string]string `mapstructure:"min_task_price_cnx"`
-		JobSubmitTimeout              uint64 `mapstructure:"job_submit_timeout"`
-		JobRetentionDays              uint64 `mapstructure:"job_retention_days"`
-		TaskResultDir                 string `mapstructure:"task_result_dir"`
-		ProjectRecentRequestsLimit    uint64 `mapstructure:"project_recent_requests_limit"`
+		JobSubmitTimeout              uint64            `mapstructure:"job_submit_timeout"`
+		JobRetentionDays              uint64            `mapstructure:"job_retention_days"`
+		TaskResultDir                 string            `mapstructure:"task_result_dir"`
+		ProjectRecentRequestsLimit    uint64            `mapstructure:"project_recent_requests_limit"`
 	} `mapstructure:"llm"`
 
 	UsageStats struct {
@@ -152,17 +152,17 @@ type ProviderServiceConfig struct {
 }
 
 type ProviderWalletNetworkConfig struct {
-	DisplayName               string `mapstructure:"display_name"`
-	BenefitAddressContract    string `mapstructure:"benefit_address_contract"`
-	FixedWithdrawalFeeCNX     string `mapstructure:"fixed_withdrawal_fee_cnx"`
-	WithdrawalMinCNX          string `mapstructure:"withdrawal_min_cnx"`
-	MaxWithdrawalsPerDay uint64 `mapstructure:"max_withdrawals_per_day"`
-	FeeReceiverAddress   string `mapstructure:"fee_receiver_address"`
+	DisplayName            string `mapstructure:"display_name"`
+	BenefitAddressContract string `mapstructure:"benefit_address_contract"`
+	FixedWithdrawalFeeCNX  string `mapstructure:"fixed_withdrawal_fee_cnx"`
+	WithdrawalMinCNX       string `mapstructure:"withdrawal_min_cnx"`
+	MaxWithdrawalsPerDay   uint64 `mapstructure:"max_withdrawals_per_day"`
+	FeeReceiverAddress     string `mapstructure:"fee_receiver_address"`
 }
 
 type ProviderWalletConfig struct {
-	SignerAddress string                                  `mapstructure:"signer_address"`
-	Networks      map[string]ProviderWalletNetworkConfig  `mapstructure:"networks"`
+	SignerAddress string                                 `mapstructure:"signer_address"`
+	Networks      map[string]ProviderWalletNetworkConfig `mapstructure:"networks"`
 }
 
 type ProviderKeyEncryptionConfig struct {
@@ -170,14 +170,16 @@ type ProviderKeyEncryptionConfig struct {
 }
 
 type ProviderConfig struct {
-	MaxConcurrencyPerKey          uint64                            `mapstructure:"max_concurrency_per_key"`
-	SchedulerIntervalMilliseconds uint64                            `mapstructure:"scheduler_interval_milliseconds"`
-	SchedulerBatchSize            uint64                            `mapstructure:"scheduler_batch_size"`
-	DefaultQueueTimeoutSeconds    uint64                            `mapstructure:"default_queue_timeout_seconds"`
-	MaxAttemptsPerJob             uint64                            `mapstructure:"max_attempts_per_job"`
-	KeyCooldownSeconds            uint64                            `mapstructure:"key_cooldown_seconds"`
-	StreamSubscriberBuffer        uint64                            `mapstructure:"stream_subscriber_buffer"`
-	ShutdownTimeoutSeconds        uint64                            `mapstructure:"shutdown_timeout_seconds"`
+	MaxConcurrencyPerKey          uint64                           `mapstructure:"max_concurrency_per_key"`
+	SchedulerIntervalMilliseconds uint64                           `mapstructure:"scheduler_interval_milliseconds"`
+	SchedulerBatchSize            uint64                           `mapstructure:"scheduler_batch_size"`
+	DefaultQueueTimeoutSeconds    uint64                           `mapstructure:"default_queue_timeout_seconds"`
+	DefaultMaxInputTokens         uint64                           `mapstructure:"default_max_input_tokens"`
+	DefaultMaxOutputTokens        uint64                           `mapstructure:"default_max_output_tokens"`
+	MaxAttemptsPerJob             uint64                           `mapstructure:"max_attempts_per_job"`
+	KeyCooldownSeconds            uint64                           `mapstructure:"key_cooldown_seconds"`
+	StreamSubscriberBuffer        uint64                           `mapstructure:"stream_subscriber_buffer"`
+	ShutdownTimeoutSeconds        uint64                           `mapstructure:"shutdown_timeout_seconds"`
 	MaxSecretBytes                uint64                           `mapstructure:"max_secret_bytes"`
 	KeyEncryption                 ProviderKeyEncryptionConfig      `mapstructure:"key_encryption"`
 	ServicesFile                  string                           `mapstructure:"services_file"`

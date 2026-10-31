@@ -37,14 +37,15 @@
 10. Enabling a key MUST NOT clear an active cooldown.
 11. A Key Owner MUST be able to set independent maximum input and output token limits on each Shared API Key.
 12. `max_input_tokens` and `max_output_tokens` MUST be nullable. A null value MUST mean that side has no limit. A set value MUST be a positive integer. Zero and negative values MUST be rejected.
-13. AS MUST maintain per-key cumulative `used_input_tokens` and `used_output_tokens` counters on the Shared API Key row. Successful Provider settlement MUST atomically add the settled call's input tokens to `used_input_tokens` and output tokens to `used_output_tokens`. Failed calls MUST NOT change the counters.
-14. Token counters MUST use the same input and output totals written to the call record (`InputTokens` / `OutputTokens`). AS MUST NOT add cached, cache-write, reasoning, or tool-use components separately on top of those totals.
-15. When either set limit satisfies `used >= max`, subsequent scheduler and in-worker Key-switch eligibility queries MUST exclude the key. A claim that already selected the key MAY continue and settle, including when settlement pushes usage above the limit.
-16. Token-limit exclusion MUST NOT cancel, interrupt, or change settlement of a job that already claimed the key.
-17. A Key Owner MUST be able to reset usage counters to zero without changing the limits. After reset, the key MUST become eligible again when it is enabled, outside cooldown, and under its limits.
-18. Changing a limit MUST take effect for subsequent eligibility queries immediately. When a new limit makes `used >= max`, the key MUST be excluded without requiring a reset.
-19. Token-limit exhaustion MUST NOT remove the key from enabled, non-deleted catalog membership. Busy keys, cooldown, and token-limit exhaustion MUST NOT remove Provider models from the catalog.
-20. Usage counters start at zero when the limit feature is introduced. AS MUST NOT backfill counters from historical call records.
+13. A newly created Shared API Key MUST use `provider.default_max_input_tokens` and `provider.default_max_output_tokens` as its limits.
+14. AS MUST maintain per-key cumulative `used_input_tokens` and `used_output_tokens` counters on the Shared API Key row. Successful Provider settlement MUST atomically add the settled call's input tokens to `used_input_tokens` and output tokens to `used_output_tokens`. Failed calls MUST NOT change the counters.
+15. Token counters MUST use the same input and output totals written to the call record (`InputTokens` / `OutputTokens`). AS MUST NOT add cached, cache-write, reasoning, or tool-use components separately on top of those totals.
+16. When either set limit satisfies `used >= max`, subsequent scheduler and in-worker Key-switch eligibility queries MUST exclude the key. A claim that already selected the key MAY continue and settle, including when settlement pushes usage above the limit.
+17. Token-limit exclusion MUST NOT cancel, interrupt, or change settlement of a job that already claimed the key.
+18. A Key Owner MUST be able to reset usage counters to zero without changing the limits. After reset, the key MUST become eligible again when it is enabled, outside cooldown, and under its limits.
+19. Changing a limit MUST take effect for subsequent eligibility queries immediately. When a new limit makes `used >= max`, the key MUST be excluded without requiring a reset.
+20. Token-limit exhaustion MUST NOT remove the key from enabled, non-deleted catalog membership. Busy keys, cooldown, and token-limit exhaustion MUST NOT remove Provider models from the catalog.
+21. Usage counters start at zero when the limit feature is introduced. AS MUST NOT backfill counters from historical call records.
 
 ## Concurrency and Queueing
 

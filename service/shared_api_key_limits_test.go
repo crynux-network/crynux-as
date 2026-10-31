@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crynux_as/config"
 	"crynux_as/models"
 	"errors"
 	"testing"
@@ -46,6 +47,50 @@ func createTestSharedAPIKey(t *testing.T, db *gorm.DB, userID uint, publicID str
 		t.Fatalf("create key: %v", err)
 	}
 	return row
+}
+
+func TestCreateSharedAPIKeyUsesConfiguredDefaultLimits(t *testing.T) {
+	db := setupSharedAPIKeyLimitsTestDB(t)
+	user := models.User{Address: "0xlimits0"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	previousConfig := config.GetConfig()
+	previousEncryption := GetProviderKeyEncryption()
+	t.Cleanup(func() {
+		config.SetConfigForTest(previousConfig)
+		SetProviderKeyEncryption(previousEncryption)
+	})
+
+	cfg := &config.AppConfig{}
+	cfg.Provider.MaxSecretBytes = 4096
+	cfg.Provider.DefaultMaxInputTokens = 10_000_000
+	cfg.Provider.DefaultMaxOutputTokens = 2_000_000
+	cfg.Provider.Services = map[string]config.ProviderServiceConfig{
+		string(models.ServiceProviderAnthropic): {},
+	}
+	config.SetConfigForTest(cfg)
+	encryption, err := NewProviderKeyEncryption(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetProviderKeyEncryption(encryption)
+
+	key, err := CreateSharedAPIKey(context.Background(), db, CreateSharedAPIKeyInput{
+		UserID:          user.ID,
+		ServiceProvider: models.ServiceProviderAnthropic,
+		APIKey:          []byte("test-api-key"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.MaxInputTokens == nil || *key.MaxInputTokens != 10_000_000 {
+		t.Fatalf("max input tokens = %v, want 10000000", key.MaxInputTokens)
+	}
+	if key.MaxOutputTokens == nil || *key.MaxOutputTokens != 2_000_000 {
+		t.Fatalf("max output tokens = %v, want 2000000", key.MaxOutputTokens)
+	}
 }
 
 func TestListEligibleSharedAPIKeysExcludesExhaustedLimits(t *testing.T) {

@@ -95,8 +95,8 @@ Required fields:
 * `cooldown_until`, nullable;
 * `used_input_tokens`, non-negative integer, default `0`;
 * `used_output_tokens`, non-negative integer, default `0`;
-* `max_input_tokens`, nullable positive integer; null means unlimited;
-* `max_output_tokens`, nullable positive integer; null means unlimited;
+* `max_input_tokens`, nullable positive integer initialized from `provider.default_max_input_tokens`; null means unlimited;
+* `max_output_tokens`, nullable positive integer initialized from `provider.default_max_output_tokens`; null means unlimited;
 * `fingerprint`, nullable after deletion;
 * `key_ciphertext`, nullable after deletion;
 * `key_nonce`, nullable after deletion;

@@ -47,7 +47,7 @@ Log-redaction tests MUST scan captured log output for the complete test secret a
 
 Tests MUST cover:
 
-* new key is enabled;
+* new key is enabled and uses the configured default input and output token limits;
 * enable and disable idempotency;
 * disable excludes a key from later eligibility queries;
 * disable does not cancel an in-flight call;

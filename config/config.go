@@ -469,6 +469,12 @@ func checkProviderConfig(v *viper.Viper) error {
 	if p.DefaultQueueTimeoutSeconds == 0 {
 		return errors.New("provider.default_queue_timeout_seconds must be greater than 0")
 	}
+	if p.DefaultMaxInputTokens == 0 {
+		return errors.New("provider.default_max_input_tokens must be greater than 0")
+	}
+	if p.DefaultMaxOutputTokens == 0 {
+		return errors.New("provider.default_max_output_tokens must be greater than 0")
+	}
 	if p.MaxAttemptsPerJob == 0 {
 		return errors.New("provider.max_attempts_per_job must be greater than 0")
 	}

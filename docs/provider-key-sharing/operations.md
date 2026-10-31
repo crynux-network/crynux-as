@@ -25,6 +25,8 @@ provider:
   scheduler_interval_milliseconds: 100
   scheduler_batch_size: 100
   default_queue_timeout_seconds: 600
+  default_max_input_tokens: 10000000
+  default_max_output_tokens: 2000000
   max_attempts_per_job: 2
   key_cooldown_seconds: 3600
   stream_subscriber_buffer: 128
@@ -52,6 +54,8 @@ Service Provider base URLs are operator-controlled trusted configuration. User i
 Each Wallet network MUST reference an existing AS blockchain configuration so Beneficial Address reads use the existing rate-limited blockchain client.
 
 ## Configuration Validation
+
+`provider.default_max_input_tokens` and `provider.default_max_output_tokens` MUST define the positive token limits assigned to every newly created Shared API Key.
 
 Startup MUST validate:
 

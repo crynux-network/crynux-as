@@ -80,6 +80,8 @@ func CreateSharedAPIKey(ctx context.Context, db *gorm.DB, in CreateSharedAPIKeyI
 		return nil, err
 	}
 	masked := MaskAPIKeySuffix(in.APIKey)
+	maxInputTokens := cfg.Provider.DefaultMaxInputTokens
+	maxOutputTokens := cfg.Provider.DefaultMaxOutputTokens
 
 	row := models.SharedAPIKey{
 		PublicID:        publicID,
@@ -87,6 +89,8 @@ func CreateSharedAPIKey(ctx context.Context, db *gorm.DB, in CreateSharedAPIKeyI
 		ServiceProvider: in.ServiceProvider,
 		MaskedSuffix:    masked,
 		OwnerEnabled:    true,
+		MaxInputTokens:  &maxInputTokens,
+		MaxOutputTokens: &maxOutputTokens,
 		Fingerprint:     &fingerprint,
 		KeyCiphertext:   ciphertext,
 		KeyNonce:        nonce,
@@ -181,11 +185,11 @@ func DeleteSharedAPIKey(ctx context.Context, db *gorm.DB, userID uint, publicID 
 		}
 		now := time.Now()
 		return tx.Model(&row).Updates(map[string]interface{}{
-			"deleted_at":      now,
-			"owner_enabled":   false,
-			"fingerprint":     nil,
-			"key_ciphertext":  nil,
-			"key_nonce":       nil,
+			"deleted_at":     now,
+			"owner_enabled":  false,
+			"fingerprint":    nil,
+			"key_ciphertext": nil,
+			"key_nonce":      nil,
 		}).Error
 	})
 }

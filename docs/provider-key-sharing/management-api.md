@@ -121,7 +121,8 @@ Requirements:
 * `api_key` must be non-empty and within the configured maximum secret length;
 * AS must validate the credential before persistence;
 * duplicate fingerprint must return 409;
-* the new key is owner-enabled and has no active cooldown.
+* the new key is owner-enabled and has no active cooldown;
+* the new key uses `provider.default_max_input_tokens` and `provider.default_max_output_tokens` as its token limits.
 
 The response returns the list-item shape. It MUST NOT echo `api_key`.
 
