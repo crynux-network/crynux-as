@@ -10,8 +10,12 @@ import (
 
 const DefaultAutoQueuePosition = 50
 
-// ParsePriorityGwei parses a decimal integer Gwei string and validates it against
-// configured min_priority_gwei and max_priority_gwei inclusive bounds.
+// PriorityGweiPerKgwei is the Gwei count of one integer Static Cost Level kgwei unit.
+const PriorityGweiPerKgwei int64 = 1000
+
+// ParsePriorityGwei parses a Static project Cost Level as a decimal integer Gwei
+// string. The value MUST be a positive multiple of PriorityGweiPerKgwei and MUST
+// lie in the Static project bounds returned by StaticProjectPriorityBounds.
 func ParsePriorityGwei(value string) (*big.Int, error) {
 	if value == "" {
 		return nil, errors.New("priority_gwei must be a positive decimal integer")
@@ -25,7 +29,7 @@ func ParsePriorityGwei(value string) (*big.Int, error) {
 	if !ok || priority.Sign() <= 0 {
 		return nil, errors.New("priority_gwei must be a positive decimal integer")
 	}
-	if err := ValidatePriorityGwei(priority); err != nil {
+	if err := ValidateStaticProjectPriorityGwei(priority); err != nil {
 		return nil, err
 	}
 	return priority, nil
@@ -49,6 +53,8 @@ func ParseAutoMaxCreditsPerTask(value string) (*big.Int, error) {
 }
 
 // ValidatePriorityGwei checks priority is within configured inclusive bounds.
+// Auto request resolution and live queue clamping use this helper. Static
+// project Cost Level updates MUST use ValidateStaticProjectPriorityGwei.
 func ValidatePriorityGwei(priority *big.Int) error {
 	if priority == nil || priority.Sign() <= 0 {
 		return errors.New("priority_gwei must be positive")
@@ -73,6 +79,96 @@ func ValidatePriorityGwei(priority *big.Int) error {
 		)
 	}
 	return nil
+}
+
+// StaticProjectPriorityBounds returns the inclusive Static project Cost Level
+// bounds in Gwei. The lower bound is at least one kgwei and both bounds are
+// integer multiples of PriorityGweiPerKgwei.
+func StaticProjectPriorityBounds() (minPriority *big.Int, maxPriority *big.Int, err error) {
+	cfg := config.GetConfig()
+	if cfg == nil {
+		return nil, nil, errors.New("llm priority bounds are not configured")
+	}
+	configuredMin, err := cfg.ParseMinPriorityGwei()
+	if err != nil {
+		return nil, nil, fmt.Errorf("llm.min_priority_gwei is invalid: %w", err)
+	}
+	configuredMax, err := cfg.ParseMaxPriorityGwei()
+	if err != nil {
+		return nil, nil, fmt.Errorf("llm.max_priority_gwei is invalid: %w", err)
+	}
+
+	unit := big.NewInt(PriorityGweiPerKgwei)
+	minPriority = new(big.Int).Set(configuredMin)
+	if minPriority.Cmp(unit) < 0 {
+		minPriority.Set(unit)
+	}
+	minRem := new(big.Int).Mod(minPriority, unit)
+	if minRem.Sign() != 0 {
+		minPriority.Add(minPriority, new(big.Int).Sub(unit, minRem))
+	}
+
+	maxPriority = new(big.Int).Set(configuredMax)
+	maxPriority.Div(maxPriority, unit)
+	maxPriority.Mul(maxPriority, unit)
+	if maxPriority.Cmp(minPriority) < 0 {
+		return nil, nil, fmt.Errorf(
+			"static project priority bounds are empty between %s and %s",
+			minPriority.String(),
+			configuredMax.String(),
+		)
+	}
+	return minPriority, maxPriority, nil
+}
+
+// ValidateStaticProjectPriorityGwei checks a stored Static project Cost Level.
+func ValidateStaticProjectPriorityGwei(priority *big.Int) error {
+	if priority == nil || priority.Sign() <= 0 {
+		return errors.New("priority_gwei must be positive")
+	}
+	unit := big.NewInt(PriorityGweiPerKgwei)
+	if new(big.Int).Mod(priority, unit).Sign() != 0 {
+		return fmt.Errorf(
+			"priority_gwei must be a multiple of %d",
+			PriorityGweiPerKgwei,
+		)
+	}
+	minPriority, maxPriority, err := StaticProjectPriorityBounds()
+	if err != nil {
+		return err
+	}
+	if priority.Cmp(minPriority) < 0 || priority.Cmp(maxPriority) > 0 {
+		return fmt.Errorf(
+			"priority_gwei must be between %s and %s",
+			minPriority.String(),
+			maxPriority.String(),
+		)
+	}
+	return nil
+}
+
+// NormalizeStaticProjectPriorityGwei rounds priority to the nearest integer
+// kgwei with half-up ties, then clamps into Static project bounds.
+func NormalizeStaticProjectPriorityGwei(priority *big.Int) (*big.Int, error) {
+	if priority == nil {
+		return nil, errors.New("priority_gwei is required")
+	}
+	minPriority, maxPriority, err := StaticProjectPriorityBounds()
+	if err != nil {
+		return nil, err
+	}
+	unit := big.NewInt(PriorityGweiPerKgwei)
+	half := new(big.Int).Div(unit, big.NewInt(2))
+	out := new(big.Int).Add(priority, half)
+	out.Div(out, unit)
+	out.Mul(out, unit)
+	if out.Cmp(minPriority) < 0 {
+		out.Set(minPriority)
+	}
+	if out.Cmp(maxPriority) > 0 {
+		out.Set(maxPriority)
+	}
+	return out, nil
 }
 
 // ClampPriorityGwei clamps priority into [min_priority_gwei, max_priority_gwei].
@@ -120,13 +216,18 @@ func ParseAutoQueuePosition(value int) (int, error) {
 	return value, nil
 }
 
-// InitialProjectPriorityGwei returns the Queue Median Hint clamped to configured bounds.
+// InitialProjectPriorityGwei returns the Queue Median Hint normalized to an
+// integer Static project Cost Level kgwei value.
 func InitialProjectPriorityGwei() (*big.Int, error) {
 	median, err := ResolveQueueMedianHint()
 	if err != nil {
 		return nil, err
 	}
-	return ClampPriorityGwei(median)
+	clamped, err := ClampPriorityGwei(median)
+	if err != nil {
+		return nil, err
+	}
+	return NormalizeStaticProjectPriorityGwei(clamped)
 }
 
 // DefaultAutoMaxCreditsPerTask returns llm.default_auto_max_credits_per_task.

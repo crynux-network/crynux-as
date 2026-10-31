@@ -17,21 +17,79 @@ func withPriorityBounds(t *testing.T, min, max string) {
 }
 
 func TestParsePriorityGweiAllowed(t *testing.T) {
-	withPriorityBounds(t, "1", "1000")
-	got, err := ParsePriorityGwei("34")
+	withPriorityBounds(t, "1", "1000000000")
+	got, err := ParsePriorityGwei("1000")
 	if err != nil {
 		t.Fatalf("ParsePriorityGwei: %v", err)
 	}
-	if got.Cmp(big.NewInt(34)) != 0 {
-		t.Fatalf("priority = %s, want 34", got.String())
+	if got.Cmp(big.NewInt(1000)) != 0 {
+		t.Fatalf("priority = %s, want 1000", got.String())
+	}
+	got, err = ParsePriorityGwei("2000")
+	if err != nil {
+		t.Fatalf("ParsePriorityGwei: %v", err)
+	}
+	if got.Cmp(big.NewInt(2000)) != 0 {
+		t.Fatalf("priority = %s, want 2000", got.String())
 	}
 }
 
 func TestParsePriorityGweiRejected(t *testing.T) {
-	withPriorityBounds(t, "10", "100")
-	for _, value := range []string{"", "0", "9", "101", "1.5", "-1"} {
+	withPriorityBounds(t, "1", "1000000000")
+	for _, value := range []string{"", "0", "1", "999", "1001", "1500", "1.5", "-1"} {
 		if _, err := ParsePriorityGwei(value); err == nil {
 			t.Fatalf("ParsePriorityGwei(%q) should fail", value)
+		}
+	}
+}
+
+func TestStaticProjectPriorityBounds(t *testing.T) {
+	withPriorityBounds(t, "1", "1000000000")
+	minPriority, maxPriority, err := StaticProjectPriorityBounds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if minPriority.Cmp(big.NewInt(1000)) != 0 {
+		t.Fatalf("min = %s, want 1000", minPriority.String())
+	}
+	if maxPriority.Cmp(big.NewInt(1000000000)) != 0 {
+		t.Fatalf("max = %s, want 1000000000", maxPriority.String())
+	}
+
+	withPriorityBounds(t, "1501", "9999")
+	minPriority, maxPriority, err = StaticProjectPriorityBounds()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if minPriority.Cmp(big.NewInt(2000)) != 0 {
+		t.Fatalf("min = %s, want 2000", minPriority.String())
+	}
+	if maxPriority.Cmp(big.NewInt(9000)) != 0 {
+		t.Fatalf("max = %s, want 9000", maxPriority.String())
+	}
+}
+
+func TestNormalizeStaticProjectPriorityGwei(t *testing.T) {
+	withPriorityBounds(t, "1", "1000000000")
+	cases := []struct {
+		in   int64
+		want int64
+	}{
+		{1, 1000},
+		{499, 1000},
+		{500, 1000},
+		{1499, 1000},
+		{1500, 2000},
+		{1000, 1000},
+		{2000, 2000},
+	}
+	for _, tc := range cases {
+		got, err := NormalizeStaticProjectPriorityGwei(big.NewInt(tc.in))
+		if err != nil {
+			t.Fatalf("NormalizeStaticProjectPriorityGwei(%d): %v", tc.in, err)
+		}
+		if got.Cmp(big.NewInt(tc.want)) != 0 {
+			t.Fatalf("NormalizeStaticProjectPriorityGwei(%d) = %s, want %d", tc.in, got.String(), tc.want)
 		}
 	}
 }

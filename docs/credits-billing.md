@@ -84,7 +84,7 @@ The following items MUST NOT appear in configuration and MUST NOT be used for Cr
 * `completion_credits_per_token`
 * `vram_ratios`
 
-`min_priority_gwei` and `max_priority_gwei` are the hard inclusive bounds for project Cost Level values.
+`min_priority_gwei` and `max_priority_gwei` are the hard inclusive bounds for request Cost Level resolution, including Auto mode. Static project Cost Level values stored on `projects.priority_gwei` MUST additionally be positive integer multiples of `1000` Gwei (`1` kgwei) and MUST lie in the Static project bounds derived from those configured values: the Static minimum is at least `1000` Gwei and both Static bounds are floored or raised to integer kgwei multiples.
 
 `credits_per_gwei` converts `billable_gwei` into Credits. It MUST NOT change `task_fee_gwei`.
 
@@ -259,14 +259,16 @@ The Cost Level panel intro copy MUST state that Cost Level controls how many Cre
 
 The panel MUST persist mode and both mode setting sets independently. Switching mode MUST NOT clear or overwrite the other mode's stored values.
 
-When the Cost Level panel is collapsed, the header preview MUST show a mode tag (`Auto` or `Static`) and the current setting values in a unified layout: Auto MUST show `auto_queue_position` as a percent and `auto_max_credits_per_task` as `position% · max`; Static MUST show `priority_gwei` and `auto_max_credits_per_task`.
+When the Cost Level panel is collapsed, the header preview MUST show a mode tag (`Auto` or `Static`) and the current setting values in a unified layout: Auto MUST show `auto_queue_position` as a percent and `auto_max_credits_per_task` as `position% · max`; Static MUST show the stored `priority_gwei` as an integer kgwei value with a `kgwei` unit label and `auto_max_credits_per_task`.
+
+The WebUI MUST display Cost Level amounts as integer kgwei, where `1` kgwei equals `1000` Gwei. Display values MUST round half-up from Gwei to the nearest integer kgwei. The WebUI MUST continue to send and receive API fields named `*_gwei` as decimal integer Gwei strings. Credits example math MUST use the Gwei values, not the displayed kgwei integers.
 
 ### Static controls
 
 When mode is `static`, the panel MUST provide:
 
-1. A logarithmic slider bound to `priority_gwei`, mapped on a visible axis packed from Crynux queue bounds, Provider queue bounds, the Provider admission threshold, and the current setting, then clamped to `[min_priority_gwei, max_priority_gwei]` from `GET /v1/llm/billing_config`.
-2. A numeric input bound to the same `priority_gwei`. On blur or save, the value MUST be parsed as a positive decimal integer and clamped into `[min_priority_gwei, max_priority_gwei]`.
+1. A logarithmic slider bound to the project's Static `priority_gwei`, mapped on a visible axis packed from Crynux queue bounds, Provider queue bounds, the Provider admission threshold, and the current setting, then clamped to the Static project bounds from `GET /v1/llm/billing_config` `min_priority_gwei` and `max_priority_gwei`. Slider output MUST quantize to the nearest integer kgwei before display and save. The slider's logarithmic mapping MUST keep the existing natural-log axis; it MUST NOT change the axis formula solely because the display unit is kgwei.
+2. A numeric input that displays and edits integer kgwei. On blur or save, the value MUST be parsed as a positive decimal integer kgwei, converted to Gwei by multiplying by `1000`, and clamped into the Static project bounds from `billing_config`. The input MUST show a `kgwei` unit label.
 3. Under the slider, a bordered muted Task queue panel MUST contain the `Task queue` heading and separate Open source models and Provider models queue range bars. Each bar MUST map its own low/high pair onto the same logarithmic axis. Each queue title (`Open source models`, `Provider models`) MUST sit in a fixed-width left column inside the panel. Each bar MUST always render a thicker full-width track. When a queue is empty, that bar MUST keep the track, MUST NOT invent bounds, MUST NOT draw red/blue queue segments or min/max markers, and MUST show `Queue empty` centered inside the track.
 4. A Provider admission marker for `provider_min_priority_gwei` MUST be drawn on the Provider models bar. Its label MUST be `Provider min` and MUST sit below the track. Queue min/max labels MUST sit above the track, with the min label entirely to the left of its tick and the max label entirely to the right of its tick. The track segment to the left of the Provider admission marker MUST always be red. The Cost Level number for that marker MUST be secondary text or a tooltip. The marker and its tooltip MUST state that the value is a UI reference for the fixed request size of `provider_min_reference_input_tokens` input tokens and `provider_min_reference_output_tokens` output tokens, not the final admission result for an arbitrary request. Below the queue bars inside the Task queue panel, the panel MUST show one small explanatory line for the current setting based on that same reference: when the current `priority_gwei` is at least `provider_min_priority_gwei`, it MUST state that Provider models such as OpenAI, Google, and Anthropic are available at this Cost Level for the reference request; otherwise it MUST state that open source models are available, that requests to Provider models such as OpenAI, Google, and Anthropic may be rejected for that reference request, and that the user must raise Cost Level to Provider min or higher. The explanatory line MUST also state that actual availability depends on the selected model and request size.
 5. Below the Task queue panel, Static mode MUST show the same Max Credits per task control group as Auto, bound to `auto_max_credits_per_task`. Static mode MUST NOT auto-adjust Cost Level when Max Credits is exceeded; the backend MUST reject the request instead.
@@ -309,7 +311,7 @@ When mode is `auto`, the panel MUST provide two separate setting groups.
 
 1. A positive integer numeric input bound to `auto_max_credits_per_task`, with a logarithmic Credits slider to its right. The slider visible axis MUST pack the current Max Credits value, `provider_min_credits_cheapest`, and `provider_min_credits_expensive` with margin, then clamp to hard bounds `[1, 10000]`. Side labels MUST be `Lower` and `Higher`.
 2. When the project has no stored `auto_max_credits_per_task` and the user first selects Auto or Static, the WebUI MUST initialize the value from `default_auto_max_credits_per_task` in `billing_config`, then save that value with the mode change.
-3. Under the slider track, a range bar MUST mark `provider_min_credits_cheapest` and `provider_min_credits_expensive` with under-labels `Cheapest min` and `Expensive min`, and MUST paint the track segment to the left of the cheaper marker red. The markers and tooltips MUST state that the values are UI references for the fixed request size of `provider_min_reference_input_tokens` input tokens and `provider_min_reference_output_tokens` output tokens. Below the slider and that bar, the group MUST show the Provider availability explanation for Max Credits based on that same reference in three states: all Provider models covered, only cheapest Provider models covered, or no Provider models covered.
+3. Under the slider track, a range bar MUST mark `provider_min_credits_cheapest` and `provider_min_credits_expensive` with under-labels `Provider min - cheapest` and `Provider min - expensive`, and MUST paint the track segment to the left of the cheaper marker red. The markers and tooltips MUST state that the values are UI references for the fixed request size of `provider_min_reference_input_tokens` input tokens and `provider_min_reference_output_tokens` output tokens. Below the slider and that bar, the group MUST show the Provider availability explanation for Max Credits based on that same reference in three states: all Provider models covered, only cheapest Provider models covered, or no Provider models covered.
 4. For Auto, the group description MUST state that within Max Credits the system tries to reach the chosen queue position, that a low budget lowers queue placement, and that requests are rejected when Max Credits cannot cover the shared Provider Cost Level lower bound for the real request. For Static, the group description MUST state that estimated Credits above Max Credits are rejected without changing Cost Level, and that requests are rejected when Max Credits cannot cover that shared lower bound for the real request.
 
 #### Auto control layout
@@ -329,7 +331,7 @@ When mode is `auto`, Credits example cells MUST use the current Crynux queue hig
 
 The project list MUST distinguish modes:
 
-* Static: show a `Static` mode tag, the stored `priority_gwei`, and the current queue-range status tag derived from that value (`In range`, `Too low`, or `Too high`). The `priority_gwei` number color MUST use a discrete palette: `too_low` and `Slowest`/`Slower` in red, `Balanced` in blue, `Faster`/`Fastest` and `too_high` in yellow. The WebUI MUST NOT use a continuous tone gradient for that color.
+* Static: show a `Static` mode tag, the stored `priority_gwei` as an integer kgwei value with a `kgwei` unit label, and the current queue-range status tag derived from that value (`In range`, `Too low`, or `Too high`). The Cost Level number color MUST use a discrete palette: `too_low` and `Slowest`/`Slower` in red, `Balanced` in blue, `Faster`/`Fastest` and `too_high` in yellow. The WebUI MUST NOT use a continuous tone gradient for that color.
 * Auto: show an `Auto` mode tag, the stored `auto_queue_position` as a percent, and the stored `auto_max_credits_per_task` as Max Credits. The list MUST NOT present a previous request's snapshotted effective priority as the current Auto setting.
 
 The project list Failed count for the current Unix day MUST use a red number color when `elevated_recent_failure_rate` is true, and MUST use a muted gray number color otherwise.
@@ -360,7 +362,7 @@ Credits and task fee MUST remain separate ledger outcomes. Credits debit the use
   "data": {
     "base_vram": 8,
     "credits_per_gwei": "1",
-    "min_priority_gwei": "1",
+    "min_priority_gwei": "1000",
     "max_priority_gwei": "1000000000",
     "median_priority_gwei": "34",
     "highest_priority_gwei": "1363",
@@ -378,7 +380,8 @@ Credits and task fee MUST remain separate ledger outcomes. Credits debit the use
 }
 ```
 
-* `base_vram`, `credits_per_gwei`, `min_priority_gwei`, `max_priority_gwei`, and `default_auto_max_credits_per_task` MUST come from configuration.
+* `base_vram`, `credits_per_gwei`, and `default_auto_max_credits_per_task` MUST come from configuration.
+* `min_priority_gwei` and `max_priority_gwei` MUST be the Static project Cost Level bounds in Gwei: at least `1000` Gwei for the minimum, both values integer multiples of `1000`, derived from `llm.min_priority_gwei` and `llm.max_priority_gwei`.
 * `min_priority_gwei`, `max_priority_gwei`, `median_priority_gwei`, `highest_priority_gwei`, `lowest_priority_gwei`, `provider_min_priority_gwei`, `provider_highest_priority_gwei`, and `provider_lowest_priority_gwei` MUST be decimal integer strings when present.
 * `provider_min_reference_input_tokens` and `provider_min_reference_output_tokens` MUST be positive decimal integer strings.
 * `median_priority_gwei` MUST be the current Crynux queued-priority cache median used for UI hints: the latest non-empty median when one exists; otherwise `empty_queue_median_priority_gwei`.

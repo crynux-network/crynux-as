@@ -371,24 +371,26 @@ Each project stores a Cost Level configuration that determines the effective `pr
 | Field | Required | Meaning |
 |-------|----------|---------|
 | `cost_level_mode` | Yes | `static` or `auto`. Default at create and for migrated existing projects: `static`. |
-| `priority_gwei` | Yes | Static-mode Cost Level as a decimal integer Gwei string. Independent of auto fields. |
+| `priority_gwei` | Yes | Static-mode Cost Level as a decimal integer Gwei string. The value MUST be a positive multiple of `1000` Gwei (`1` kgwei). Independent of auto fields. |
 | `auto_queue_position` | Nullable until Auto is configured | Integer in `[0, 100]`. Default at create: `50`. |
 | `auto_max_credits_per_task` | Yes after create | Upper Credits cap per task for both `static` and `auto` modes as a positive decimal integer string. |
 
-Switching mode MUST NOT overwrite the other mode's stored values. Project update MUST reject `cost_level_mode` values other than `static` or `auto`. Project update MUST reject a `priority_gwei` outside the inclusive range `[llm.min_priority_gwei, llm.max_priority_gwei]`. Project update MUST reject an `auto_max_credits_per_task` that is not a positive decimal integer. Project update MUST reject an `auto_queue_position` outside `[0, 100]`. Setting `cost_level_mode` to `static` or `auto` MUST be rejected when `auto_max_credits_per_task` is missing or invalid after applying the same update payload.
+Switching mode MUST NOT overwrite the other mode's stored values. Project update MUST reject `cost_level_mode` values other than `static` or `auto`. Project update MUST reject a `priority_gwei` that is not a positive multiple of `1000` Gwei, or that falls outside the inclusive Static project bounds derived from `[llm.min_priority_gwei, llm.max_priority_gwei]` with a minimum of `1000` Gwei and both ends quantized to integer kgwei multiples. Project update MUST reject an `auto_max_credits_per_task` that is not a positive decimal integer. Project update MUST reject an `auto_queue_position` outside `[0, 100]`. Setting `cost_level_mode` to `static` or `auto` MUST be rejected when `auto_max_credits_per_task` is missing or invalid after applying the same update payload.
 
 ### Create Defaults
 
 When a project is created, the service MUST:
 
 1. Set `cost_level_mode` to `static`.
-2. Set `priority_gwei` to the Queue Median Hint resolved by `ResolveQueueMedianHint`, clamped into `[min_priority_gwei, max_priority_gwei]`.
+2. Set `priority_gwei` to the Queue Median Hint resolved by `ResolveQueueMedianHint`, clamped into `[min_priority_gwei, max_priority_gwei]`, then normalized to the nearest integer kgwei with half-up ties and a minimum of `1000` Gwei.
 3. Set `auto_queue_position` to `50`.
 4. Set `auto_max_credits_per_task` from `llm.default_auto_max_credits_per_task`.
 
 The create request MUST NOT require the client to supply Cost Level fields. After creation, only an explicit project update MUST change Cost Level fields.
 
 The migration that replaces `auto_max_priority_gwei` with `auto_max_credits_per_task` MUST backfill every existing project to `100` and MUST drop `auto_max_priority_gwei`.
+
+The migration that normalizes Static project Cost Levels to integer kgwei MUST update only `projects.priority_gwei`. It MUST round each stored value to the nearest multiple of `1000` Gwei with half-up ties, enforce a minimum of `1000` Gwei, and MUST NOT modify `task_jobs`, `task_call_records`, `credit_events`, or other historical billing snapshots. Auto request effective priorities resolved from live queue bounds MUST continue to use integer Gwei without kgwei quantization.
 
 ### Effective Priority Resolution
 

@@ -13,8 +13,8 @@ import (
 type BillingConfigData struct {
 	BaseVRAM                     uint64  `json:"base_vram" description:"Base VRAM in GB used for vram_weight"`
 	CreditsPerGwei               string  `json:"credits_per_gwei" description:"Credits charged per billable Gwei as a positive decimal string"`
-	MinPriorityGwei              string  `json:"min_priority_gwei" description:"Minimum allowed project Cost Level priority_gwei"`
-	MaxPriorityGwei              string  `json:"max_priority_gwei" description:"Maximum allowed project Cost Level priority_gwei"`
+	MinPriorityGwei              string  `json:"min_priority_gwei" description:"Minimum allowed Static project Cost Level priority_gwei as an integer kgwei multiple"`
+	MaxPriorityGwei              string  `json:"max_priority_gwei" description:"Maximum allowed Static project Cost Level priority_gwei as an integer kgwei multiple"`
 	MedianPriorityGwei           string  `json:"median_priority_gwei" description:"Current Crynux queue median priority hint in Gwei"`
 	HighestPriorityGwei          *string `json:"highest_priority_gwei" description:"Current Crynux queue highest priority in Gwei when the queue is non-empty"`
 	LowestPriorityGwei           *string `json:"lowest_priority_gwei" description:"Current Crynux queue lowest priority in Gwei when the queue is non-empty"`
@@ -48,11 +48,15 @@ func GetBillingConfig(c *gin.Context) (*GetBillingConfigResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	staticMin, staticMax, err := service.StaticProjectPriorityBounds()
+	if err != nil {
+		return nil, err
+	}
 	data := &BillingConfigData{
 		BaseVRAM:                     llmCfg.BaseVRAM,
 		CreditsPerGwei:               llmCfg.CreditsPerGwei,
-		MinPriorityGwei:              llmCfg.MinPriorityGwei,
-		MaxPriorityGwei:              llmCfg.MaxPriorityGwei,
+		MinPriorityGwei:              staticMin.String(),
+		MaxPriorityGwei:              staticMax.String(),
 		MedianPriorityGwei:           median.String(),
 		DefaultAutoMaxCreditsPerTask: defaultAutoMax.String(),
 		ProviderMinPriorityGwei:      hints.MinPriorityGwei.String(),

@@ -22,7 +22,7 @@ type ProjectData struct {
 	EndpointToken             string  `json:"endpoint_token" description:"The unique token in the private LLM API base URL of the project"`
 	APIKeyPrefix              string  `json:"api_key_prefix" description:"The public prefix of the project API key"`
 	CostLevelMode             string  `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
-	PriorityGwei              string  `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
+	PriorityGwei              string  `json:"priority_gwei" description:"Static Cost Level priority in Gwei; a positive multiple of 1000 (1 kgwei)"`
 	AutoQueuePosition         *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
 	AutoMaxCreditsPerTask     *string `json:"auto_max_credits_per_task" description:"Max Credits per task for static and auto Cost Level modes"`
 	Status                    int8    `json:"status" description:"The project status"`
@@ -181,7 +181,7 @@ type UpdateProjectInput struct {
 	ProjectID             uint    `path:"project_id" validate:"required" description:"The project ID"`
 	Name                  *string `json:"name" description:"The new project name"`
 	CostLevelMode         *string `json:"cost_level_mode" description:"Cost Level mode: static or auto"`
-	PriorityGwei          *string `json:"priority_gwei" description:"Static Cost Level priority in Gwei"`
+	PriorityGwei          *string `json:"priority_gwei" description:"Static Cost Level priority in Gwei; must be a positive multiple of 1000 (1 kgwei)"`
 	AutoQueuePosition     *int    `json:"auto_queue_position" description:"Auto Cost Level queue position from 0 to 100"`
 	AutoMaxCreditsPerTask *string `json:"auto_max_credits_per_task" description:"Max Credits per task for static and auto Cost Level modes"`
 }
