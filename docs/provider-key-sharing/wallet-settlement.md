@@ -153,3 +153,5 @@ Limits apply independently to:
 * Beneficial Address and network.
 
 Failed and finished-rejected withdrawals do not count. Day boundaries use UTC because this is a backend risk-control period, not a user display timezone.
+
+After the earning account row is locked, AS MUST verify each limit with a locking read over that UTC-day index range (`user_id` + network + `created_at`, and Beneficial Address + network + `created_at`) so concurrent create transactions cannot both accept the last remaining slot. Fulfill and reject MUST lock the earning account before locking the withdrawal row so lock order matches create.

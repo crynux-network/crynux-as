@@ -170,14 +170,14 @@ func CreateWithdrawal(ctx context.Context, db *gorm.DB, in CreateWithdrawalInput
 
 	var withdrawal models.EarningWithdrawal
 	err = db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
-		if err := ensureWithdrawalDailyLimitsTx(tx, in.User.ID, benefit.Hex(), in.Network, networkCfg.MaxWithdrawalsPerDay); err != nil {
-			return err
-		}
 		var account models.EarningAccount
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", in.User.ID).First(&account).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrInsufficientEarnings
 			}
+			return err
+		}
+		if err := ensureWithdrawalDailyLimitsTx(tx, in.User.ID, benefit.Hex(), in.Network, networkCfg.MaxWithdrawalsPerDay); err != nil {
 			return err
 		}
 		if account.Available.Cmp(total) < 0 {
@@ -234,26 +234,45 @@ func CreateWithdrawal(ctx context.Context, db *gorm.DB, in CreateWithdrawalInput
 	return &withdrawal, nil
 }
 
+type withdrawalDailyLimitRow struct {
+	ID     uint
+	Status models.EarningWithdrawalStatus
+}
+
+func countNonFailedWithdrawals(rows []withdrawalDailyLimitRow) uint64 {
+	var count uint64
+	for _, row := range rows {
+		if row.Status != models.EarningWithdrawalStatusFailed {
+			count++
+		}
+	}
+	return count
+}
+
+// ensureWithdrawalDailyLimitsTx locks the UTC-day index ranges for the requester and
+// Beneficial Address so concurrent creates cannot both pass the last remaining slot.
 func ensureWithdrawalDailyLimitsTx(tx *gorm.DB, userID uint, benefitAddress, network string, maxPerDay uint64) error {
 	start := time.Now().UTC().Truncate(24 * time.Hour)
-	var userCount int64
-	if err := tx.Model(&models.EarningWithdrawal{}).
-		Where("user_id = ? AND network = ? AND created_at >= ? AND status != ?",
-			userID, network, start, models.EarningWithdrawalStatusFailed).
-		Count(&userCount).Error; err != nil {
+	var userRows []withdrawalDailyLimitRow
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Model(&models.EarningWithdrawal{}).
+		Select("id", "status").
+		Where("user_id = ? AND network = ? AND created_at >= ?", userID, network, start).
+		Find(&userRows).Error; err != nil {
 		return err
 	}
-	if uint64(userCount) >= maxPerDay {
+	if countNonFailedWithdrawals(userRows) >= maxPerDay {
 		return ErrWithdrawalDailyLimit
 	}
-	var benefitCount int64
-	if err := tx.Model(&models.EarningWithdrawal{}).
-		Where("benefit_address = ? AND network = ? AND created_at >= ? AND status != ?",
-			benefitAddress, network, start, models.EarningWithdrawalStatusFailed).
-		Count(&benefitCount).Error; err != nil {
+	var benefitRows []withdrawalDailyLimitRow
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Model(&models.EarningWithdrawal{}).
+		Select("id", "status").
+		Where("benefit_address = ? AND network = ? AND created_at >= ?", benefitAddress, network, start).
+		Find(&benefitRows).Error; err != nil {
 		return err
 	}
-	if uint64(benefitCount) >= maxPerDay {
+	if countNonFailedWithdrawals(benefitRows) >= maxPerDay {
 		return ErrWithdrawalDailyLimit
 	}
 	return nil
@@ -265,6 +284,16 @@ func FulfillWithdrawal(ctx context.Context, db *gorm.DB, withdrawalID uint, txHa
 	defer cancel()
 	return db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
 		var withdrawal models.EarningWithdrawal
+		if err := tx.First(&withdrawal, withdrawalID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrWithdrawalNotFound
+			}
+			return err
+		}
+		var account models.EarningAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", withdrawal.UserID).First(&account).Error; err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&withdrawal, withdrawalID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrWithdrawalNotFound
@@ -276,10 +305,6 @@ func FulfillWithdrawal(ctx context.Context, db *gorm.DB, withdrawalID uint, txHa
 		}
 		if withdrawal.Status != models.EarningWithdrawalStatusPending {
 			return ErrWithdrawalConflict
-		}
-		var account models.EarningAccount
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", withdrawal.UserID).First(&account).Error; err != nil {
-			return err
 		}
 		total := new(big.Int).Add(&withdrawal.Amount.Int, &withdrawal.WithdrawalFee.Int)
 		newLocked := new(big.Int).Sub(&account.WithdrawalLocked.Int, total)
@@ -326,6 +351,16 @@ func RejectWithdrawal(ctx context.Context, db *gorm.DB, withdrawalID uint) error
 	defer cancel()
 	return db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
 		var withdrawal models.EarningWithdrawal
+		if err := tx.First(&withdrawal, withdrawalID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrWithdrawalNotFound
+			}
+			return err
+		}
+		var account models.EarningAccount
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", withdrawal.UserID).First(&account).Error; err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&withdrawal, withdrawalID).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrWithdrawalNotFound
@@ -340,10 +375,6 @@ func RejectWithdrawal(ctx context.Context, db *gorm.DB, withdrawalID uint) error
 		}
 		var user models.User
 		if err := tx.First(&user, withdrawal.UserID).Error; err != nil {
-			return err
-		}
-		var account models.EarningAccount
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", withdrawal.UserID).First(&account).Error; err != nil {
 			return err
 		}
 		total := new(big.Int).Add(&withdrawal.Amount.Int, &withdrawal.WithdrawalFee.Int)
