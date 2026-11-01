@@ -105,17 +105,21 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 			return
 		}
 
-		canSwitch := result.AcceptanceKnown &&
+		keySpecificUnaccepted := result.AcceptanceKnown &&
 			result.Acceptance == provider.AcceptanceDefinitelyUnaccepted &&
-			result.KeySpecific &&
+			result.KeySpecific
+		if keySpecificUnaccepted && !result.PublicOutputBegan {
+			if err := RecordSharedAPIKeyUnavailable(ctx, db, currentKeyID); err != nil {
+				log.Errorf("provider job %d record unavailable key %d: %v", jobID, currentKeyID, err)
+			}
+		}
+
+		canSwitch := keySpecificUnaccepted &&
 			!result.PublicOutputBegan &&
 			attempts < int(cfg.Provider.MaxAttemptsPerJob) &&
 			time.Now().Before(job.CreatedAt.Add(time.Duration(job.QueueTimeout)*time.Second))
 
 		if canSwitch {
-			if err := RecordSharedAPIKeyUnavailable(ctx, db, currentKeyID); err != nil {
-				log.Errorf("provider job %d record unavailable key %d: %v", jobID, currentKeyID, err)
-			}
 			GetProviderKeySlots().Release(heldKeyID)
 			heldKeyID = 0
 			keys, err := ListEligibleSharedAPIKeys(ctx, db, job.ExecutionSource.ServiceProvider())
