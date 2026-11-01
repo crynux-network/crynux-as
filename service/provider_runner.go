@@ -54,12 +54,7 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 		}
 		streams := GetProviderStreamRegistry()
 		sink := func(event provider.StreamEvent) {
-			streams.Publish(jobID, ProviderStreamEvent{
-				Kind:     string(event.Kind),
-				Payload:  append([]byte(nil), event.Payload...),
-				Terminal: event.Kind == provider.StreamEventFinish || event.Kind == provider.StreamEventFinalUsage,
-				Error:    event.Kind == provider.StreamEventError,
-			})
+			publishProviderJobExecuteStreamEvent(streams, jobID, event)
 		}
 		result, execErr := adapter.Execute(ctx, secret, job.APIType, job.Model, []byte(job.TaskArgsJSON), attempts-1, sink)
 		ClearBytes(secret)
@@ -82,7 +77,7 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 				log.Errorf("provider job %d settlement abandoned after confirmed usage: %v", jobID, err)
 				return
 			}
-			streams.Publish(jobID, ProviderStreamEvent{Kind: "done", Terminal: true})
+			publishProviderJobSettlementTerminal(streams, jobID, result.FinalUsage)
 			streams.Unregister(jobID)
 			return
 		}
@@ -132,6 +127,32 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 		streams.Unregister(jobID)
 		return
 	}
+}
+
+// publishProviderJobExecuteStreamEvent forwards Execute-time stream events to
+// subscribers. FinalUsage is withheld until settlement commits.
+func publishProviderJobExecuteStreamEvent(streams *ProviderStreamRegistry, jobID uint, event provider.StreamEvent) {
+	if event.Kind == provider.StreamEventFinalUsage {
+		return
+	}
+	streams.Publish(jobID, ProviderStreamEvent{
+		Kind:     string(event.Kind),
+		Payload:  append([]byte(nil), event.Payload...),
+		Terminal: event.Kind == provider.StreamEventFinish,
+		Error:    event.Kind == provider.StreamEventError,
+	})
+}
+
+// publishProviderJobSettlementTerminal emits FinalUsage then done after settlement commits.
+func publishProviderJobSettlementTerminal(streams *ProviderStreamRegistry, jobID uint, usage *provider.NormalizedUsage) {
+	provider.EmitFinalUsage(func(event provider.StreamEvent) {
+		streams.Publish(jobID, ProviderStreamEvent{
+			Kind:     string(event.Kind),
+			Payload:  append([]byte(nil), event.Payload...),
+			Terminal: true,
+		})
+	}, usage)
+	streams.Publish(jobID, ProviderStreamEvent{Kind: "done", Terminal: true})
 }
 
 type providerSettleFunc func(

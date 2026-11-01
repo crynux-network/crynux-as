@@ -184,6 +184,8 @@ Tests MUST cover:
 * tool-call delta ordering;
 * final usage-only Chat chunk behavior;
 * successful `[DONE]`;
+* Responses `response.completed` only after settlement commits;
+* Chat Completions usage chunk and `[DONE]` only after settlement commits;
 * safety stop, max-token truncation, empty assistant content, and tool-only output settle as success;
 * no `[DONE]` after error;
 * downstream disconnect while upstream continues;
