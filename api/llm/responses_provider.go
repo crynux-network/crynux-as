@@ -3,10 +3,12 @@ package llm
 import (
 	"bytes"
 	"crynux_as/api/llm/responses"
+	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"crynux_as/service"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"time"
@@ -33,18 +35,89 @@ func CreateResponse(c *gin.Context) {
 
 	model := strings.TrimSpace(extractModelFromBody(body))
 	if route, ok := service.LookupProviderModel(model); ok {
-		parsed, err := parseProviderResponsesRequest(body, route.ModelName)
+		expandedBody, err := expandProviderResponsesBody(c, project, body, route.ModelName, acceptedAt)
+		if err != nil {
+			return
+		}
+		parsed, err := parseProviderResponsesRequest(expandedBody, route.ModelName)
 		if err != nil {
 			_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, route.ModelName, 0, acceptedAt, time.Now(), nil, nil)
 			writeLLMAdapterError(c, err)
 			return
 		}
-		handleProviderTaskJobRequest(c, project, models.TaskAPITypeResponses, body, parsed, route, acceptedAt)
+		handleProviderTaskJobRequest(c, project, models.TaskAPITypeResponses, expandedBody, parsed, route, acceptedAt)
 		return
 	}
 
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	responses.CreateResponse(c)
+}
+
+func expandProviderResponsesBody(c *gin.Context, project *models.Project, body []byte, modelName string, acceptedAt time.Time) ([]byte, error) {
+	var probe struct {
+		PreviousResponseID string `json:"previous_response_id"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
+		writeLLMAdapterError(c, &llmadapter.ValidationError{Message: "invalid JSON body"})
+		return nil, err
+	}
+	if strings.TrimSpace(probe.PreviousResponseID) == "" {
+		return stripPreviousResponseID(body), nil
+	}
+
+	appCfg := config.GetConfig()
+	prevJob, err := service.LoadPreviousResponsesJob(
+		c.Request.Context(),
+		config.GetDB(),
+		project.ID,
+		probe.PreviousResponseID,
+		appCfg.LLM.JobRetentionDays,
+	)
+	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
+		if errors.Is(err, service.ErrPreviousResponsesInvalid) {
+			writeLLMAdapterError(c, llmadapter.NewValidationError("previous_response_id", "previous response is invalid"))
+			return nil, err
+		}
+		writeLLMAdapterError(c, err)
+		return nil, err
+	}
+	if prevJob.RawResultJSON == nil {
+		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
+		err := llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
+		writeLLMAdapterError(c, err)
+		return nil, err
+	}
+	history, err := llmadapter.BuildResponsesHistoryFromPreviousJob(prevJob.PublicID, prevJob.TaskArgsJSON, *prevJob.RawResultJSON)
+	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
+		writeLLMAdapterError(c, err)
+		return nil, err
+	}
+	expanded, err := llmadapter.ExpandProviderResponsesRequest(body, history)
+	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
+		writeLLMAdapterError(c, err)
+		return nil, err
+	}
+	return expanded, nil
+}
+
+func stripPreviousResponseID(body []byte) []byte {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return body
+	}
+	if _, ok := payload["previous_response_id"]; !ok {
+		return body
+	}
+	delete(payload, "previous_response_id")
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 func parseProviderResponsesRequest(body []byte, modelName string) (parsedTaskJobRequest, error) {

@@ -19,7 +19,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
-	"gorm.io/gorm"
 )
 
 const projectContextKey = "llm_project"
@@ -53,7 +52,7 @@ func CreateResponse(c *gin.Context) {
 	db := config.GetDB()
 	var history []models.Message
 	if strings.TrimSpace(req.PreviousResponseID) != "" {
-		prevJob, err := loadPreviousResponsesJob(
+		prevJob, err := service.LoadPreviousResponsesJob(
 			c.Request.Context(),
 			db,
 			project.ID,
@@ -62,6 +61,10 @@ func CreateResponse(c *gin.Context) {
 		)
 		if err != nil {
 			_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
+			if errors.Is(err, service.ErrPreviousResponsesInvalid) {
+				writeLLMAdapterError(c, llmadapter.NewValidationError("previous_response_id", "previous response is invalid"))
+				return
+			}
 			writeLLMAdapterError(c, err)
 			return
 		}
@@ -259,7 +262,7 @@ func GetResponse(c *gin.Context) {
 		writeClientError(c, http.StatusNotFound, "response not found")
 		return
 	}
-	if isResponsesJobExpired(job, config.GetConfig().LLM.JobRetentionDays) {
+	if service.IsResponsesJobExpired(job, config.GetConfig().LLM.JobRetentionDays) {
 		writeClientError(c, http.StatusNotFound, "response not found")
 		return
 	}
@@ -447,38 +450,3 @@ func extractModelFromBody(body []byte) string {
 	return llmadapter.NormalizeModelID(payload.Model)
 }
 
-func loadPreviousResponsesJob(
-	ctx context.Context,
-	db *gorm.DB,
-	projectID uint,
-	publicID string,
-	retentionDays uint64,
-) (*models.TaskJob, error) {
-	job, err := service.GetTaskJobByPublicID(ctx, db, projectID, strings.TrimSpace(publicID))
-	if err != nil {
-		if errors.Is(err, service.ErrTaskJobNotFound) {
-			return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
-		}
-		return nil, err
-	}
-	if job.APIType != models.TaskAPITypeResponses {
-		return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
-	}
-	if job.Status != models.TaskJobStatusCompleted {
-		return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
-	}
-	if isResponsesJobExpired(job, retentionDays) {
-		return nil, llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
-	}
-	return job, nil
-}
-
-func isResponsesJobExpired(job *models.TaskJob, retentionDays uint64) bool {
-	if job == nil || retentionDays == 0 {
-		return true
-	}
-	if job.CompletedAt == nil {
-		return false
-	}
-	return job.CompletedAt.Before(service.TaskJobRetentionCutoff(retentionDays))
-}

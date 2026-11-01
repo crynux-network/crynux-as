@@ -121,6 +121,23 @@ func BuildPublicResult(apiType models.TaskAPIType, id, model string, created int
 	}
 }
 
+// RewritePublicResultID replaces the top-level public result id with the AS job id.
+func RewritePublicResultID(resultJSON []byte, publicID string) ([]byte, error) {
+	if publicID == "" || len(resultJSON) == 0 {
+		return resultJSON, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(resultJSON, &payload); err != nil {
+		return nil, err
+	}
+	idRaw, err := json.Marshal(publicID)
+	if err != nil {
+		return nil, err
+	}
+	payload["id"] = idRaw
+	return json.Marshal(payload)
+}
+
 func chatUsageMap(u *NormalizedUsage) map[string]any {
 	m := map[string]any{
 		"prompt_tokens":     u.InputTokens,

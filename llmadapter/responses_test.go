@@ -229,3 +229,55 @@ func TestBuildResponsesTaskArgsTemplateArgsFromReasoningEffort(t *testing.T) {
 		t.Fatalf("template_args=%v", args.TemplateArgs)
 	}
 }
+
+func TestBuildResponsesHistoryFromProviderJob(t *testing.T) {
+	taskArgs := `{"model":"gpt-test","instructions":"old system","input":[{"type":"message","role":"user","content":"hello"}]}`
+	raw := `{"id":"resp_prev","object":"response","status":"completed","model":"gpt-test","output":[{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"hi there"}]}]}`
+	history, err := BuildResponsesHistoryFromPreviousJob("resp_prev", taskArgs, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("history len=%d %+v", len(history), history)
+	}
+	if history[0].Role != models.LLMRoleUser || history[0].Content != "hello" {
+		t.Fatalf("history[0]=%+v", history[0])
+	}
+	if history[1].Role != models.LLMRoleAssistant || history[1].Content != "hi there" {
+		t.Fatalf("history[1]=%+v", history[1])
+	}
+}
+
+func TestExpandProviderResponsesRequestStripsPreviousAndMergesHistory(t *testing.T) {
+	history := []models.Message{
+		{Role: models.LLMRoleUser, Content: "hello"},
+		{Role: models.LLMRoleAssistant, Content: "hi"},
+	}
+	body := []byte(`{"model":"gpt-test","input":"follow up","previous_response_id":"resp_old","instructions":"new"}`)
+	expanded, err := ExpandProviderResponsesRequest(body, history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(expanded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["previous_response_id"]; ok {
+		t.Fatalf("previous_response_id still present: %v", payload)
+	}
+	if payload["instructions"] != "new" {
+		t.Fatalf("instructions=%v", payload["instructions"])
+	}
+	input, ok := payload["input"].([]any)
+	if !ok || len(input) != 3 {
+		t.Fatalf("input=%v", payload["input"])
+	}
+	first := input[0].(map[string]any)
+	if first["role"] != "user" || first["content"] != "hello" {
+		t.Fatalf("first=%v", first)
+	}
+	last := input[2].(map[string]any)
+	if last["role"] != "user" || last["content"] != "follow up" {
+		t.Fatalf("last=%v", last)
+	}
+}

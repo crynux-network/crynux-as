@@ -152,6 +152,10 @@ A request with both `stream = true` and `background = true` MUST return HTTP 400
 
 `previous_response_id` MUST remain local to the same project. AS MUST expand retained history before Provider submission and MUST NOT expose the ID to the Service Provider.
 
+Local expansion is required because Shared API Key selection MAY assign a different key to a later request, so a previous response stored under one upstream key is not available to the next request, and because Anthropic and Google have no equivalent previous-response store. AS MUST NOT rely on OpenAI Responses stateful `previous_response_id` storage.
+
+The OpenAI adapter MUST translate public Responses requests to OpenAI Chat Completions. Anthropic and Google adapters MUST continue translating public Responses to their native chat APIs. All three adapters MUST return AS-assembled public Responses objects whose `id` is the job `PublicID`.
+
 Crynux model Responses behavior remains unchanged, including its current rejection of `stream = true`.
 
 ## Result Persistence

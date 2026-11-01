@@ -59,43 +59,25 @@ func (a *OpenAIAdapter) ValidateCredential(ctx context.Context, secret []byte) (
 }
 
 func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, tryIndex int, sink EventSink) (ExecuteResult, error) {
-	path, err := openaiPath(apiType)
-	if err != nil {
+	switch apiType {
+	case models.TaskAPITypeChatCompletions, models.TaskAPITypeResponses:
+	default:
 		return ExecuteResult{
 			AcceptanceKnown: true,
 			Acceptance:      AcceptanceDefinitelyUnaccepted,
 			ErrorClass:      ErrorRequestInvalid,
-			ErrorMessage:    err.Error(),
+			ErrorMessage:    "unsupported api type for openai adapter",
 		}, nil
 	}
-	var body map[string]json.RawMessage
-	if err := json.Unmarshal(requestJSON, &body); err != nil {
-		return ExecuteResult{
-			AcceptanceKnown: true,
-			Acceptance:      AcceptanceDefinitelyUnaccepted,
-			ErrorClass:      ErrorRequestInvalid,
-			ErrorMessage:    "invalid request json",
-		}, nil
-	}
-	modelJSON, _ := json.Marshal(model)
-	body["model"] = modelJSON
-	stream := false
-	if raw, ok := body["stream"]; ok {
-		_ = json.Unmarshal(raw, &stream)
-	}
-	if stream {
-		trueRaw, _ := json.Marshal(true)
-		body["stream"] = trueRaw
-		if apiType == models.TaskAPITypeChatCompletions {
-			includeUsage, _ := json.Marshal(map[string]bool{"include_usage": true})
-			body["stream_options"] = includeUsage
-		}
-	}
-	payload, err := json.Marshal(body)
+	canonical, err := ParseCanonicalRequest(requestJSON, model, apiType)
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+path, bytes.NewReader(payload))
+	payload, err := convertCanonicalToOpenAIChat(canonical)
+	if err != nil {
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/chat/completions", bytes.NewReader(payload))
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "failed to create request", KeySpecific: false}, nil
 	}
@@ -116,38 +98,28 @@ func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	if resp.StatusCode >= 400 {
 		return classifyOpenAIHTTPError(resp, upstreamID)
 	}
-	if stream {
-		if apiType == models.TaskAPITypeResponses {
-			return a.readResponsesStream(resp.Body, model, upstreamID, sink)
-		}
-		return a.readChatStream(resp.Body, model, upstreamID, sink)
+	if canonical.Stream {
+		return a.readChatStream(resp.Body, apiType, model, upstreamID, sink)
 	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, UpstreamRequestID: upstreamID, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "failed to read response"}, nil
 	}
-	usage, err := parseOpenAIUsage(raw, apiType)
+	msg, id, respModel, created, usage, err := parseOpenAIChatCompletionResponse(raw)
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, UpstreamRequestID: upstreamID, FinalResultJSON: raw, ErrorClass: ErrorUsageMissing, ErrorMessage: err.Error()}, nil
+	}
+	publicJSON, err := BuildPublicResult(apiType, id, firstNonEmpty(respModel, model), created, msg, usage)
+	if err != nil {
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, UpstreamRequestID: upstreamID, ErrorClass: ErrorResponseInvalid, ErrorMessage: err.Error()}, nil
 	}
 	return ExecuteResult{
 		AcceptanceKnown:   true,
 		Acceptance:        AcceptanceAcceptedBillable,
 		UpstreamRequestID: upstreamID,
-		FinalResultJSON:   raw,
+		FinalResultJSON:   publicJSON,
 		FinalUsage:        usage,
 	}, nil
-}
-
-func openaiPath(apiType models.TaskAPIType) (string, error) {
-	switch apiType {
-	case models.TaskAPITypeChatCompletions:
-		return "/v1/chat/completions", nil
-	case models.TaskAPITypeResponses:
-		return "/v1/responses", nil
-	default:
-		return "", fmt.Errorf("unsupported api type for openai adapter")
-	}
 }
 
 func classifyOpenAIHTTPError(resp *http.Response, upstreamID string) (ExecuteResult, error) {
@@ -201,9 +173,6 @@ type openAIStreamAccumulator struct {
 	toolCallsByIndex map[int]*AssembledToolCall
 	// toolStartEmitted tracks whether ToolCallStart was already emitted per dense index.
 	toolStartEmitted map[int]bool
-	// responsesOutputToTool maps upstream Responses output_index to dense tool index.
-	responsesOutputToTool map[int]int
-	nextToolIndex         int
 }
 
 func (a *openAIStreamAccumulator) ensureTool(index int) *AssembledToolCall {
@@ -237,7 +206,7 @@ func (a *openAIStreamAccumulator) finalizeTools() {
 	a.msg.ToolCalls = out
 }
 
-func (a *OpenAIAdapter) readChatStream(body io.Reader, model, upstreamID string, sink EventSink) (ExecuteResult, error) {
+func (a *OpenAIAdapter) readChatStream(body io.Reader, apiType models.TaskAPIType, model, upstreamID string, sink EventSink) (ExecuteResult, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	acc := &openAIStreamAccumulator{model: model, created: time.Now().Unix()}
@@ -356,7 +325,7 @@ func (a *OpenAIAdapter) readChatStream(body io.Reader, model, upstreamID string,
 		}, nil
 	}
 	EmitFinalUsage(sink, acc.usage)
-	resultJSON, err := BuildChatCompletionsResult(acc.id, firstNonEmpty(acc.model, model), acc.created, acc.msg, acc.usage)
+	resultJSON, err := BuildPublicResult(apiType, acc.id, firstNonEmpty(acc.model, model), acc.created, acc.msg, acc.usage)
 	if err != nil {
 		return ExecuteResult{
 			AcceptanceKnown:   true,
@@ -377,260 +346,7 @@ func (a *OpenAIAdapter) readChatStream(body io.Reader, model, upstreamID string,
 	}, nil
 }
 
-func (a *OpenAIAdapter) readResponsesStream(body io.Reader, model, upstreamID string, sink EventSink) (ExecuteResult, error) {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	acc := &openAIStreamAccumulator{model: model, created: time.Now().Unix()}
-	publicBegan := false
-	var eventName string
-	EmitCreated(sink)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "event: ") {
-			eventName = strings.TrimPrefix(line, "event: ")
-			continue
-		}
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			break
-		}
-		var payload map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(data), &payload); err != nil {
-			eventName = ""
-			continue
-		}
-		typ := eventName
-		if raw, ok := payload["type"]; ok {
-			_ = json.Unmarshal(raw, &typ)
-		}
-		switch typ {
-		case "response.created", "response.in_progress":
-			if raw, ok := payload["response"]; ok {
-				var resp struct {
-					ID    string `json:"id"`
-					Model string `json:"model"`
-				}
-				if json.Unmarshal(raw, &resp) == nil {
-					if resp.ID != "" {
-						acc.id = resp.ID
-					}
-					if resp.Model != "" {
-						acc.model = resp.Model
-					}
-				}
-			}
-		case "response.output_text.delta":
-			var delta string
-			if raw, ok := payload["delta"]; ok {
-				_ = json.Unmarshal(raw, &delta)
-			}
-			if delta != "" {
-				acc.msg.Content += delta
-				EmitContentDelta(sink, delta)
-				publicBegan = true
-			}
-		case "response.output_item.added":
-			var item struct {
-				Type      string `json:"type"`
-				ID        string `json:"id"`
-				CallID    string `json:"call_id"`
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			}
-			if raw, ok := payload["item"]; ok {
-				_ = json.Unmarshal(raw, &item)
-			}
-			if item.Type == "function_call" {
-				toolIdx := acc.mapResponsesOutputIndex(payload)
-				slot := acc.ensureTool(toolIdx)
-				slot.ID = firstNonEmpty(item.CallID, item.ID)
-				slot.Name = item.Name
-				slot.Arguments = item.Arguments
-				if !acc.toolStartEmitted[toolIdx] {
-					if acc.toolStartEmitted == nil {
-						acc.toolStartEmitted = map[int]bool{}
-					}
-					acc.toolStartEmitted[toolIdx] = true
-					EmitToolCallStart(sink, toolIdx, slot.ID, slot.Name)
-					publicBegan = true
-				}
-			}
-		case "response.function_call_arguments.delta":
-			var delta string
-			_ = json.Unmarshal(payload["delta"], &delta)
-			idx := acc.mapResponsesOutputIndex(payload)
-			slot := acc.ensureTool(idx)
-			slot.Arguments += delta
-			EmitToolCallArgsDelta(sink, idx, delta)
-			publicBegan = true
-		case "response.function_call_arguments.done":
-			idx := acc.mapResponsesOutputIndex(payload)
-			EmitToolCallCompleted(sink, idx)
-		case "response.completed", "response.incomplete":
-			status := "completed"
-			if typ == "response.incomplete" {
-				status = "incomplete"
-			}
-			incompleteReason := ""
-			if raw, ok := payload["response"]; ok {
-				var resp struct {
-					ID     string          `json:"id"`
-					Model  string          `json:"model"`
-					Status string          `json:"status"`
-					Usage  json.RawMessage `json:"usage"`
-					IncompleteDetails *struct {
-						Reason string `json:"reason"`
-					} `json:"incomplete_details"`
-					Output []struct {
-						Type      string `json:"type"`
-						ID        string `json:"id"`
-						CallID    string `json:"call_id"`
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-						Content   []struct {
-							Type string `json:"type"`
-							Text string `json:"text"`
-						} `json:"content"`
-					} `json:"output"`
-				}
-				if json.Unmarshal(raw, &resp) == nil {
-					if resp.ID != "" {
-						acc.id = resp.ID
-					}
-					if resp.Model != "" {
-						acc.model = resp.Model
-					}
-					if resp.Status != "" {
-						status = resp.Status
-					}
-					if resp.IncompleteDetails != nil {
-						incompleteReason = resp.IncompleteDetails.Reason
-					}
-					if len(resp.Usage) > 0 {
-						encoded, _ := json.Marshal(map[string]any{"usage": json.RawMessage(resp.Usage)})
-						if u, err := parseOpenAIUsage(encoded, models.TaskAPITypeResponses); err == nil {
-							acc.usage = u
-						}
-					}
-					// Prefer completed snapshot when content was not streamed.
-					if acc.msg.Content == "" {
-						for _, item := range resp.Output {
-							if item.Type == "message" {
-								for _, part := range item.Content {
-									if part.Type == "output_text" {
-										acc.msg.Content += part.Text
-									}
-								}
-							}
-						}
-					}
-					if len(acc.toolCallsByIndex) == 0 {
-						toolIdx := 0
-						for _, item := range resp.Output {
-							if item.Type == "function_call" {
-								slot := acc.ensureTool(toolIdx)
-								slot.ID = firstNonEmpty(item.CallID, item.ID)
-								slot.Name = item.Name
-								slot.Arguments = item.Arguments
-								toolIdx++
-							}
-						}
-					}
-				}
-			}
-			acc.msg.FinishReason = mapOpenAIResponsesFinishReason(status, incompleteReason, len(acc.toolCallsByIndex) > 0)
-			EmitFinish(sink, acc.msg.FinishReason)
-			publicBegan = true
-		case "error":
-			EmitError(sink, "upstream responses stream error", "server_error", "provider_error")
-			return ExecuteResult{
-				AcceptanceKnown:   true,
-				Acceptance:        AcceptanceUncertain,
-				UpstreamRequestID: upstreamID,
-				PublicOutputBegan: publicBegan,
-				ErrorClass:        ErrorStreamInterrupted,
-				ErrorMessage:      "upstream responses stream error",
-			}, nil
-		}
-		eventName = ""
-	}
-	if err := scanner.Err(); err != nil {
-		EmitError(sink, err.Error(), "server_error", "stream_interrupted")
-		return ExecuteResult{
-			AcceptanceKnown:   true,
-			Acceptance:        AcceptanceUncertain,
-			UpstreamRequestID: upstreamID,
-			PublicOutputBegan: publicBegan,
-			ErrorClass:        ErrorStreamInterrupted,
-			ErrorMessage:      err.Error(),
-		}, nil
-	}
-	acc.finalizeTools()
-	if acc.usage == nil {
-		EmitError(sink, "missing final usage", "server_error", "usage_missing")
-		return ExecuteResult{
-			AcceptanceKnown:   true,
-			Acceptance:        AcceptanceUncertain,
-			UpstreamRequestID: upstreamID,
-			PublicOutputBegan: publicBegan,
-			ErrorClass:        ErrorUsageMissing,
-			ErrorMessage:      "missing final usage",
-		}, nil
-	}
-	EmitFinalUsage(sink, acc.usage)
-	resultJSON, err := BuildResponsesResult(acc.id, firstNonEmpty(acc.model, model), acc.msg, acc.usage)
-	if err != nil {
-		return ExecuteResult{
-			AcceptanceKnown:   true,
-			Acceptance:        AcceptanceUncertain,
-			UpstreamRequestID: upstreamID,
-			PublicOutputBegan: publicBegan,
-			ErrorClass:        ErrorResponseInvalid,
-			ErrorMessage:      err.Error(),
-		}, nil
-	}
-	return ExecuteResult{
-		AcceptanceKnown:   true,
-		Acceptance:        AcceptanceAcceptedBillable,
-		UpstreamRequestID: upstreamID,
-		PublicOutputBegan: publicBegan,
-		FinalResultJSON:   resultJSON,
-		FinalUsage:        acc.usage,
-	}, nil
-}
-
-func (a *openAIStreamAccumulator) mapResponsesOutputIndex(payload map[string]json.RawMessage) int {
-	upstream := a.nextToolIndex
-	if raw, ok := payload["output_index"]; ok {
-		_ = json.Unmarshal(raw, &upstream)
-	}
-	if a.responsesOutputToTool == nil {
-		a.responsesOutputToTool = map[int]int{}
-	}
-	if toolIdx, ok := a.responsesOutputToTool[upstream]; ok {
-		return toolIdx
-	}
-	toolIdx := a.nextToolIndex
-	a.nextToolIndex++
-	a.responsesOutputToTool[upstream] = toolIdx
-	return toolIdx
-}
-
-func mapOpenAIResponsesFinishReason(status, incompleteReason string, hasTools bool) string {
-	if hasTools {
-		return "tool_calls"
-	}
-	if status == "incomplete" || incompleteReason == "max_output_tokens" || incompleteReason == "max_tokens" {
-		return "length"
-	}
-	return "stop"
-}
-
-func parseOpenAIUsage(raw []byte, apiType models.TaskAPIType) (*NormalizedUsage, error) {
+func parseOpenAIUsage(raw []byte, _ models.TaskAPIType) (*NormalizedUsage, error) {
 	var envelope struct {
 		Usage json.RawMessage `json:"usage"`
 	}
@@ -640,62 +356,30 @@ func parseOpenAIUsage(raw []byte, apiType models.TaskAPIType) (*NormalizedUsage,
 	if len(envelope.Usage) == 0 {
 		return nil, fmt.Errorf("usage missing")
 	}
-	switch apiType {
-	case models.TaskAPITypeChatCompletions:
-		var u struct {
-			PromptTokens            uint64 `json:"prompt_tokens"`
-			CompletionTokens        uint64 `json:"completion_tokens"`
-			TotalTokens             uint64 `json:"total_tokens"`
-			PromptTokensDetails     *struct {
-				CachedTokens uint64 `json:"cached_tokens"`
-			} `json:"prompt_tokens_details"`
-			CompletionTokensDetails *struct {
-				ReasoningTokens uint64 `json:"reasoning_tokens"`
-			} `json:"completion_tokens_details"`
-		}
-		if err := json.Unmarshal(envelope.Usage, &u); err != nil {
-			return nil, err
-		}
-		usage := &NormalizedUsage{
-			InputTokens:  u.PromptTokens,
-			OutputTokens: u.CompletionTokens,
-			TotalTokens:  u.TotalTokens,
-		}
-		if u.PromptTokensDetails != nil {
-			usage.CachedInputTokens = u.PromptTokensDetails.CachedTokens
-		}
-		if u.CompletionTokensDetails != nil {
-			usage.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens
-		}
-		return usage, nil
-	case models.TaskAPITypeResponses:
-		var u struct {
-			InputTokens         uint64 `json:"input_tokens"`
-			OutputTokens        uint64 `json:"output_tokens"`
-			TotalTokens         uint64 `json:"total_tokens"`
-			InputTokensDetails  *struct {
-				CachedTokens uint64 `json:"cached_tokens"`
-			} `json:"input_tokens_details"`
-			OutputTokensDetails *struct {
-				ReasoningTokens uint64 `json:"reasoning_tokens"`
-			} `json:"output_tokens_details"`
-		}
-		if err := json.Unmarshal(envelope.Usage, &u); err != nil {
-			return nil, err
-		}
-		usage := &NormalizedUsage{
-			InputTokens:  u.InputTokens,
-			OutputTokens: u.OutputTokens,
-			TotalTokens:  u.TotalTokens,
-		}
-		if u.InputTokensDetails != nil {
-			usage.CachedInputTokens = u.InputTokensDetails.CachedTokens
-		}
-		if u.OutputTokensDetails != nil {
-			usage.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens
-		}
-		return usage, nil
-	default:
-		return nil, fmt.Errorf("unsupported api type")
+	var u struct {
+		PromptTokens            uint64 `json:"prompt_tokens"`
+		CompletionTokens        uint64 `json:"completion_tokens"`
+		TotalTokens             uint64 `json:"total_tokens"`
+		PromptTokensDetails     *struct {
+			CachedTokens uint64 `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+		CompletionTokensDetails *struct {
+			ReasoningTokens uint64 `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
 	}
+	if err := json.Unmarshal(envelope.Usage, &u); err != nil {
+		return nil, err
+	}
+	usage := &NormalizedUsage{
+		InputTokens:  u.PromptTokens,
+		OutputTokens: u.CompletionTokens,
+		TotalTokens:  u.TotalTokens,
+	}
+	if u.PromptTokensDetails != nil {
+		usage.CachedInputTokens = u.PromptTokensDetails.CachedTokens
+	}
+	if u.CompletionTokensDetails != nil {
+		usage.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens
+	}
+	return usage, nil
 }

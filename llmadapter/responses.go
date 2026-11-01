@@ -326,18 +326,65 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 // BuildResponsesHistoryFromPreviousJob builds chat history from a previous Responses
 // job's stored task args and raw result. Leading system messages from that job's
 // instructions are removed so the current request can supply its own instructions.
+// Crynux jobs store GPTTaskArgs + GPTTaskResponse. Provider jobs store an expanded
+// Responses request body + a public Responses result object.
 func BuildResponsesHistoryFromPreviousJob(responseID string, taskArgsJSON string, rawResultJSON string) ([]models.Message, error) {
-	var payload models.GPTTaskArgs
-	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
-		return nil, newValidationError("previous_response_id", "previous response is invalid")
-	}
-	history := stripLeadingSystemMessages(payload.Messages)
+	if isCrynuxResponsesTaskArgs(taskArgsJSON) {
+		var payload models.GPTTaskArgs
+		if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+			return nil, newValidationError("previous_response_id", "previous response is invalid")
+		}
+		history := stripLeadingSystemMessages(payload.Messages)
 
-	var raw models.GPTTaskResponse
-	if err := json.Unmarshal([]byte(rawResultJSON), &raw); err != nil {
+		var raw models.GPTTaskResponse
+		if err := json.Unmarshal([]byte(rawResultJSON), &raw); err != nil {
+			return nil, newValidationError("previous_response_id", "previous response is invalid")
+		}
+		assistantMessages, err := rawResponseToHistoryMessages(responseID, &raw, &payload)
+		if err != nil {
+			return nil, err
+		}
+		history = append(history, assistantMessages...)
+		if len(history) == 0 {
+			return nil, newValidationError("previous_response_id", "previous response is invalid")
+		}
+		return history, nil
+	}
+	return buildProviderResponsesHistory(responseID, taskArgsJSON, rawResultJSON)
+}
+
+func isCrynuxResponsesTaskArgs(taskArgsJSON string) bool {
+	var probe struct {
+		Version  string          `json:"version"`
+		Messages json.RawMessage `json:"messages"`
+		Input    json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(taskArgsJSON), &probe); err != nil {
+		return false
+	}
+	hasMessages := len(probe.Messages) > 0 && string(probe.Messages) != "null"
+	hasInput := len(probe.Input) > 0 && string(probe.Input) != "null"
+	if hasMessages && !hasInput {
+		return true
+	}
+	return strings.TrimSpace(probe.Version) != "" && hasMessages
+}
+
+func buildProviderResponsesHistory(responseID string, taskArgsJSON string, rawResultJSON string) ([]models.Message, error) {
+	var req struct {
+		Instructions string         `json:"instructions"`
+		Input        ResponsesInput `json:"input"`
+	}
+	if err := json.Unmarshal([]byte(taskArgsJSON), &req); err != nil {
 		return nil, newValidationError("previous_response_id", "previous response is invalid")
 	}
-	assistantMessages, err := rawResponseToHistoryMessages(responseID, &raw, &payload)
+	history, err := responsesInputToMessages(req.Instructions, req.Input)
+	if err != nil {
+		return nil, newValidationError("previous_response_id", "previous response is invalid")
+	}
+	history = stripLeadingSystemMessages(history)
+
+	assistantMessages, err := providerResponsesResultToHistoryMessages(responseID, rawResultJSON)
 	if err != nil {
 		return nil, err
 	}
@@ -346,6 +393,150 @@ func BuildResponsesHistoryFromPreviousJob(responseID string, taskArgsJSON string
 		return nil, newValidationError("previous_response_id", "previous response is invalid")
 	}
 	return history, nil
+}
+
+func providerResponsesResultToHistoryMessages(responseID string, rawResultJSON string) ([]models.Message, error) {
+	var result struct {
+		Output []struct {
+			Type      string `json:"type"`
+			ID        string `json:"id"`
+			CallID    string `json:"call_id"`
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+			Content   []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal([]byte(rawResultJSON), &result); err != nil {
+		return nil, newValidationError("previous_response_id", "previous response is invalid")
+	}
+	var contentParts []string
+	var toolCalls []models.ToolCall
+	for _, item := range result.Output {
+		switch item.Type {
+		case "message":
+			for _, part := range item.Content {
+				if part.Type == "output_text" && part.Text != "" {
+					contentParts = append(contentParts, part.Text)
+				}
+			}
+		case "function_call":
+			callID := item.CallID
+			if callID == "" {
+				callID = item.ID
+			}
+			if callID == "" {
+				callID = fmt.Sprintf("call_%s_%d", responseID, len(toolCalls))
+			}
+			toolCalls = append(toolCalls, models.ToolCall{
+				Id:   callID,
+				Type: "function",
+				Function: models.FunctionCall{
+					Name:      item.Name,
+					Arguments: item.Arguments,
+				},
+			})
+		}
+	}
+	msg := models.Message{Role: models.LLMRoleAssistant}
+	if len(contentParts) > 0 {
+		msg.Content = strings.Join(contentParts, "")
+	}
+	if len(toolCalls) > 0 {
+		msg.ToolCalls = toolCalls
+	}
+	if msg.Content == nil && len(msg.ToolCalls) == 0 {
+		msg.Content = ""
+	}
+	return []models.Message{msg}, nil
+}
+
+// MessagesToResponsesInputItems converts chat history messages into Responses input items.
+func MessagesToResponsesInputItems(messages []models.Message) ([]map[string]any, error) {
+	items := make([]map[string]any, 0, len(messages))
+	for _, msg := range messages {
+		switch msg.Role {
+		case models.LLMRoleSystem:
+			// System/instructions are not inherited into input items.
+			continue
+		case models.LLMRoleUser:
+			items = append(items, map[string]any{
+				"type":    "message",
+				"role":    "user",
+				"content": messageContentToString(msg.Content),
+			})
+		case models.LLMRoleAssistant:
+			text := messageContentToString(msg.Content)
+			if text != "" || len(msg.ToolCalls) == 0 {
+				items = append(items, map[string]any{
+					"type":    "message",
+					"role":    "assistant",
+					"content": text,
+				})
+			}
+			for _, tc := range msg.ToolCalls {
+				items = append(items, map[string]any{
+					"type":      "function_call",
+					"call_id":   tc.Id,
+					"name":      tc.Function.Name,
+					"arguments": tc.Function.Arguments,
+				})
+			}
+		case models.LLMRoleTool:
+			items = append(items, map[string]any{
+				"type":    "function_call_output",
+				"call_id": msg.ToolCallID,
+				"output":  messageContentToString(msg.Content),
+			})
+		default:
+			return nil, newValidationError("previous_response_id", "previous response is invalid")
+		}
+	}
+	return items, nil
+}
+
+// ExpandProviderResponsesRequest expands previous_response_id history into input
+// and removes previous_response_id from the request body.
+func ExpandProviderResponsesRequest(body []byte, history []models.Message) ([]byte, error) {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, newValidationError("", "invalid JSON body")
+	}
+	delete(payload, "previous_response_id")
+
+	historyItems, err := MessagesToResponsesInputItems(history)
+	if err != nil {
+		return nil, err
+	}
+
+	var currentInput ResponsesInput
+	if raw, ok := payload["input"]; ok {
+		if err := json.Unmarshal(raw, &currentInput); err != nil {
+			return nil, newValidationError("input", "input must be a string or an array of input items")
+		}
+	} else {
+		return nil, newValidationError("input", "input is required")
+	}
+
+	currentMessages, err := responsesInputToMessages("", currentInput)
+	if err != nil {
+		return nil, err
+	}
+	currentItems, err := MessagesToResponsesInputItems(currentMessages)
+	if err != nil {
+		return nil, err
+	}
+	merged := make([]map[string]any, 0, len(historyItems)+len(currentItems))
+	merged = append(merged, historyItems...)
+	merged = append(merged, currentItems...)
+	mergedRaw, err := json.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal expanded input: %w", err)
+	}
+	payload["input"] = mergedRaw
+	return json.Marshal(payload)
 }
 
 func stripLeadingSystemMessages(messages []models.Message) []models.Message {

@@ -104,18 +104,6 @@ func TestPublicStreamEncoderResponsesToolOutputIndex(t *testing.T) {
 	}
 }
 
-func TestMapOpenAIResponsesFinishReason(t *testing.T) {
-	if got := mapOpenAIResponsesFinishReason("completed", "", true); got != "tool_calls" {
-		t.Fatalf("got %q", got)
-	}
-	if got := mapOpenAIResponsesFinishReason("incomplete", "max_output_tokens", false); got != "length" {
-		t.Fatalf("got %q", got)
-	}
-	if got := mapOpenAIResponsesFinishReason("completed", "", false); got != "stop" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func mustJSON(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {

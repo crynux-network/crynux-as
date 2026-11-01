@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"crynux_as/models"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -22,7 +23,7 @@ func TestOpenAIChatStreamAccumulatorAssembly(t *testing.T) {
 	var kinds []StreamEventKind
 	sink := func(e StreamEvent) { kinds = append(kinds, e.Kind) }
 	adapter := &OpenAIAdapter{}
-	result, err := adapter.readChatStream(strings.NewReader(body), "gpt-test", "req-1", sink)
+	result, err := adapter.readChatStream(strings.NewReader(body), models.TaskAPITypeChatCompletions, "gpt-test", "req-1", sink)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -60,17 +61,13 @@ func TestOpenAIChatStreamAccumulatorAssembly(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponsesStreamIncompleteFinish(t *testing.T) {
+func TestOpenAIResponsesUsesChatStreamAssembly(t *testing.T) {
 	body := strings.Join([]string{
-		`event: response.created`,
-		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test"}}`,
-		``,
-		`event: response.output_text.delta`,
-		`data: {"type":"response.output_text.delta","delta":"Hi"}`,
-		``,
-		`event: response.incomplete`,
-		`data: {"type":"response.incomplete","response":{"id":"resp_1","model":"gpt-test","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3},"output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}]}}`,
-		``,
+		`data: {"id":"chatcmpl-x","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}`,
+		`data: {"id":"chatcmpl-x","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`,
+		`data: {"id":"chatcmpl-x","object":"chat.completion.chunk","created":1,"model":"gpt-test","choices":[],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+		`data: [DONE]`,
+		"",
 	}, "\n")
 	var finish string
 	sink := func(e StreamEvent) {
@@ -81,7 +78,7 @@ func TestOpenAIResponsesStreamIncompleteFinish(t *testing.T) {
 		}
 	}
 	adapter := &OpenAIAdapter{}
-	result, err := adapter.readResponsesStream(strings.NewReader(body), "gpt-test", "req-1", sink)
+	result, err := adapter.readChatStream(strings.NewReader(body), models.TaskAPITypeResponses, "gpt-test", "req-1", sink)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -90,6 +87,16 @@ func TestOpenAIResponsesStreamIncompleteFinish(t *testing.T) {
 	}
 	if finish != "length" {
 		t.Fatalf("finish=%q", finish)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(result.FinalResultJSON, &parsed); err != nil {
+		t.Fatalf("result json: %v", err)
+	}
+	if parsed["object"] != "response" {
+		t.Fatalf("object=%v", parsed["object"])
+	}
+	if parsed["id"] != "chatcmpl-x" {
+		t.Fatalf("id=%v", parsed["id"])
 	}
 }
 

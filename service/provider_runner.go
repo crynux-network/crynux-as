@@ -71,7 +71,14 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 				_ = FailProviderTaskJob(settleCtx, db, jobID, &currentKeyID, "key owner unavailable after successful upstream")
 				return
 			}
-			formatted := string(result.FinalResultJSON)
+			publicID := provider.PublicStreamResponseID(job.APIType, job.ID, job.PublicID)
+			resultJSON, err := provider.RewritePublicResultID(result.FinalResultJSON, publicID)
+			if err != nil {
+				log.Errorf("provider job %d rewrite public result id failed: %v", jobID, err)
+				_ = FailProviderTaskJob(settleCtx, db, jobID, &currentKeyID, "failed to normalize public result id")
+				return
+			}
+			formatted := string(resultJSON)
 			raw := formatted
 			if err := settleProviderJobWithRetry(ctx, settleCtx, db, job, currentKeyID, owner.ID, owner.Address, raw, formatted, *result.FinalUsage); err != nil {
 				log.Errorf("provider job %d settlement abandoned after confirmed usage: %v", jobID, err)

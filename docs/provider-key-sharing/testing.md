@@ -76,6 +76,7 @@ Tests MUST cover:
 * case-sensitive Provider lookup;
 * unchanged Hugging Face normalization on a non-Provider model;
 * every configured Provider model routes through Chat Completions and Responses;
+* OpenAI public Responses executes against OpenAI Chat Completions and never against OpenAI Responses;
 * a Provider model on Completions returns HTTP 400;
 * Provider model appears with one enabled, non-deleted key;
 * Provider model remains during saturation and temporary cooldown;
@@ -138,6 +139,18 @@ Tests MUST cover:
 * Bridge poller never loads Provider jobs;
 * Provider scheduler never loads Bridge jobs;
 * one worker failure does not cancel the other.
+
+## Responses previous_response_id Tests
+
+Tests MUST cover:
+
+* same-project completed retained previous job expands into the Provider request input before submission;
+* expanded Provider request bodies omit `previous_response_id`;
+* OpenAI, Anthropic, and Google upstream bodies omit `previous_response_id`;
+* missing, cross-project, expired, non-Responses, incomplete, and failed previous IDs return the same invalid-request shape without revealing other projects;
+* a later Provider Responses call may chain from a prior Provider Responses job in the same project;
+* a later Provider Responses call may chain from a prior Crynux Responses job in the same project when the prior job remains retained;
+* public Responses `id` values used for chaining and `GET /responses/:id` are the AS job `PublicID`.
 
 ## Adapter Contract Tests
 

@@ -119,20 +119,18 @@ Only definitely unaccepted key-specific failures may be considered for an automa
 
 ## OpenAI Adapter
 
-The OpenAI adapter MUST support the corresponding OpenAI endpoints:
-
-* Chat Completions;
-* Responses.
+The OpenAI adapter MUST call OpenAI Chat Completions for both public Chat Completions and public Responses requests. It MUST NOT call OpenAI Responses.
 
 It MUST:
 
 * send the configured model name unchanged;
 * use Bearer authentication;
-* preserve validated OpenAI request semantics;
+* translate validated public Chat Completions and Responses semantics into one Chat Completions upstream body through the shared canonical request shape;
+* omit AS-local fields such as `previous_response_id` from the upstream body;
 * request final stream usage even when the API Consumer did not request a public usage chunk;
 * suppress the internal usage request option from public output when the client did not request it;
-* parse Chat Completions SSE and Responses events incrementally;
-* assemble one final normalized result;
+* parse Chat Completions SSE incrementally;
+* assemble one final normalized public result for the selected public API type;
 * capture upstream request ID from headers or response fields when available;
 * return redacted transport-error messages that exclude request URLs and Shared API Key plaintext.
 
@@ -140,8 +138,6 @@ Normalized usage MUST map:
 
 * Chat Completions `prompt_tokens` to input;
 * Chat Completions `completion_tokens` to output;
-* Responses `input_tokens` to input;
-* Responses `output_tokens` to output;
 * cached token details to cached input;
 * reasoning token details to reasoning.
 

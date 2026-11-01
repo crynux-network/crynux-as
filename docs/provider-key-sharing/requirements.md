@@ -22,6 +22,8 @@
 8. A Provider model name MUST be globally unique among Provider models and MUST NOT collide with a Crynux model name.
 9. AS MUST expose and forward the official model name without adding a Service Provider prefix or alias.
 10. Every configured Provider model MUST support the AS Chat Completions and Responses APIs through its Service Provider adapter. Provider models MUST reject Completions.
+11. AS MUST implement Responses `previous_response_id` locally for every Provider model. Shared API Key selection MAY assign a different key to a later request, so a previous response stored under one upstream key is not available to the next request. Anthropic and Google adapters have no equivalent previous-response store. AS MUST expand same-project retained history before Provider submission and MUST NOT forward `previous_response_id` to any Service Provider.
+12. The OpenAI adapter MUST send both public Chat Completions and public Responses requests to OpenAI Chat Completions. It MUST NOT call OpenAI Responses. Public Responses results MUST be assembled by AS after the Chat Completions response.
 
 ## Key Lifecycle
 
