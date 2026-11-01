@@ -209,6 +209,20 @@ Tests MUST cover:
 * submitted or in-progress Provider jobs from a prior process fail and release their Credits holds without resubmit;
 * process-local slot counts start empty after restart.
 
+## Graceful Shutdown Tests
+
+Tests MUST cover:
+
+* `SIGINT` / `SIGTERM` stops new HTTP requests while already-accepted short requests can complete;
+* Provider claiming stops after intake cancellation;
+* already-accepted non-streaming waits can receive a terminal response within `shutdown_timeout_seconds`;
+* already-accepted Provider SSE can receive remaining events through terminal and `[DONE]` within `shutdown_timeout_seconds`;
+* active Provider `Execute` continues after intake cancellation and settles confirmed usage;
+* confirmed usage still settles when the downstream subscriber has disconnected;
+* hard timeout detaches remaining stream subscribers and cancels remaining Provider job contexts;
+* hard-timeout leftovers that remain submitted or in progress fail on the next startup through `FailPriorProcessProviderJobs` without upstream resubmit;
+* `provider.shutdown_timeout_seconds` is the shutdown deadline used by the process.
+
 ## Settlement Tests
 
 Tests MUST verify one transaction contains:

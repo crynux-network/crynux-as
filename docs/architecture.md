@@ -60,6 +60,10 @@ Image TaskArgs execution resolution MUST use one shared resolver for Raw Image c
 
 `main.go` initializes components in this order: configuration and Provider encryption secrets, logging, database, migrations, blockchain clients, existing external clients, Service Provider adapters, encryption-secret file removal, prior-process Provider job failure and Credits-hold recovery, existing blockchain and usage workers, initial loaded-models and queued-priority refreshes, Bridge poller, Provider scheduler, the existing Credits-lock reconciler, and finally the HTTP server. The complete Provider startup contract is specified in [provider-key-sharing/architecture.md](./provider-key-sharing/architecture.md).
 
+## Shutdown Order
+
+Graceful shutdown is specified in [provider-key-sharing/operations.md](./provider-key-sharing/operations.md) and [provider-key-sharing/job-execution.md](./provider-key-sharing/job-execution.md). On `SIGINT` or `SIGTERM`, AS MUST stop new HTTP intake and Provider claims, allow already-accepted requests including Provider SSE to finish within `provider.shutdown_timeout_seconds`, keep active Provider Execute and settlement alive on a separate job context until that deadline, and detach remaining streams plus cancel remaining Provider jobs only after the hard timeout.
+
 ## Multi-Chain Multi-Token Configuration Model
 
 The complete configuration template is [config/config.example.yml](../config/config.example.yml). The configuration defines a map of blockchain networks, and each network defines a map of supported ERC20 tokens under `blockchains.<network-name>.tokens`.

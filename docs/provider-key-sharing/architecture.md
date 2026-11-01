@@ -83,11 +83,13 @@ Bridge-specific execution coefficients and Provider-specific usage weights MUST 
 The top-level job task MUST start two independent workers:
 
 ```text
-RunJobWorkers
-  RunBridgeJobPoller
-  RunProviderScheduler
-    RunProviderJob goroutines
+RunJobWorkers(intakeCtx, providerJobCtx)
+  RunBridgeJobPoller(intakeCtx)
+  RunProviderScheduler(intakeCtx, providerJobCtx)
+    RunProviderJob(providerJobCtx) goroutines
 ```
+
+`intakeCtx` MUST stop Bridge polling and Provider claiming. `providerJobCtx` MUST run already-claimed Provider jobs and MUST be cancelled only after the shutdown hard deadline.
 
 `RunBridgeJobPoller` is the existing Bridge job loop moved under `RunJobWorkers`. Its behavior MUST remain unchanged except that it loads only `execution_source = crynux` jobs.
 

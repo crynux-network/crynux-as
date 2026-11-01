@@ -4,6 +4,7 @@ import (
 	"context"
 	"crynux_as/config"
 	"crynux_as/service"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -12,9 +13,16 @@ import (
 const usageStatsInterval = time.Minute
 
 // StartUsageStatsWorkers starts the base aggregation worker and the snapshot worker.
-func StartUsageStatsWorkers(ctx context.Context) {
-	go startUsageStatsBaseWorker(ctx)
-	go startUsageStatsSnapshotWorker(ctx)
+func StartUsageStatsWorkers(ctx context.Context, wg *sync.WaitGroup) {
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		startUsageStatsBaseWorker(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		startUsageStatsSnapshotWorker(ctx)
+	}()
 }
 
 func startUsageStatsBaseWorker(ctx context.Context) {

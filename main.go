@@ -10,8 +10,14 @@ import (
 	"crynux_as/relay"
 	"crynux_as/service"
 	"crynux_as/tasks"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -76,8 +82,14 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	service.StartBlockchainProcessors(context.Background())
-	tasks.StartUsageStatsWorkers(context.Background())
+	intakeCtx, intakeCancel := context.WithCancel(context.Background())
+	defer intakeCancel()
+	providerJobCtx, providerJobCancel := context.WithCancel(context.Background())
+	defer providerJobCancel()
+
+	var workerWG sync.WaitGroup
+	service.StartBlockchainProcessors(intakeCtx, &workerWG)
+	tasks.StartUsageStatsWorkers(intakeCtx, &workerWG)
 
 	relayClient := relay.NewClient(conf.Relay.BaseURL)
 	service.InitLoadedModelsCache(relayClient)
@@ -89,26 +101,106 @@ func main() {
 	if err := service.RefreshQueuedPriority(context.Background()); err != nil {
 		log.Errorf("initial queued priority refresh failed: %v", err)
 	}
-	go tasks.StartLoadedModelsRefresh(context.Background())
-	go tasks.StartQueuedPriorityRefresh(context.Background())
-	tasks.StartTaskJobWorker(context.Background())
-	tasks.StartTaskJobRetentionCleanup(context.Background())
-	tasks.StartCreditsLockedReconciler(context.Background())
+	tasks.StartLoadedModelsRefresh(intakeCtx, &workerWG)
+	tasks.StartQueuedPriorityRefresh(intakeCtx, &workerWG)
+	tasks.StartTaskJobWorker(intakeCtx, providerJobCtx, &workerWG)
+	tasks.StartTaskJobRetentionCleanup(intakeCtx, &workerWG)
+	tasks.StartCreditsLockedReconciler(intakeCtx, &workerWG)
 
-	startServer()
+	srv := newHTTPServer(conf)
+	serverErr := make(chan error, 1)
+	go func() {
+		log.Infoln("Starting application server...")
+		err := srv.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			log.Errorln(err.Error())
+			intakeCancel()
+			providerJobCancel()
+			workerWG.Wait()
+			os.Exit(1)
+		}
+	case sig := <-sigCh:
+		log.Infof("received signal %s; starting graceful shutdown", sig)
+		gracefulShutdown(srv, conf, intakeCancel, providerJobCancel, &workerWG)
+	}
 }
 
-func startServer() {
-	conf := config.GetConfig()
-
+func newHTTPServer(conf *config.AppConfig) *http.Server {
 	app := api.GetHttpApplication(conf)
 	address := fmt.Sprintf("%s:%s", conf.Http.Host, conf.Http.Port)
+	return &http.Server{
+		Addr:    address,
+		Handler: app,
+	}
+}
 
-	log.Infoln("Starting application server...")
+func gracefulShutdown(
+	srv *http.Server,
+	conf *config.AppConfig,
+	intakeCancel context.CancelFunc,
+	providerJobCancel context.CancelFunc,
+	workerWG *sync.WaitGroup,
+) {
+	deadline := time.Now().Add(time.Duration(conf.Provider.ShutdownTimeoutSeconds) * time.Second)
+	intakeCancel()
 
-	if err := app.Run(address); err != nil {
-		log.Errorln(err.Error())
-		os.Exit(1)
+	shutdownCtx, shutdownCancel := context.WithDeadline(context.Background(), deadline)
+	defer shutdownCancel()
+
+	httpDone := make(chan struct{})
+	go func() {
+		defer close(httpDone)
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Errorf("http server shutdown: %v", err)
+			return
+		}
+		log.Infoln("http server shutdown complete")
+	}()
+
+	workersDone := make(chan struct{})
+	go func() {
+		workerWG.Wait()
+		close(workersDone)
+	}()
+
+	allDone := make(chan struct{})
+	go func() {
+		<-httpDone
+		<-workersDone
+		close(allDone)
+	}()
+
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+
+	select {
+	case <-allDone:
+		providerJobCancel()
+		log.Infoln("graceful shutdown complete")
+		return
+	case <-timer.C:
+		log.Warnln("shutdown timeout reached; detaching streams and cancelling active provider jobs")
+		service.GetProviderStreamRegistry().DetachAll()
+		providerJobCancel()
+		forceCtx, forceCancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer forceCancel()
+		select {
+		case <-allDone:
+		case <-forceCtx.Done():
+		}
+		log.Infoln("graceful shutdown finished after timeout")
 	}
 }
 

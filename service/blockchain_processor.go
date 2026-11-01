@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -22,10 +23,12 @@ import (
 // blockchain network. Each worker scans ERC20 Transfer logs of the configured
 // token contracts whose receiver is the platform receiving address, and turns
 // them into deposits and Credits ledger events.
-func StartBlockchainProcessors(ctx context.Context) {
+func StartBlockchainProcessors(ctx context.Context, wg *sync.WaitGroup) {
 	appConfig := config.GetConfig()
 	for network := range appConfig.Blockchains {
+		wg.Add(1)
 		go func(network string) {
+			defer wg.Done()
 			if err := runBlockchainProcessor(ctx, config.GetDB(), network); err != nil {
 				log.Errorf("blockchain processor for network %s stopped with error: %v", network, err)
 			}

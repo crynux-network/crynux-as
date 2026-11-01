@@ -85,7 +85,7 @@ func (a *GoogleAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	resp, err := a.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "request cancelled or timed out after send"}, nil
+			return cancelledExecuteResult(ctx), nil
 		}
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "provider connection failed"}, nil
 	}

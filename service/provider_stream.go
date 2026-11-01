@@ -102,3 +102,23 @@ func (r *ProviderStreamRegistry) Publish(jobID uint, event ProviderStreamEvent) 
 func (r *ProviderStreamRegistry) Detach(jobID uint) {
 	r.Unregister(jobID)
 }
+
+// DetachAll closes every live subscriber without cancelling upstream execution.
+func (r *ProviderStreamRegistry) DetachAll() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for jobID, sub := range r.subscribers {
+		delete(r.subscribers, jobID)
+		if sub != nil && !sub.closed {
+			sub.closed = true
+			close(sub.ch)
+		}
+	}
+}
+
+// SubscriberCount returns the number of active stream subscribers.
+func (r *ProviderStreamRegistry) SubscriberCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.subscribers)
+}

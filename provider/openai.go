@@ -107,7 +107,7 @@ func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	resp, err := a.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return ExecuteResult{Acceptance: AcceptanceUncertain, AcceptanceKnown: true, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "request cancelled or timed out after send"}, nil
+			return cancelledExecuteResult(ctx), nil
 		}
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "provider connection failed"}, nil
 	}

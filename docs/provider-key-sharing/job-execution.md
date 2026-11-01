@@ -60,11 +60,11 @@ AS MUST NOT persist a separate Provider queue deadline.
 `RunJobWorkers` MUST supervise two independent loops:
 
 ```text
-RunBridgeJobPoller(ctx)
-RunProviderScheduler(ctx)
+RunBridgeJobPoller(intakeCtx)
+RunProviderScheduler(intakeCtx, providerJobCtx)
 ```
 
-Each loop MUST return errors to its own task boundary. Termination of one loop MUST NOT cancel the other loop.
+`intakeCtx` MUST stop Bridge polling and Provider claiming. `providerJobCtx` MUST run already-claimed Provider jobs and MUST be cancelled only after the shutdown hard deadline. Each loop MUST return errors to its own task boundary. Termination of one loop MUST NOT cancel the other loop.
 
 ## Bridge Job Poller
 
@@ -224,11 +224,14 @@ The key MUST become unavailable for new claims and for in-worker key switches im
 
 Graceful shutdown MUST:
 
-1. stop the Provider scheduler from claiming new jobs;
-2. stop accepting new HTTP requests;
-3. detach downstream stream subscribers;
-4. allow active Provider goroutines to finish within the configured shutdown deadline;
-5. stop the Bridge poller and other workers through the existing context flow.
+1. stop accepting new HTTP requests;
+2. stop the Provider scheduler from claiming new jobs;
+3. stop the Bridge poller and other intake workers through the existing context flow;
+4. allow already-accepted HTTP handlers, including Provider SSE subscribers, to finish within the configured shutdown deadline;
+5. allow active Provider goroutines to finish Execute and settlement within the same deadline;
+6. detach remaining downstream stream subscribers and cancel `providerJobCtx` only after the shutdown deadline elapses.
+
+Within the shutdown deadline, Provider SSE MUST continue delivering remaining events through the post-settlement terminal event and `[DONE]` marker. Settlement after confirmed usage MUST continue even when a downstream subscriber disconnects.
 
 On startup:
 

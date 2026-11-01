@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"crynux_as/models"
+	"errors"
 )
 
 type ErrorClass string
@@ -83,6 +84,21 @@ type ExecuteResult struct {
 
 func (r ExecuteResult) HasConfirmedUsage() bool {
 	return r.FinalUsage != nil && r.Acceptance == AcceptanceAcceptedBillable
+}
+
+func cancelledExecuteResult(ctx context.Context) ExecuteResult {
+	class := ErrorAcceptanceUncertain
+	message := "request cancelled or timed out after send"
+	if errors.Is(ctx.Err(), context.Canceled) {
+		class = ErrorCancelledByShutdown
+		message = "provider request cancelled by shutdown"
+	}
+	return ExecuteResult{
+		AcceptanceKnown: true,
+		Acceptance:      AcceptanceUncertain,
+		ErrorClass:      class,
+		ErrorMessage:    message,
+	}
 }
 
 type Adapter interface {

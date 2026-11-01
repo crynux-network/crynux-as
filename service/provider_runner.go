@@ -5,6 +5,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/provider"
+	"errors"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -67,29 +68,33 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 		}
 
 		if result.HasConfirmedUsage() && len(result.FinalResultJSON) > 0 {
-			_ = ClearSharedAPIKeyUnavailable(ctx, db, currentKeyID)
+			settleCtx := context.WithoutCancel(ctx)
+			_ = ClearSharedAPIKeyUnavailable(settleCtx, db, currentKeyID)
 			var owner models.User
-			if err := db.WithContext(ctx).First(&owner, key.UserID).Error; err != nil {
+			if err := db.WithContext(settleCtx).First(&owner, key.UserID).Error; err != nil {
 				log.Errorf("provider job %d load key owner failed: %v", jobID, err)
-				_ = FailProviderTaskJob(ctx, db, jobID, &currentKeyID, "key owner unavailable after successful upstream")
+				_ = FailProviderTaskJob(settleCtx, db, jobID, &currentKeyID, "key owner unavailable after successful upstream")
 				return
 			}
 			formatted := string(result.FinalResultJSON)
 			raw := formatted
-			for {
-				err := SettleProviderTaskJob(ctx, db, job, currentKeyID, owner.ID, owner.Address, raw, formatted, *result.FinalUsage)
-				if err == nil {
-					streams.Publish(jobID, ProviderStreamEvent{Kind: "done", Terminal: true})
-					streams.Unregister(jobID)
-					return
-				}
-				log.Errorf("provider job %d settlement failed, retrying: %v", jobID, err)
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(time.Second):
-				}
+			if err := settleProviderJobWithRetry(ctx, settleCtx, db, job, currentKeyID, owner.ID, owner.Address, raw, formatted, *result.FinalUsage); err != nil {
+				log.Errorf("provider job %d settlement abandoned after confirmed usage: %v", jobID, err)
+				return
 			}
+			streams.Publish(jobID, ProviderStreamEvent{Kind: "done", Terminal: true})
+			streams.Unregister(jobID)
+			return
+		}
+
+		if errors.Is(ctx.Err(), context.Canceled) || result.ErrorClass == provider.ErrorCancelledByShutdown {
+			msg := "provider job cancelled by shutdown"
+			if result.ErrorMessage != "" {
+				msg = result.ErrorMessage
+			}
+			_ = FailProviderTaskJob(context.WithoutCancel(ctx), db, jobID, &currentKeyID, msg)
+			streams.Unregister(jobID)
+			return
 		}
 
 		canSwitch := result.AcceptanceKnown &&
@@ -126,5 +131,53 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 		_ = FailProviderTaskJob(ctx, db, jobID, &currentKeyID, msg)
 		streams.Unregister(jobID)
 		return
+	}
+}
+
+type providerSettleFunc func(
+	ctx context.Context,
+	db *gorm.DB,
+	job *models.TaskJob,
+	sharedAPIKeyID uint,
+	keyOwnerUserID uint,
+	keyOwnerAddress string,
+	rawResultJSON string,
+	formattedResultJSON string,
+	usage provider.NormalizedUsage,
+) error
+
+var settleProviderTaskJobFn providerSettleFunc = SettleProviderTaskJob
+
+// settleProviderJobWithRetry retries settlement until it commits. jobCtx cancellation
+// triggers one final short-timeout attempt, then returns the last error.
+func settleProviderJobWithRetry(
+	jobCtx context.Context,
+	settleCtx context.Context,
+	db *gorm.DB,
+	job *models.TaskJob,
+	sharedAPIKeyID uint,
+	keyOwnerUserID uint,
+	keyOwnerAddress string,
+	rawResultJSON string,
+	formattedResultJSON string,
+	usage provider.NormalizedUsage,
+) error {
+	for {
+		err := settleProviderTaskJobFn(settleCtx, db, job, sharedAPIKeyID, keyOwnerUserID, keyOwnerAddress, rawResultJSON, formattedResultJSON, usage)
+		if err == nil {
+			return nil
+		}
+		log.Errorf("provider job %d settlement failed, retrying: %v", job.ID, err)
+		select {
+		case <-jobCtx.Done():
+			finalCtx, cancel := context.WithTimeout(settleCtx, 15*time.Second)
+			finalErr := settleProviderTaskJobFn(finalCtx, db, job, sharedAPIKeyID, keyOwnerUserID, keyOwnerAddress, rawResultJSON, formattedResultJSON, usage)
+			cancel()
+			if finalErr == nil {
+				return nil
+			}
+			return finalErr
+		case <-time.After(time.Second):
+		}
 	}
 }

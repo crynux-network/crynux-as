@@ -4,20 +4,26 @@ import (
 	"context"
 	"crynux_as/config"
 	"crynux_as/service"
+	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 )
 
-func StartTaskJobWorker(ctx context.Context) {
+func StartTaskJobWorker(intakeCtx, providerJobCtx context.Context, wg *sync.WaitGroup) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		log.Infoln("job workers started")
-		service.RunJobWorkers(ctx)
+		service.RunJobWorkers(intakeCtx, providerJobCtx)
+		log.Infoln("job workers stopped")
 	}()
 }
 
-func StartTaskJobRetentionCleanup(ctx context.Context) {
+func StartTaskJobRetentionCleanup(ctx context.Context, wg *sync.WaitGroup) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		log.Infoln("task job retention cleanup started")
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
@@ -47,8 +53,10 @@ func StartTaskJobRetentionCleanup(ctx context.Context) {
 	}()
 }
 
-func StartCreditsLockedReconciler(ctx context.Context) {
+func StartCreditsLockedReconciler(ctx context.Context, wg *sync.WaitGroup) {
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		log.Infoln("credits locked reconciler started")
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()

@@ -24,7 +24,9 @@ func GetProviderAdapterRegistry() *provider.Registry {
 }
 
 // RunJobWorkers supervises the Bridge poller and Provider scheduler independently.
-func RunJobWorkers(ctx context.Context) {
+// intakeCtx stops claiming and Bridge polling. providerJobCtx runs already-claimed
+// Provider jobs and is cancelled only on hard shutdown timeout.
+func RunJobWorkers(intakeCtx, providerJobCtx context.Context) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -34,7 +36,7 @@ func RunJobWorkers(ctx context.Context) {
 				log.Errorf("bridge job poller panicked: %v", r)
 			}
 		}()
-		RunTaskJobWorker(ctx)
+		RunTaskJobWorker(intakeCtx)
 	}()
 	go func() {
 		defer wg.Done()
@@ -43,12 +45,12 @@ func RunJobWorkers(ctx context.Context) {
 				log.Errorf("provider scheduler panicked: %v", r)
 			}
 		}()
-		RunProviderScheduler(ctx)
+		RunProviderScheduler(intakeCtx, providerJobCtx)
 	}()
 	wg.Wait()
 }
 
-func RunProviderScheduler(ctx context.Context) {
+func RunProviderScheduler(intakeCtx, providerJobCtx context.Context) {
 	cfg := config.GetConfig()
 	interval := time.Duration(cfg.Provider.SchedulerIntervalMilliseconds) * time.Millisecond
 	db := config.GetDB()
@@ -56,7 +58,7 @@ func RunProviderScheduler(ctx context.Context) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-intakeCtx.Done():
 			log.Infoln("provider scheduler stopping; waiting for active jobs")
 			active.Wait()
 			log.Infoln("provider scheduler stopped")
@@ -64,15 +66,15 @@ func RunProviderScheduler(ctx context.Context) {
 		default:
 		}
 
-		if err := RefreshProviderQueuePrioritySnapshot(ctx, db); err != nil {
+		if err := RefreshProviderQueuePrioritySnapshot(intakeCtx, db); err != nil {
 			log.Errorf("refresh provider queue priority failed: %v", err)
 		}
-		if err := claimAndStartProviderJobs(ctx, db, &active); err != nil {
+		if err := claimAndStartProviderJobs(intakeCtx, providerJobCtx, db, &active); err != nil {
 			log.Errorf("provider scheduler iteration failed: %v", err)
 		}
 
 		select {
-		case <-ctx.Done():
+		case <-intakeCtx.Done():
 			active.Wait()
 			return
 		case <-time.After(interval):
@@ -80,10 +82,10 @@ func RunProviderScheduler(ctx context.Context) {
 	}
 }
 
-func claimAndStartProviderJobs(ctx context.Context, db *gorm.DB, active *sync.WaitGroup) error {
+func claimAndStartProviderJobs(intakeCtx, providerJobCtx context.Context, db *gorm.DB, active *sync.WaitGroup) error {
 	cfg := config.GetConfig()
 	limit := int(cfg.Provider.SchedulerBatchSize)
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	dbCtx, cancel := context.WithTimeout(intakeCtx, 5*time.Second)
 	defer cancel()
 
 	var ids []uint
@@ -100,19 +102,19 @@ func claimAndStartProviderJobs(ctx context.Context, db *gorm.DB, active *sync.Wa
 	}
 	for _, jobID := range ids {
 		select {
-		case <-ctx.Done():
+		case <-intakeCtx.Done():
 			return nil
 		default:
 		}
 		var job models.TaskJob
-		if err := db.WithContext(ctx).First(&job, jobID).Error; err != nil {
+		if err := db.WithContext(intakeCtx).First(&job, jobID).Error; err != nil {
 			continue
 		}
 		if time.Now().After(job.CreatedAt.Add(time.Duration(job.QueueTimeout) * time.Second)) {
-			_ = FailProviderTaskJob(ctx, db, job.ID, nil, "provider queue timeout")
+			_ = FailProviderTaskJob(intakeCtx, db, job.ID, nil, "provider queue timeout")
 			continue
 		}
-		keys, err := ListEligibleSharedAPIKeys(ctx, db, job.ExecutionSource.ServiceProvider())
+		keys, err := ListEligibleSharedAPIKeys(intakeCtx, db, job.ExecutionSource.ServiceProvider())
 		if err != nil {
 			return err
 		}
@@ -124,7 +126,7 @@ func claimAndStartProviderJobs(ctx context.Context, db *gorm.DB, active *sync.Wa
 		if !slots.Reserve(selected.ID) {
 			continue
 		}
-		claimed, err := claimProviderJob(ctx, db, job.ID)
+		claimed, err := claimProviderJob(intakeCtx, db, job.ID)
 		if err != nil || !claimed {
 			slots.Release(selected.ID)
 			continue
@@ -134,7 +136,7 @@ func claimAndStartProviderJobs(ctx context.Context, db *gorm.DB, active *sync.Wa
 		go func(jobID, sharedAPIKeyID uint) {
 			defer active.Done()
 			defer slots.Release(sharedAPIKeyID)
-			RunProviderJob(ctx, db, jobID, sharedAPIKeyID)
+			RunProviderJob(providerJobCtx, db, jobID, sharedAPIKeyID)
 		}(job.ID, keyID)
 	}
 	return nil
