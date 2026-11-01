@@ -42,7 +42,7 @@ func ReserveCreditsAndCreateProviderTaskJob(ctx context.Context, db *gorm.DB, in
 	if in.QueueTimeout == 0 {
 		return nil, errors.New("queue_timeout is required")
 	}
-	taskFeeWei := ProviderEarningWei(in.PriorityGwei) // placeholder overwritten by estimate; store priority-based snapshot fee
+	taskFeeWei := ProviderEarningWei(new(big.Rat).SetInt(in.PriorityGwei)) // placeholder overwritten by estimate; store priority-based snapshot fee
 	if billable, err := ProviderBillableGwei(in.PriorityGwei, big.NewRat(1, 1), in.BillingSnapshot.MaxTaskPriceCNX); err == nil {
 		taskFeeWei = ProviderEarningWei(billable)
 	}

@@ -621,3 +621,59 @@ func TestScaleAdmissionMinTaskFeeRoundsDownToGwei(t *testing.T) {
 		t.Fatalf("scaled minimum=%s, want 3", got.String())
 	}
 }
+
+func TestProviderBillableKeepsFractionalGweiUntilFinalConversion(t *testing.T) {
+	// priority=3, units=5/4 => billable=15/4 Gwei. Floor only at Credits/wei conversion.
+	billable, err := ProviderBillableGwei(big.NewInt(3), big.NewRat(5, 4), "100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantBillable := big.NewRat(15, 4)
+	if billable.Cmp(wantBillable) != 0 {
+		t.Fatalf("billable=%s, want %s", billable.RatString(), wantBillable.RatString())
+	}
+
+	credits, err := ProviderConsumerCredits(billable, "2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// floor((15/4)*2) = floor(7.5) = 7
+	if credits.Cmp(big.NewInt(7)) != 0 {
+		t.Fatalf("credits=%s, want 7", credits.String())
+	}
+
+	earning := ProviderEarningWei(billable)
+	// floor((15/4)*1e9) = 3_750_000_000
+	if earning.Cmp(big.NewInt(3_750_000_000)) != 0 {
+		t.Fatalf("earning=%s, want 3750000000", earning.String())
+	}
+}
+
+func TestProviderBillableUnderOneGweiStillYieldsFractionalWei(t *testing.T) {
+	billable, err := ProviderBillableGwei(big.NewInt(1), big.NewRat(1, 4), "100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	earning := ProviderEarningWei(billable)
+	if earning.Cmp(big.NewInt(250_000_000)) != 0 {
+		t.Fatalf("earning=%s, want 250000000", earning.String())
+	}
+	credits, err := ProviderConsumerCredits(billable, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credits.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("credits=%s, want 1", credits.String())
+	}
+}
+
+func TestApplyMaxTaskPriceCapComparesRationalBillable(t *testing.T) {
+	// 1.5 Gwei capped to 1 Gwei when max_task_price_cnx = 1e-9 CNX.
+	capped, err := ApplyMaxTaskPriceCap(big.NewRat(3, 2), "0.000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capped.Cmp(big.NewRat(1, 1)) != 0 {
+		t.Fatalf("capped=%s, want 1", capped.RatString())
+	}
+}

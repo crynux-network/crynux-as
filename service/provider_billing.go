@@ -167,18 +167,24 @@ func EstimateProviderUnits(weights map[string]string, inputBytes, maxOutputToken
 	return units, nil
 }
 
-func ApplyMaxTaskPriceCap(billableGwei *big.Int, maxTaskPriceCNX string) (*big.Int, error) {
+func ApplyMaxTaskPriceCap(billableGwei *big.Rat, maxTaskPriceCNX string) (*big.Rat, error) {
+	if billableGwei == nil || billableGwei.Sign() < 0 {
+		return nil, errors.New("billable gwei must be non-negative")
+	}
 	maxFeeGwei, err := config.MaxTaskFeeGweiFromPrice(maxTaskPriceCNX)
 	if err != nil {
 		return nil, fmt.Errorf("max_task_price_cnx: %w", err)
 	}
-	if billableGwei.Cmp(maxFeeGwei) > 0 {
-		return new(big.Int).Set(maxFeeGwei), nil
+	maxFee := new(big.Rat).SetInt(maxFeeGwei)
+	if billableGwei.Cmp(maxFee) > 0 {
+		return maxFee, nil
 	}
-	return new(big.Int).Set(billableGwei), nil
+	return new(big.Rat).Set(billableGwei), nil
 }
 
-func ProviderBillableGwei(effectivePriorityGwei *big.Int, providerUnits *big.Rat, maxTaskPriceCNX string) (*big.Int, error) {
+// ProviderBillableGwei returns post-cap billable Gwei as an exact rational.
+// Credits and Key Owner wei MUST floor only at their final conversions.
+func ProviderBillableGwei(effectivePriorityGwei *big.Int, providerUnits *big.Rat, maxTaskPriceCNX string) (*big.Rat, error) {
 	if effectivePriorityGwei == nil || effectivePriorityGwei.Sign() <= 0 {
 		return nil, errors.New("effective priority is required")
 	}
@@ -186,16 +192,18 @@ func ProviderBillableGwei(effectivePriorityGwei *big.Int, providerUnits *big.Rat
 		return nil, errors.New("provider units are invalid")
 	}
 	product := new(big.Rat).Mul(new(big.Rat).SetInt(effectivePriorityGwei), providerUnits)
-	uncapped := new(big.Int).Quo(product.Num(), product.Denom())
-	return ApplyMaxTaskPriceCap(uncapped, maxTaskPriceCNX)
+	return ApplyMaxTaskPriceCap(product, maxTaskPriceCNX)
 }
 
-func ProviderConsumerCredits(billableGwei *big.Int, creditsPerGwei string) (*big.Int, error) {
+func ProviderConsumerCredits(billableGwei *big.Rat, creditsPerGwei string) (*big.Int, error) {
+	if billableGwei == nil || billableGwei.Sign() < 0 {
+		return nil, errors.New("billable gwei must be non-negative")
+	}
 	rate, ok := new(big.Rat).SetString(strings.TrimSpace(creditsPerGwei))
 	if !ok || rate.Sign() < 0 {
 		return nil, errors.New("credits_per_gwei is invalid")
 	}
-	product := new(big.Rat).Mul(new(big.Rat).SetInt(billableGwei), rate)
+	product := new(big.Rat).Mul(billableGwei, rate)
 	credits := new(big.Int).Quo(product.Num(), product.Denom())
 	if credits.Sign() <= 0 {
 		return big.NewInt(1), nil
@@ -203,8 +211,37 @@ func ProviderConsumerCredits(billableGwei *big.Int, creditsPerGwei string) (*big
 	return credits, nil
 }
 
-func ProviderEarningWei(billableGwei *big.Int) *big.Int {
-	return new(big.Int).Mul(billableGwei, big.NewInt(1_000_000_000))
+func ProviderEarningWei(billableGwei *big.Rat) *big.Int {
+	if billableGwei == nil || billableGwei.Sign() <= 0 {
+		return big.NewInt(0)
+	}
+	product := new(big.Rat).Mul(billableGwei, big.NewRat(1_000_000_000, 1))
+	return new(big.Int).Quo(product.Num(), product.Denom())
+}
+
+func floorProviderBillableGwei(billableGwei *big.Rat) *big.Int {
+	if billableGwei == nil || billableGwei.Sign() <= 0 {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Quo(new(big.Int).Set(billableGwei.Num()), billableGwei.Denom())
+}
+
+func rejectIfStaticProviderCreditsExceedMax(project *models.Project, billableGwei *big.Rat) error {
+	if err := requireAutoMaxCreditsPerTask(project); err != nil {
+		return err
+	}
+	appCfg := config.GetConfig()
+	if appCfg == nil {
+		return errors.New("config is not initialized")
+	}
+	credits, err := ProviderConsumerCredits(billableGwei, appCfg.LLM.CreditsPerGwei)
+	if err != nil {
+		return err
+	}
+	if credits.Cmp(&project.AutoMaxCreditsPerTask.Int) > 0 {
+		return ErrMaxCreditsExceeded
+	}
+	return nil
 }
 
 // ceilPriorityFromFeeAndUnits returns ceil(minFeeGwei / units).
@@ -288,8 +325,8 @@ func enforceAdmissionSharedMinPriority(
 	project *models.Project,
 	priority *big.Int,
 	minPriority *big.Int,
-	feeAtPriority func(priority *big.Int) (*big.Int, error),
-) (*big.Int, *big.Int, error) {
+	feeAtPriority func(priority *big.Int) (*big.Rat, error),
+) (*big.Int, *big.Rat, error) {
 	if project == nil {
 		return nil, nil, errors.New("project is required")
 	}
@@ -304,12 +341,19 @@ func enforceAdmissionSharedMinPriority(
 		mode = models.CostLevelModeStatic
 	}
 	workingPriority := new(big.Int).Set(priority)
+	feeAtPriorityInt := func(p *big.Int) (*big.Int, error) {
+		billable, err := feeAtPriority(p)
+		if err != nil {
+			return nil, err
+		}
+		return floorProviderBillableGwei(billable), nil
+	}
 	if mode != models.CostLevelModeAuto {
 		billable, err := feeAtPriority(workingPriority)
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := rejectIfStaticCreditsExceedMax(project, billable); err != nil {
+		if err := rejectIfStaticProviderCreditsExceedMax(project, billable); err != nil {
 			return nil, nil, err
 		}
 		if minPriority != nil && minPriority.Sign() > 0 && workingPriority.Cmp(minPriority) < 0 {
@@ -318,7 +362,7 @@ func enforceAdmissionSharedMinPriority(
 		return workingPriority, billable, nil
 	}
 
-	upper, err := MaxPriorityWithinAutoMaxCredits(project, feeAtPriority)
+	upper, err := MaxPriorityWithinAutoMaxCredits(project, feeAtPriorityInt)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -367,7 +411,7 @@ func BuildProviderBillingData(
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
-	feeAtPriority := func(priority *big.Int) (*big.Int, error) {
+	feeAtPriority := func(priority *big.Int) (*big.Rat, error) {
 		return ProviderBillableGwei(priority, units, maxTaskPriceCNX)
 	}
 	sharedMinPriority, err := ResolveProviderSharedMinPriority(inputBytes, maxOutputTokens)

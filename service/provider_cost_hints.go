@@ -88,7 +88,7 @@ func ResolveProviderCostHints() (*ProviderCostHints, error) {
 		if err != nil {
 			return nil, err
 		}
-		credits, err := CalcCreditsFromBillable(new(big.Float).SetInt(billable), rate)
+		credits, err := CalcCreditsFromBillable(new(big.Float).SetRat(billable), rate)
 		if err != nil {
 			return nil, err
 		}
