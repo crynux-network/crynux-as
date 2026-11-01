@@ -16,6 +16,12 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 	cfg := config.GetConfig()
 	tried := map[uint]struct{}{sharedAPIKeyID: {}}
 	currentKeyID := sharedAPIKeyID
+	heldKeyID := sharedAPIKeyID
+	defer func() {
+		if heldKeyID != 0 {
+			GetProviderKeySlots().Release(heldKeyID)
+		}
+	}()
 	attempts := 0
 
 	for {
@@ -110,7 +116,8 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 			if err := RecordSharedAPIKeyUnavailable(ctx, db, currentKeyID); err != nil {
 				log.Errorf("provider job %d record unavailable key %d: %v", jobID, currentKeyID, err)
 			}
-			GetProviderKeySlots().Release(currentKeyID)
+			GetProviderKeySlots().Release(heldKeyID)
+			heldKeyID = 0
 			keys, err := ListEligibleSharedAPIKeys(ctx, db, job.ExecutionSource.ServiceProvider())
 			if err != nil {
 				_ = FailProviderTaskJob(ctx, db, jobID, &currentKeyID, "failed to list keys for switch")
@@ -121,6 +128,7 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 				_ = FailProviderTaskJob(ctx, db, jobID, &currentKeyID, result.ErrorMessage)
 				return
 			}
+			heldKeyID = next.ID
 			tried[next.ID] = struct{}{}
 			currentKeyID = next.ID
 			continue

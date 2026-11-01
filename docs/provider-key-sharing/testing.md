@@ -216,6 +216,7 @@ Tests MUST cover:
 Tests MUST cover:
 
 * definitely unaccepted failure switches keys inside the same goroutine without persisting intermediate Key failures;
+* in-worker key switch releases the old process-local slot and the job's final release targets only the currently held key;
 * one job never selects the same failed Key twice;
 * accepted or uncertain request is not retried;
 * the final call record stores the last Shared API Key used;

@@ -135,7 +135,6 @@ func claimAndStartProviderJobs(intakeCtx, providerJobCtx context.Context, db *go
 		active.Add(1)
 		go func(jobID, sharedAPIKeyID uint) {
 			defer active.Done()
-			defer slots.Release(sharedAPIKeyID)
 			RunProviderJob(providerJobCtx, db, jobID, sharedAPIKeyID)
 		}(job.ID, keyID)
 	}
