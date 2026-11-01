@@ -91,59 +91,68 @@ func releaseCreditsHoldTx(tx *gorm.DB, job *models.TaskJob) error {
 }
 
 type heldLockRow struct {
-	UserID        uint
 	CreditsLocked models.BigInt
+}
+
+// sumHeldCreditsLockedTx returns the sum of credits_locked for held jobs of userID.
+// Callers MUST hold the credit_accounts row lock for userID in tx.
+func sumHeldCreditsLockedTx(tx *gorm.DB, userID uint) (*big.Int, error) {
+	var rows []heldLockRow
+	if err := tx.Model(&models.TaskJob{}).
+		Select("credits_locked").
+		Where("user_id = ? AND credits_lock_status = ?", userID, models.TaskJobCreditsLockHeld).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	sum := big.NewInt(0)
+	for _, row := range rows {
+		sum.Add(sum, &row.CreditsLocked.Int)
+	}
+	return sum, nil
 }
 
 // ReconcileCreditsLocked sets each credit_accounts.locked to the sum of held
 // task_jobs.credits_locked for that user when they differ, and logs an error.
+// The held sum is computed inside the same transaction after locking the account
+// so concurrent reserve and release cannot be overwritten by a stale snapshot.
 func ReconcileCreditsLocked(ctx context.Context, db *gorm.DB) (int, error) {
 	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	var rows []heldLockRow
+	var heldUserIDs []uint
 	if err := db.WithContext(dbCtx).Model(&models.TaskJob{}).
-		Select("user_id", "credits_locked").
 		Where("credits_lock_status = ?", models.TaskJobCreditsLockHeld).
-		Find(&rows).Error; err != nil {
+		Distinct("user_id").
+		Pluck("user_id", &heldUserIDs).Error; err != nil {
 		return 0, err
 	}
 
-	heldByUser := make(map[uint]*big.Int)
-	for _, row := range rows {
-		sum := heldByUser[row.UserID]
-		if sum == nil {
-			sum = big.NewInt(0)
-			heldByUser[row.UserID] = sum
-		}
-		sum.Add(sum, &row.CreditsLocked.Int)
-	}
-
-	var accounts []models.CreditAccount
-	if err := db.WithContext(dbCtx).
+	var lockedUserIDs []uint
+	if err := db.WithContext(dbCtx).Model(&models.CreditAccount{}).
 		Where("locked != ?", "0").
-		Find(&accounts).Error; err != nil {
+		Pluck("user_id", &lockedUserIDs).Error; err != nil {
 		return 0, err
 	}
-	userIDs := make(map[uint]struct{}, len(heldByUser)+len(accounts))
-	for userID := range heldByUser {
+
+	userIDs := make(map[uint]struct{}, len(heldUserIDs)+len(lockedUserIDs))
+	for _, userID := range heldUserIDs {
 		userIDs[userID] = struct{}{}
 	}
-	for _, account := range accounts {
-		userIDs[account.UserID] = struct{}{}
+	for _, userID := range lockedUserIDs {
+		userIDs[userID] = struct{}{}
 	}
 
 	corrected := 0
 	for userID := range userIDs {
-		expected := heldByUser[userID]
-		if expected == nil {
-			expected = big.NewInt(0)
-		}
 		err := db.WithContext(dbCtx).Transaction(func(tx *gorm.DB) error {
 			var account models.CreditAccount
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 				Where("user_id = ?", userID).
 				First(&account).Error; err != nil {
+				return err
+			}
+			expected, err := sumHeldCreditsLockedTx(tx, userID)
+			if err != nil {
 				return err
 			}
 			if account.Locked.Cmp(expected) == 0 {

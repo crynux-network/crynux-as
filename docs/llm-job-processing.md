@@ -75,7 +75,7 @@ The destructive task-schema migration MUST reject any negative `credit_accounts.
 
 `credit_accounts.locked` MUST be a non-negative Credits amount reserved by in-flight jobs. Pre-lock and unlock MUST change only `locked`. `balance` MUST change only through processed ledger events. Available Credits MUST be `balance - locked`. The account API MUST return `balance`, `locked`, and `available`.
 
-A reconciler MUST periodically compare `credit_accounts.locked` with the sum of `task_jobs.credits_locked` where `credits_lock_status = held` for the same user. When they differ, the reconciler MUST set `locked` to that sum and MUST emit an error log.
+A reconciler MUST periodically correct `credit_accounts.locked` to the sum of `task_jobs.credits_locked` where `credits_lock_status = held` for the same user. For each account, the reconciler MUST lock that account row with `SELECT ... FOR UPDATE`, compute the held-job sum in the same transaction after that lock, set `locked` to that sum when they differ, and MUST emit an error log.
 
 ## Request Processing Flow
 

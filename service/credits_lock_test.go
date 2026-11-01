@@ -392,6 +392,88 @@ func TestReconcileCreditsLockedCorrectsMismatch(t *testing.T) {
 	}
 }
 
+func TestReconcileCreditsLockedSumsHeldJobsAfterAccountLock(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+
+	user := models.User{Address: "0xreconfresh"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CreditAccount{
+		UserID: user.ID, Balance: models.BigInt{Int: *big.NewInt(1000)},
+		Locked: models.BigInt{Int: *big.NewInt(0)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	held := models.TaskJob{
+		ProjectID: 1, UserID: user.ID, Model: "m",
+		APIType: models.TaskAPITypeChatCompletions, TaskArgsJSON: "{}",
+		PriorityGwei:      models.BigInt{Int: *big.NewInt(1)},
+		BillingData:       `{"version":1,"priority_gwei":"1","billed_vram":8,"task_fee_wei":"0","llm":{"vram_weight":1,"constant_seconds":0,"seconds_per_input_token":0,"seconds_per_output_token":0,"credits_per_gwei":"1"}}`,
+		CreditsLocked:     models.BigInt{Int: *big.NewInt(70)},
+		CreditsLockStatus: models.TaskJobCreditsLockHeld,
+	}
+	released := models.TaskJob{
+		ProjectID: 1, UserID: user.ID, Model: "m",
+		APIType: models.TaskAPITypeChatCompletions, TaskArgsJSON: "{}",
+		PriorityGwei:      models.BigInt{Int: *big.NewInt(1)},
+		BillingData:       `{"version":1,"priority_gwei":"1","billed_vram":8,"task_fee_wei":"0","llm":{"vram_weight":1,"constant_seconds":0,"seconds_per_input_token":0,"seconds_per_output_token":0,"credits_per_gwei":"1"}}`,
+		CreditsLocked:     models.BigInt{Int: *big.NewInt(30)},
+		CreditsLockStatus: models.TaskJobCreditsLockReleased,
+	}
+	if err := db.Create(&held).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&released).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	corrected, err := ReconcileCreditsLocked(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if corrected != 1 {
+		t.Fatalf("corrected=%d", corrected)
+	}
+	var account models.CreditAccount
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.Locked.Cmp(big.NewInt(70)) != 0 {
+		t.Fatalf("locked=%s, want 70 from held jobs only", account.Locked.String())
+	}
+
+	if err := db.Model(&models.TaskJob{}).Where("id = ?", held.ID).
+		Update("credits_lock_status", models.TaskJobCreditsLockReleased).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.TaskJob{
+		ProjectID: 1, UserID: user.ID, Model: "m",
+		APIType: models.TaskAPITypeChatCompletions, TaskArgsJSON: "{}",
+		PriorityGwei:      models.BigInt{Int: *big.NewInt(1)},
+		BillingData:       `{"version":1,"priority_gwei":"1","billed_vram":8,"task_fee_wei":"0","llm":{"vram_weight":1,"constant_seconds":0,"seconds_per_input_token":0,"seconds_per_output_token":0,"credits_per_gwei":"1"}}`,
+		CreditsLocked:     models.BigInt{Int: *big.NewInt(25)},
+		CreditsLockStatus: models.TaskJobCreditsLockHeld,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	corrected, err = ReconcileCreditsLocked(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if corrected != 1 {
+		t.Fatalf("second corrected=%d", corrected)
+	}
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.Locked.Cmp(big.NewInt(25)) != 0 {
+		t.Fatalf("locked=%s, want current held sum 25", account.Locked.String())
+	}
+}
+
 func TestReserveTransactionFailureLeavesLockedUnchanged(t *testing.T) {
 	db := setupUsageStatsTestDB(t)
 	ctx := context.Background()
