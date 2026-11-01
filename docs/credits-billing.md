@@ -213,7 +213,7 @@ After coefficients and configuration values are validated as usable non-negative
 
 Precheck token inputs:
 
-1. Prompt token estimate: UTF-8 rune count of the request prompt or chat message text content, divided by 4 and rounded up. A non-empty text whose estimate would be zero MUST use `1`.
+1. Prompt token estimate: UTF-8 rune count of the request prompt, chat message text content, or Responses `instructions` and `input` text content, divided by 4 and rounded up. A non-empty text whose estimate would be zero MUST use `1`.
 2. Completion token estimate: `max_completion_tokens` if present and positive; otherwise `max_tokens` if present and positive; otherwise `llm.default_max_tokens`.
 
 ## Settle After Bridge Response

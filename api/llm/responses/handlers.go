@@ -121,7 +121,7 @@ func CreateResponse(c *gin.Context) {
 		return
 	}
 
-	estPrompt := estimatePromptTokensFromResponsesBody(body)
+	estPrompt := service.EstimatePromptTokensFromResponsesBody(body)
 	maxCompletion := service.ResolveMaxCompletionTokens(nil, req.MaxOutputTokens, appCfg.LLM.DefaultMaxTokens)
 	priorityGwei, err := service.ResolveEffectivePriorityGwei(project)
 	if err != nil {
@@ -378,21 +378,6 @@ func responsesObjectParamsFromJob(job *models.TaskJob) llmadapter.ResponsesObjec
 		}
 	}
 	return params
-}
-
-func estimatePromptTokensFromResponsesBody(body []byte) uint64 {
-	req, err := llmadapter.ParseResponsesRequest(body)
-	if err != nil {
-		return 1
-	}
-	promptBody, err := json.Marshal(map[string]any{
-		"instructions": req.Instructions,
-		"input":        req.Input,
-	})
-	if err != nil {
-		return 1
-	}
-	return service.EstimatePromptTokensFromChatBody(promptBody)
 }
 
 func float64Ptr(v float64) *float64 {

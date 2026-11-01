@@ -58,6 +58,22 @@ func EstimatePromptTokensFromCompletionsBody(body []byte) uint64 {
 	return runeCountToTokens(promptRuneCount(req.Prompt))
 }
 
+// EstimatePromptTokensFromResponsesBody estimates prompt tokens from a Responses JSON body
+// as ceil(rune_count / 4) over instructions and input text, or 1 when the text is non-empty
+// and the estimate would be 0.
+func EstimatePromptTokensFromResponsesBody(body []byte) uint64 {
+	var req struct {
+		Instructions string          `json:"instructions"`
+		Input        json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return 1
+	}
+	runes := utf8.RuneCountInString(req.Instructions)
+	runes += responsesInputRuneCount(req.Input)
+	return runeCountToTokens(runes)
+}
+
 func runeCountToTokens(runes int) uint64 {
 	if runes <= 0 {
 		return 0
@@ -104,6 +120,33 @@ func promptRuneCount(raw json.RawMessage) int {
 		n := 0
 		for _, t := range texts {
 			n += utf8.RuneCountInString(t)
+		}
+		return n
+	}
+	return utf8.RuneCount(raw)
+}
+
+func responsesInputRuneCount(raw json.RawMessage) int {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return utf8.RuneCountInString(text)
+	}
+	var items []struct {
+		Content   json.RawMessage `json:"content"`
+		Name      string          `json:"name"`
+		Arguments string          `json:"arguments"`
+		Output    string          `json:"output"`
+	}
+	if err := json.Unmarshal(raw, &items); err == nil {
+		n := 0
+		for _, item := range items {
+			n += contentRuneCount(item.Content)
+			n += utf8.RuneCountInString(item.Name)
+			n += utf8.RuneCountInString(item.Arguments)
+			n += utf8.RuneCountInString(item.Output)
 		}
 		return n
 	}

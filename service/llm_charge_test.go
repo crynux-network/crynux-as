@@ -6,6 +6,48 @@ import (
 	"testing"
 )
 
+func TestEstimatePromptTokensFromResponsesBody(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want uint64
+	}{
+		{
+			name: "string input and instructions",
+			body: `{"instructions":"abcd","input":"efgh"}`,
+			want: 2, // 8 runes / 4
+		},
+		{
+			name: "message items with text content",
+			body: `{"instructions":"abcd","input":[{"type":"message","role":"user","content":"efghijkl"}]}`,
+			want: 3, // 12 runes / 4
+		},
+		{
+			name: "content parts and function call fields",
+			body: `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"abcd"}]},{"type":"function_call","name":"ef","arguments":"gh"},{"type":"function_call_output","output":"ij"}]}`,
+			want: 3, // 10 runes / 4 => 3
+		},
+		{
+			name: "invalid json",
+			body: `{`,
+			want: 1,
+		},
+		{
+			name: "empty input fields",
+			body: `{"model":"m"}`,
+			want: 0,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := EstimatePromptTokensFromResponsesBody([]byte(tc.body))
+			if got != tc.want {
+				t.Fatalf("EstimatePromptTokensFromResponsesBody = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCalcCredits(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
