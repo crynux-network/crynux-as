@@ -256,26 +256,43 @@ func FailProviderTaskJob(ctx context.Context, db *gorm.DB, jobID uint, sharedAPI
 }
 
 func FailPriorProcessProviderJobs(ctx context.Context, db *gorm.DB) error {
-	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	var ids []uint
-	if err := db.WithContext(dbCtx).Model(&models.TaskJob{}).
-		Where("execution_source IN ? AND status IN ?",
-			[]models.ExecutionSource{models.ExecutionSourceOpenAI, models.ExecutionSourceAnthropic, models.ExecutionSourceGoogle},
-			[]models.TaskJobStatus{models.TaskJobStatusSubmitted, models.TaskJobStatusInProgress},
-		).
-		Order("id ASC").
-		Limit(1000).
-		Pluck("id", &ids).Error; err != nil {
-		return err
+	const batchSize = 1000
+	sources := []models.ExecutionSource{
+		models.ExecutionSourceOpenAI,
+		models.ExecutionSourceAnthropic,
+		models.ExecutionSourceGoogle,
 	}
-	for _, id := range ids {
-		if err := FailProviderTaskJob(ctx, db, id, nil, "provider job interrupted by process restart"); err != nil {
-			log.Errorf("fail prior provider job %d: %v", id, err)
+	for {
+		dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		var ids []uint
+		err := db.WithContext(dbCtx).Model(&models.TaskJob{}).
+			Where(
+				"execution_source IN ? AND (status IN ? OR (status = ? AND phase = ?))",
+				sources,
+				[]models.TaskJobStatus{models.TaskJobStatusSubmitted, models.TaskJobStatusInProgress},
+				models.TaskJobStatusPendingSubmit,
+				"admitting",
+			).
+			Order("id ASC").
+			Limit(batchSize).
+			Pluck("id", &ids).Error
+		cancel()
+		if err != nil {
 			return err
 		}
+		if len(ids) == 0 {
+			return nil
+		}
+		for _, id := range ids {
+			if err := FailProviderTaskJob(ctx, db, id, nil, "provider job interrupted by process restart"); err != nil {
+				log.Errorf("fail prior provider job %d: %v", id, err)
+				return err
+			}
+		}
+		if len(ids) < batchSize {
+			return nil
+		}
 	}
-	return nil
 }
 
 func ResolveProviderQueueTimeout(requestTimeout *uint64) uint64 {

@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/provider"
@@ -103,6 +104,10 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 		if err := db.Model(job).Update("phase", "queued").Error; err != nil {
 			service.GetProviderStreamRegistry().Unregister(job.ID)
 			log.Errorf("publish streaming provider job failed: %v", err)
+			failCtx := context.WithoutCancel(c.Request.Context())
+			if failErr := service.FailProviderTaskJob(failCtx, db, job.ID, nil, "failed to publish streaming provider job"); failErr != nil {
+				log.Errorf("fail streaming provider job %d after publish failure: %v", job.ID, failErr)
+			}
 			writeServerError(c)
 			return
 		}

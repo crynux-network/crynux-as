@@ -24,13 +24,14 @@ The request path MUST run these steps in order:
 5. resolve effective Cost Level;
 6. create the immutable billing estimate and pricing snapshot;
 7. estimate the maximum charge;
-8. generate the stable public job ID and register its bounded live-stream subscriber when the request is streaming;
+8. generate the stable public job ID when required by the API type;
 9. lock `credit_accounts` with `SELECT ... FOR UPDATE`;
 10. require `balance - locked >= estimated_credits`;
-11. increase `locked` and insert the job in one transaction;
-12. wait, return a background Responses object, or expose retained polling according to API type.
+11. increase `locked` and insert the job in one transaction, using `phase = admitting` when the request is streaming and `phase = queued` otherwise;
+12. for a streaming request, register the bounded live-stream subscriber, then update the job to `phase = queued`;
+13. wait, return a background Responses object, or expose retained polling according to API type.
 
-The streaming subscriber MUST be registered before the job row becomes visible to the Provider scheduler. A failed admission transaction MUST unregister it. This ordering MUST prevent a Provider goroutine from publishing the first event before the requesting handler can receive it.
+The streaming subscriber MUST be registered before the job becomes visible to the Provider scheduler as `queued`. If the publish update to `queued` fails, AS MUST unregister the subscriber, fail the job without consumer charge, and release its Credits hold. This ordering MUST prevent a Provider goroutine from publishing the first event before the requesting handler can receive it.
 
 Provider job creation MUST persist:
 
@@ -237,6 +238,8 @@ On startup:
 
 * queued Provider jobs MUST remain eligible for normal scheduling;
 * submitted or in-progress Provider jobs from the prior process MUST fail without consumer charge and release their Credits holds;
+* `pending_submit` Provider jobs with `phase = admitting` from the prior process MUST fail without consumer charge and release their Credits holds;
+* startup recovery MUST load matching jobs in bounded batches and MUST continue until a batch is empty;
 * Credits holds MUST be reconciled through the existing hold reconciler.
 
 Startup handling MUST NOT resubmit an upstream request from a prior process.

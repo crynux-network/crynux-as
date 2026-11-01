@@ -142,7 +142,7 @@ Crynux Bridge jobs MUST retain their current completion-first simulated SSE beha
 * A downstream disconnect MUST NOT change job state or settlement.
 * When the Service Provider completes the request, settlement MUST complete as a completed job with a success call record. API Consumer disconnect and public-delivery outcome MUST NOT cancel that settlement.
 * A successful upstream response without verifiable final usage MUST fail settlement and enter operator investigation.
-* A process restart MUST close every active downstream stream. Submitted or in-progress Provider jobs from the prior process MUST fail without consumer charge and MUST NOT be resubmitted.
+* A process restart MUST close every active downstream stream. Submitted or in-progress Provider jobs, and `pending_submit` Provider jobs with `phase = admitting`, from the prior process MUST fail without consumer charge and MUST NOT be resubmitted.
 
 ## Startup Order
 
@@ -156,7 +156,7 @@ AS MUST initialize Provider Key Sharing in this order:
 6. initialize blockchain clients and existing external clients;
 7. initialize Service Provider adapters;
 8. validate and remove the encryption-key file;
-9. fail submitted or in-progress Provider jobs from the prior process and recover Credits holds;
+9. fail submitted or in-progress Provider jobs, and `pending_submit` Provider jobs with `phase = admitting`, from the prior process until no matching rows remain, and recover Credits holds;
 10. start existing blockchain and usage workers;
 11. refresh existing Crynux model and queue caches;
 12. start Bridge poller, Provider scheduler, and the existing Credits-lock reconciler;

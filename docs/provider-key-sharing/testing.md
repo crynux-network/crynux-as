@@ -207,6 +207,9 @@ Tests MUST cover:
 * missing usage creates no automatic earning;
 * repeated settle creates no duplicate records or events;
 * submitted or in-progress Provider jobs from a prior process fail and release their Credits holds without resubmit;
+* `pending_submit` Provider jobs with `phase = admitting` from a prior process fail and release their Credits holds without resubmit;
+* `FailPriorProcessProviderJobs` continues until no matching rows remain;
+* a failed publish from `admitting` to `queued` fails the job, unregisters the subscriber, and releases the Credits hold;
 * process-local slot counts start empty after restart.
 
 ## Graceful Shutdown Tests
@@ -220,7 +223,7 @@ Tests MUST cover:
 * active Provider `Execute` continues after intake cancellation and settles confirmed usage;
 * confirmed usage still settles when the downstream subscriber has disconnected;
 * hard timeout detaches remaining stream subscribers and cancels remaining Provider job contexts;
-* hard-timeout leftovers that remain submitted or in progress fail on the next startup through `FailPriorProcessProviderJobs` without upstream resubmit;
+* hard-timeout leftovers that remain submitted or in progress, and abandoned `admitting` streaming jobs, fail on the next startup through `FailPriorProcessProviderJobs` without upstream resubmit;
 * `provider.shutdown_timeout_seconds` is the shutdown deadline used by the process.
 
 ## Settlement Tests
