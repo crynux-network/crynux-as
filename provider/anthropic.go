@@ -15,15 +15,17 @@ import (
 )
 
 type AnthropicAdapter struct {
-	baseURL string
-	client  *http.Client
-	cfg     config.ProviderServiceConfig
+	baseURL          string
+	client           *http.Client
+	cfg              config.ProviderServiceConfig
+	defaultMaxTokens int
 }
 
-func NewAnthropicAdapter(cfg config.ProviderServiceConfig) *AnthropicAdapter {
+func NewAnthropicAdapter(cfg config.ProviderServiceConfig, defaultMaxTokens int) *AnthropicAdapter {
 	return &AnthropicAdapter{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		cfg:     cfg,
+		baseURL:          strings.TrimRight(cfg.BaseURL, "/"),
+		cfg:              cfg,
+		defaultMaxTokens: defaultMaxTokens,
 		client: &http.Client{
 			Timeout: time.Duration(cfg.RequestTimeoutSeconds) * time.Second,
 			Transport: &http.Transport{
@@ -59,7 +61,7 @@ func (a *AnthropicAdapter) ValidateCredential(ctx context.Context, secret []byte
 }
 
 func (a *AnthropicAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, tryIndex int, sink EventSink) (ExecuteResult, error) {
-	canonical, err := ParseCanonicalRequest(requestJSON, model, apiType)
+	canonical, err := ParseCanonicalRequest(requestJSON, model, apiType, a.defaultMaxTokens)
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
 	}

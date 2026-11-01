@@ -37,16 +37,16 @@ type CanonicalTool struct {
 	Parameters  map[string]any
 }
 
-func ParseCanonicalRequest(requestJSON []byte, model string, apiType models.TaskAPIType) (CanonicalRequest, error) {
+func ParseCanonicalRequest(requestJSON []byte, model string, apiType models.TaskAPIType, defaultMaxTokens int) (CanonicalRequest, error) {
 	switch apiType {
 	case models.TaskAPITypeResponses:
-		return parseResponsesAsCanonical(requestJSON, model)
+		return parseResponsesAsCanonical(requestJSON, model, defaultMaxTokens)
 	default:
-		return parseChatAsCanonical(requestJSON, model)
+		return parseChatAsCanonical(requestJSON, model, defaultMaxTokens)
 	}
 }
 
-func parseChatAsCanonical(requestJSON []byte, model string) (CanonicalRequest, error) {
+func parseChatAsCanonical(requestJSON []byte, model string, defaultMaxTokens int) (CanonicalRequest, error) {
 	var raw struct {
 		Messages            []json.RawMessage `json:"messages"`
 		Tools               []json.RawMessage `json:"tools"`
@@ -72,12 +72,12 @@ func parseChatAsCanonical(requestJSON []byte, model string) (CanonicalRequest, e
 		Stream:            raw.Stream,
 		ResponseFormat:    raw.ResponseFormat,
 		ParallelToolCalls: raw.ParallelToolCalls,
-		MaxTokens:         1024,
+		MaxTokens:         defaultMaxTokens,
 	}
-	if raw.MaxTokens != nil {
+	if raw.MaxTokens != nil && *raw.MaxTokens > 0 {
 		out.MaxTokens = *raw.MaxTokens
 	}
-	if raw.MaxCompletionTokens != nil {
+	if raw.MaxCompletionTokens != nil && *raw.MaxCompletionTokens > 0 {
 		out.MaxTokens = *raw.MaxCompletionTokens
 	}
 	for _, item := range raw.Messages {
@@ -161,7 +161,7 @@ func parseChatTool(raw json.RawMessage) (CanonicalTool, error) {
 	}, nil
 }
 
-func parseResponsesAsCanonical(requestJSON []byte, model string) (CanonicalRequest, error) {
+func parseResponsesAsCanonical(requestJSON []byte, model string, defaultMaxTokens int) (CanonicalRequest, error) {
 	var raw struct {
 		Input             any            `json:"input"`
 		Instructions      string         `json:"instructions"`
@@ -184,9 +184,9 @@ func parseResponsesAsCanonical(requestJSON []byte, model string) (CanonicalReque
 		TopP:              raw.TopP,
 		Stream:            raw.Stream,
 		ParallelToolCalls: raw.ParallelToolCalls,
-		MaxTokens:         1024,
+		MaxTokens:         defaultMaxTokens,
 	}
-	if raw.MaxOutputTokens != nil {
+	if raw.MaxOutputTokens != nil && *raw.MaxOutputTokens > 0 {
 		out.MaxTokens = *raw.MaxOutputTokens
 	}
 	if raw.Instructions != "" {

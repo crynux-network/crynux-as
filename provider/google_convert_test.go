@@ -20,7 +20,7 @@ func TestGoogleRequestConversionTools(t *testing.T) {
 		"stop":["END"],
 		"max_tokens":128
 	}`)
-	canonical, err := ParseCanonicalRequest(reqJSON, "gemini-test", models.TaskAPITypeChatCompletions)
+	canonical, err := ParseCanonicalRequest(reqJSON, "gemini-test", models.TaskAPITypeChatCompletions, 2048)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestGoogleNamedToolChoiceResponses(t *testing.T) {
 		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
 		"tool_choice":{"type":"function","name":"lookup"}
 	}`)
-	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeResponses)
+	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeResponses, 2048)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestGoogleToolsAndStructuredOutputRejected(t *testing.T) {
 		"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
 		"response_format":{"type":"json_object"}
 	}`)
-	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeChatCompletions)
+	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeChatCompletions, 2048)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestGoogleJSONSchemaWithoutTools(t *testing.T) {
 		"messages":[{"role":"user","content":"x"}],
 		"response_format":{"type":"json_schema","json_schema":{"name":"out","schema":{"type":"object","properties":{"a":{"type":"string"}}}}}
 	}`)
-	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeChatCompletions)
+	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeChatCompletions, 2048)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

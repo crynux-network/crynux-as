@@ -161,6 +161,8 @@ Each adapter MUST run against a local fake server and cover:
 * validation service unavailable;
 * non-streaming success;
 * streaming success;
+* omitted public max-token fields inject `llm.default_max_tokens` into OpenAI, Anthropic, and Google upstream bodies;
+* an explicit positive public max-token field overrides `llm.default_max_tokens` in those upstream bodies;
 * safety stop, max-token truncation, empty assistant content, and tool-only output as success;
 * tools and tool results;
 * tool definitions, every supported tool choice, tool-call history, and tool-result history for OpenAI, Anthropic, and Google;

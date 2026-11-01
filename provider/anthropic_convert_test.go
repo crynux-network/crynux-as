@@ -20,7 +20,7 @@ func TestAnthropicRequestConversionToolsAndSystem(t *testing.T) {
 		"response_format":{"type":"json_schema","json_schema":{"name":"out","schema":{"type":"object"},"strict":true}},
 		"max_tokens":200
 	}`)
-	canonical, err := ParseCanonicalRequest(reqJSON, "claude-test", models.TaskAPITypeChatCompletions)
+	canonical, err := ParseCanonicalRequest(reqJSON, "claude-test", models.TaskAPITypeChatCompletions, 2048)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestAnthropicNamedToolChoiceChatAndResponses(t *testing.T) {
 		"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
 		"tool_choice":{"type":"function","function":{"name":"lookup"}}
 	}`)
-	chatCanon, err := ParseCanonicalRequest(chatJSON, "m", models.TaskAPITypeChatCompletions)
+	chatCanon, err := ParseCanonicalRequest(chatJSON, "m", models.TaskAPITypeChatCompletions, 2048)
 	if err != nil {
 		t.Fatalf("chat parse: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestAnthropicNamedToolChoiceChatAndResponses(t *testing.T) {
 		"tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],
 		"tool_choice":{"type":"function","name":"lookup"}
 	}`)
-	respCanon, err := ParseCanonicalRequest(respJSON, "m", models.TaskAPITypeResponses)
+	respCanon, err := ParseCanonicalRequest(respJSON, "m", models.TaskAPITypeResponses, 2048)
 	if err != nil {
 		t.Fatalf("responses parse: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestAnthropicJSONObjectAndParallelAndNone(t *testing.T) {
 		"parallel_tool_calls":false,
 		"response_format":{"type":"json_object"}
 	}`)
-	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeChatCompletions)
+	canonical, err := ParseCanonicalRequest(reqJSON, "m", models.TaskAPITypeChatCompletions, 2048)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestAnthropicJSONObjectAndParallelAndNone(t *testing.T) {
 		"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}],
 		"parallel_tool_calls":false
 	}`)
-	autoCanon, _ := ParseCanonicalRequest(autoJSON, "m", models.TaskAPITypeChatCompletions)
+	autoCanon, _ := ParseCanonicalRequest(autoJSON, "m", models.TaskAPITypeChatCompletions, 2048)
 	autoNative, err := convertCanonicalToAnthropic(autoCanon)
 	if err != nil {
 		t.Fatalf("auto convert: %v", err)

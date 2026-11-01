@@ -12,15 +12,16 @@ type Registry struct {
 
 func NewRegistry(cfg *config.AppConfig) (*Registry, error) {
 	adapters := make(map[models.ServiceProvider]Adapter)
+	defaultMaxTokens := int(cfg.LLM.DefaultMaxTokens)
 	for serviceID, svc := range cfg.Provider.Services {
 		provider := models.ServiceProvider(serviceID)
 		switch provider {
 		case models.ServiceProviderOpenAI:
-			adapters[provider] = NewOpenAIAdapter(svc)
+			adapters[provider] = NewOpenAIAdapter(svc, defaultMaxTokens)
 		case models.ServiceProviderAnthropic:
-			adapters[provider] = NewAnthropicAdapter(svc)
+			adapters[provider] = NewAnthropicAdapter(svc, defaultMaxTokens)
 		case models.ServiceProviderGoogle:
-			adapters[provider] = NewGoogleAdapter(svc)
+			adapters[provider] = NewGoogleAdapter(svc, defaultMaxTokens)
 		default:
 			return nil, fmt.Errorf("unknown service provider %s", serviceID)
 		}

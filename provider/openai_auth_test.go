@@ -16,7 +16,7 @@ func TestOpenAIAdapterTransportErrorOmitsSecret(t *testing.T) {
 		RequestTimeoutSeconds:              1,
 		ResponseHeaderTimeoutSeconds:       1,
 		CredentialValidationTimeoutSeconds: 1,
-	})
+	}, 2048)
 
 	result, err := adapter.ValidateCredential(context.Background(), []byte(secret))
 	if err != nil {
@@ -56,7 +56,7 @@ func TestOpenAIAdapterClientTimeoutOmitsSecret(t *testing.T) {
 		RequestTimeoutSeconds:              0,
 		ResponseHeaderTimeoutSeconds:       0,
 		CredentialValidationTimeoutSeconds: 1,
-	})
+	}, 2048)
 	adapter.client.Timeout = 50 * time.Millisecond
 
 	exec, err := adapter.Execute(

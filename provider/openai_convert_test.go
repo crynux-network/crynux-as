@@ -22,7 +22,7 @@ func TestConvertCanonicalToOpenAIChatFromResponses(t *testing.T) {
 		"tools":[{"type":"function","name":"lookup","description":"d","parameters":{"type":"object"}}],
 		"tool_choice":{"type":"function","name":"lookup"}
 	}`)
-	canonical, err := ParseCanonicalRequest(reqJSON, "gpt-test", models.TaskAPITypeResponses)
+	canonical, err := ParseCanonicalRequest(reqJSON, "gpt-test", models.TaskAPITypeResponses, 2048)
 	if err != nil {
 		t.Fatalf("canonical: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestOpenAIExecuteResponsesUsesChatCompletions(t *testing.T) {
 		RequestTimeoutSeconds:              5,
 		ResponseHeaderTimeoutSeconds:       5,
 		CredentialValidationTimeoutSeconds: 5,
-	})
+	}, 2048)
 	result, err := adapter.Execute(
 		context.Background(),
 		[]byte("sk-test"),
@@ -97,6 +97,9 @@ func TestOpenAIExecuteResponsesUsesChatCompletions(t *testing.T) {
 	}
 	if _, ok := gotBody["previous_response_id"]; ok {
 		t.Fatalf("upstream body leaked previous_response_id: %v", gotBody)
+	}
+	if gotBody["max_completion_tokens"].(float64) != 2048 {
+		t.Fatalf("max_completion_tokens=%v want 2048", gotBody["max_completion_tokens"])
 	}
 	if result.Acceptance != AcceptanceAcceptedBillable {
 		t.Fatalf("acceptance=%s msg=%s", result.Acceptance, result.ErrorMessage)

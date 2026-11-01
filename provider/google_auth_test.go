@@ -46,7 +46,7 @@ func TestGoogleAdapterSendsAPIKeyInHeader(t *testing.T) {
 		RequestTimeoutSeconds:              5,
 		ResponseHeaderTimeoutSeconds:       5,
 		CredentialValidationTimeoutSeconds: 5,
-	})
+	}, 2048)
 	result, err := adapter.ValidateCredential(context.Background(), []byte(secret))
 	if err != nil {
 		t.Fatalf("ValidateCredential error: %v", err)
@@ -85,7 +85,7 @@ func TestGoogleAdapterTransportErrorOmitsSecret(t *testing.T) {
 		RequestTimeoutSeconds:              1,
 		ResponseHeaderTimeoutSeconds:       1,
 		CredentialValidationTimeoutSeconds: 1,
-	})
+	}, 2048)
 
 	result, err := adapter.ValidateCredential(context.Background(), []byte(secret))
 	if err != nil {
@@ -137,7 +137,7 @@ func TestGoogleAdapterClientTimeoutOmitsSecret(t *testing.T) {
 		RequestTimeoutSeconds:              0,
 		ResponseHeaderTimeoutSeconds:       0,
 		CredentialValidationTimeoutSeconds: 1,
-	})
+	}, 2048)
 	adapter.client.Timeout = 50 * time.Millisecond
 
 	exec, err := adapter.Execute(

@@ -15,16 +15,18 @@ import (
 )
 
 type OpenAIAdapter struct {
-	baseURL string
-	client  *http.Client
-	cfg     config.ProviderServiceConfig
+	baseURL          string
+	client           *http.Client
+	cfg              config.ProviderServiceConfig
+	defaultMaxTokens int
 }
 
-func NewOpenAIAdapter(cfg config.ProviderServiceConfig) *OpenAIAdapter {
+func NewOpenAIAdapter(cfg config.ProviderServiceConfig, defaultMaxTokens int) *OpenAIAdapter {
 	timeout := time.Duration(cfg.RequestTimeoutSeconds) * time.Second
 	return &OpenAIAdapter{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		cfg:     cfg,
+		baseURL:          strings.TrimRight(cfg.BaseURL, "/"),
+		cfg:              cfg,
+		defaultMaxTokens: defaultMaxTokens,
 		client: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
@@ -69,7 +71,7 @@ func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 			ErrorMessage:    "unsupported api type for openai adapter",
 		}, nil
 	}
-	canonical, err := ParseCanonicalRequest(requestJSON, model, apiType)
+	canonical, err := ParseCanonicalRequest(requestJSON, model, apiType, a.defaultMaxTokens)
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
 	}

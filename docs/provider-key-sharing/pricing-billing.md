@@ -113,6 +113,8 @@ For generated usage:
 * otherwise use `llm.default_max_tokens`;
 * apply the greatest configured weight among output, reasoning, and other generated-token components.
 
+The same resolved maximum generated-token value MUST be written into the upstream Provider request body for OpenAI, Anthropic, and Google. When the public request omits a positive maximum output token field, adapters MUST inject `llm.default_max_tokens` rather than leaving the upstream limit unset or using a separate hardcoded default.
+
 For input categories not known before execution:
 
 * apply the greatest configured weight among ordinary input, cached input, cache write, tool-use prompt, and other input-token components.

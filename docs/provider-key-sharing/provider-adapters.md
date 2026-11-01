@@ -117,6 +117,15 @@ A `response_invalid` result MUST NOT include confirmed final usage. If usage can
 
 Only definitely unaccepted key-specific failures may be considered for an automatic in-worker Key switch.
 
+## Maximum Output Tokens
+
+When converting a public request into an upstream Provider body, adapters MUST resolve the maximum generated-token limit with the same rules used for Credits admission:
+
+* use the request's positive `max_completion_tokens`, `max_tokens`, or `max_output_tokens` field;
+* otherwise use `llm.default_max_tokens`.
+
+OpenAI upstream bodies MUST carry that value as `max_completion_tokens`. Anthropic upstream bodies MUST carry it as `max_tokens`. Google upstream bodies MUST carry it as `generationConfig.maxOutputTokens`. Adapters MUST NOT use a separate hardcoded default that differs from `llm.default_max_tokens`.
+
 ## OpenAI Adapter
 
 The OpenAI adapter MUST call OpenAI Chat Completions for both public Chat Completions and public Responses requests. It MUST NOT call OpenAI Responses.
