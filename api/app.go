@@ -24,6 +24,7 @@ func GetHttpApplication(appConfig *config.AppConfig) *gin.Engine {
 	gin.SetMode(appConfig.Environment)
 
 	engine := gin.New()
+	engine.Use(LimitRequestBody(appConfig.Http.MaxBodyBytes))
 	engine.Use(cors.New(cors.Config{
 		AllowAllOrigins:  true,
 		AllowCredentials: true,

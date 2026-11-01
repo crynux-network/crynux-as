@@ -47,8 +47,7 @@ type imageArgsForPricing struct {
 func CreateTask(c *gin.Context) {
 	project := llm.GetProject(c)
 	var request CreateTaskRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &request) {
 		return
 	}
 	prepared, err := prepareTask(c.Request.Context(), project, request)
@@ -73,8 +72,7 @@ func CreateTask(c *gin.Context) {
 func BatchCreate(c *gin.Context) {
 	project := llm.GetProject(c)
 	var request BatchCreateRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &request) {
 		return
 	}
 	if len(request.Tasks) == 0 || len(request.Tasks) > maxBatchSize {
@@ -143,8 +141,7 @@ func AbortTask(c *gin.Context) {
 func BatchAbort(c *gin.Context) {
 	project := llm.GetProject(c)
 	var request BatchAbortRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &request) {
 		return
 	}
 	if len(request.ClientTaskIDs) == 0 || len(request.ClientTaskIDs) > maxBatchSize {
@@ -171,8 +168,7 @@ func BatchAbort(c *gin.Context) {
 func BatchStatus(c *gin.Context) {
 	project := llm.GetProject(c)
 	var request BatchStatusRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+	if !bindJSON(c, &request) {
 		return
 	}
 	if len(request.ClientTaskIDs) == 0 || len(request.ClientTaskIDs) > maxBatchSize {
@@ -508,6 +504,19 @@ func recordFailure(ctx context.Context, project *models.Project, model string, b
 
 func writeError(c *gin.Context, status int, message string) {
 	c.JSON(status, gin.H{"error": gin.H{"message": message, "type": "invalid_request_error"}})
+}
+
+func bindJSON(c *gin.Context, dest any) bool {
+	if err := c.ShouldBindJSON(dest); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(c, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
+		writeError(c, http.StatusBadRequest, "invalid request body")
+		return false
+	}
+	return true
 }
 
 func writeAbortError(c *gin.Context, err error) {

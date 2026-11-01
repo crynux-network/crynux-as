@@ -35,7 +35,7 @@ func ImagesGenerations(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, "", 0, acceptedAt, time.Now(), nil, nil)
-		writeClientError(c, http.StatusBadRequest, "failed to read request body")
+		writeRequestBodyReadError(c, err)
 		return
 	}
 
@@ -204,6 +204,11 @@ func ImagesEdits(c *gin.Context) {
 	req, modelHint, err := parseImagesEditsRequest(c)
 	if err != nil {
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, modelHint, 0, acceptedAt, time.Now(), nil, nil)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeRequestBodyReadError(c, err)
+			return
+		}
 		writeLLMAdapterError(c, err)
 		return
 	}
@@ -364,6 +369,10 @@ func parseImagesEditsRequest(c *gin.Context) (llmadapter.ImagesEditsRequest, str
 	switch {
 	case strings.HasPrefix(contentType, "multipart/form-data"):
 		if err := c.Request.ParseMultipartForm(8 << 20); err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				return llmadapter.ImagesEditsRequest{}, "", err
+			}
 			return llmadapter.ImagesEditsRequest{}, "", llmadapter.NewValidationError("", "invalid multipart form")
 		}
 		req, err := llmadapter.ParseImagesEditsMultipartRequest(c.Request.MultipartForm)
@@ -380,6 +389,10 @@ func parseImagesEditsRequest(c *gin.Context) (llmadapter.ImagesEditsRequest, str
 	case contentType == "" || strings.HasPrefix(contentType, "application/json"):
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				return llmadapter.ImagesEditsRequest{}, "", err
+			}
 			return llmadapter.ImagesEditsRequest{}, "", llmadapter.NewValidationError("", "failed to read request body")
 		}
 		req, err := llmadapter.ParseImagesEditsJSONRequest(body)

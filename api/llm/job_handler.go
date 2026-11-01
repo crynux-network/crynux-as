@@ -44,7 +44,7 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, apiType, "", 0, acceptedAt, time.Now(), nil, nil)
-		writeClientError(c, http.StatusBadRequest, "failed to read request body")
+		writeRequestBodyReadError(c, err)
 		return
 	}
 

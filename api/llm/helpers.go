@@ -5,6 +5,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/service"
+	"errors"
 	"math/big"
 	"net/http"
 	"time"
@@ -61,6 +62,15 @@ func writeClientError(c *gin.Context, status int, message string) {
 			"type":    "invalid_request_error",
 		},
 	})
+}
+
+func writeRequestBodyReadError(c *gin.Context, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeClientError(c, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	writeClientError(c, http.StatusBadRequest, "failed to read request body")
 }
 
 func writeServerError(c *gin.Context) {

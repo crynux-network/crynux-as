@@ -36,7 +36,7 @@ func CreateResponse(c *gin.Context) {
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, "", 0, acceptedAt, time.Now(), nil, nil)
-		writeClientError(c, http.StatusBadRequest, "failed to read request body")
+		writeRequestBodyReadError(c, err)
 		return
 	}
 
@@ -302,6 +302,15 @@ func writeClientError(c *gin.Context, status int, message string) {
 			"type":    "invalid_request_error",
 		},
 	})
+}
+
+func writeRequestBodyReadError(c *gin.Context, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeClientError(c, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+	writeClientError(c, http.StatusBadRequest, "failed to read request body")
 }
 
 func writeServerError(c *gin.Context) {
