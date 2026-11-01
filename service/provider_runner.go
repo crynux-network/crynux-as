@@ -62,7 +62,7 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 		sink := func(event provider.StreamEvent) {
 			publishProviderJobExecuteStreamEvent(streams, jobID, event)
 		}
-		result, execErr := adapter.Execute(ctx, secret, job.APIType, job.Model, []byte(job.TaskArgsJSON), attempts-1, sink)
+		result, execErr := adapter.Execute(ctx, secret, job.APIType, job.Model, []byte(job.TaskArgsJSON), jobID, attempts-1, sink)
 		ClearBytes(secret)
 		if execErr != nil {
 			log.Errorf("provider job %d execute error: %v", jobID, execErr)

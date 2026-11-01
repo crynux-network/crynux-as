@@ -60,7 +60,7 @@ func (a *GoogleAdapter) ValidateCredential(ctx context.Context, secret []byte) (
 	}
 }
 
-func (a *GoogleAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, tryIndex int, sink EventSink) (ExecuteResult, error) {
+func (a *GoogleAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, jobID uint, tryIndex int, sink EventSink) (ExecuteResult, error) {
 	canonical, err := ParseCanonicalRequest(requestJSON, model, apiType, a.defaultMaxTokens)
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
@@ -83,7 +83,7 @@ func (a *GoogleAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", string(secret))
-	_ = tryIndex
+	_, _ = jobID, tryIndex
 	resp, err := a.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

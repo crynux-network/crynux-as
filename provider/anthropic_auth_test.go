@@ -32,6 +32,7 @@ func TestAnthropicAdapterTransportErrorOmitsSecret(t *testing.T) {
 		models.TaskAPITypeChatCompletions,
 		"claude-sonnet-4-5",
 		[]byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		1,
 		0,
 		nil,
 	)
@@ -65,6 +66,7 @@ func TestAnthropicAdapterClientTimeoutOmitsSecret(t *testing.T) {
 		models.TaskAPITypeChatCompletions,
 		"claude-sonnet-4-5",
 		[]byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		1,
 		0,
 		nil,
 	)

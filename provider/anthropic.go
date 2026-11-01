@@ -60,7 +60,7 @@ func (a *AnthropicAdapter) ValidateCredential(ctx context.Context, secret []byte
 	}
 }
 
-func (a *AnthropicAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, tryIndex int, sink EventSink) (ExecuteResult, error) {
+func (a *AnthropicAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, jobID uint, tryIndex int, sink EventSink) (ExecuteResult, error) {
 	canonical, err := ParseCanonicalRequest(requestJSON, model, apiType, a.defaultMaxTokens)
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
@@ -77,7 +77,7 @@ func (a *AnthropicAdapter) Execute(ctx context.Context, secret []byte, apiType m
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Content-Type", "application/json")
 	if tryIndex >= 0 {
-		req.Header.Set("anthropic-idempotency-key", fmt.Sprintf("crynux-as-%d", tryIndex))
+		req.Header.Set("anthropic-idempotency-key", ProviderIdempotencyKey(jobID, tryIndex))
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {

@@ -32,6 +32,7 @@ func TestOpenAIAdapterTransportErrorOmitsSecret(t *testing.T) {
 		models.TaskAPITypeChatCompletions,
 		"gpt-4o-mini",
 		[]byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		1,
 		0,
 		nil,
 	)
@@ -65,6 +66,7 @@ func TestOpenAIAdapterClientTimeoutOmitsSecret(t *testing.T) {
 		models.TaskAPITypeChatCompletions,
 		"gpt-4o-mini",
 		[]byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		1,
 		0,
 		nil,
 	)

@@ -56,9 +56,11 @@ func TestConvertCanonicalToOpenAIChatFromResponses(t *testing.T) {
 
 func TestOpenAIExecuteResponsesUsesChatCompletions(t *testing.T) {
 	var gotPath string
+	var gotIdempotencyKey string
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotIdempotencyKey = r.Header.Get("Idempotency-Key")
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &gotBody)
 		w.Header().Set("x-request-id", "req-1")
@@ -86,6 +88,7 @@ func TestOpenAIExecuteResponsesUsesChatCompletions(t *testing.T) {
 		models.TaskAPITypeResponses,
 		"gpt-test",
 		[]byte(`{"model":"gpt-test","input":"hello","previous_response_id":"resp_old"}`),
+		42,
 		0,
 		nil,
 	)
@@ -94,6 +97,9 @@ func TestOpenAIExecuteResponsesUsesChatCompletions(t *testing.T) {
 	}
 	if gotPath != "/v1/chat/completions" {
 		t.Fatalf("path=%q", gotPath)
+	}
+	if gotIdempotencyKey != "crynux-as-42-0" {
+		t.Fatalf("Idempotency-Key=%q want crynux-as-42-0", gotIdempotencyKey)
 	}
 	if _, ok := gotBody["previous_response_id"]; ok {
 		t.Fatalf("upstream body leaked previous_response_id: %v", gotBody)

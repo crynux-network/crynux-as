@@ -4,6 +4,7 @@ import (
 	"context"
 	"crynux_as/models"
 	"errors"
+	"fmt"
 )
 
 type ErrorClass string
@@ -103,5 +104,10 @@ func cancelledExecuteResult(ctx context.Context) ExecuteResult {
 
 type Adapter interface {
 	ValidateCredential(ctx context.Context, secret []byte) (CredentialValidationResult, error)
-	Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, tryIndex int, sink EventSink) (ExecuteResult, error)
+	Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, jobID uint, tryIndex int, sink EventSink) (ExecuteResult, error)
+}
+
+// ProviderIdempotencyKey builds a stable upstream idempotency key from the AS job ID and try index.
+func ProviderIdempotencyKey(jobID uint, tryIndex int) string {
+	return fmt.Sprintf("crynux-as-%d-%d", jobID, tryIndex)
 }

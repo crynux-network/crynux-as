@@ -60,7 +60,7 @@ func (a *OpenAIAdapter) ValidateCredential(ctx context.Context, secret []byte) (
 	}
 }
 
-func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, tryIndex int, sink EventSink) (ExecuteResult, error) {
+func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, jobID uint, tryIndex int, sink EventSink) (ExecuteResult, error) {
 	switch apiType {
 	case models.TaskAPITypeChatCompletions, models.TaskAPITypeResponses:
 	default:
@@ -86,7 +86,7 @@ func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	req.Header.Set("Authorization", "Bearer "+string(secret))
 	req.Header.Set("Content-Type", "application/json")
 	if tryIndex >= 0 {
-		req.Header.Set("Idempotency-Key", fmt.Sprintf("crynux-as-%d", tryIndex))
+		req.Header.Set("Idempotency-Key", ProviderIdempotencyKey(jobID, tryIndex))
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {

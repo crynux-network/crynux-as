@@ -64,6 +64,7 @@ func TestGoogleAdapterSendsAPIKeyInHeader(t *testing.T) {
 		models.TaskAPITypeChatCompletions,
 		"gemini-2.0-flash",
 		[]byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		1,
 		0,
 		nil,
 	)
@@ -101,6 +102,7 @@ func TestGoogleAdapterTransportErrorOmitsSecret(t *testing.T) {
 		models.TaskAPITypeChatCompletions,
 		"gemini-2.0-flash",
 		[]byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		1,
 		0,
 		nil,
 	)
@@ -146,6 +148,7 @@ func TestGoogleAdapterClientTimeoutOmitsSecret(t *testing.T) {
 		models.TaskAPITypeChatCompletions,
 		"gemini-2.0-flash",
 		[]byte(`{"messages":[{"role":"user","content":"hi"}]}`),
+		1,
 		0,
 		nil,
 	)
