@@ -128,7 +128,7 @@ func CompleteAndSettleImageTaskJob(ctx context.Context, db *gorm.DB, job *models
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, job.ID).Error; err != nil {
 			return err
 		}
-		if locked.IsTerminal() && locked.TaskCallRecordID != nil {
+		if locked.TaskCallRecordID != nil {
 			*job = locked
 			return nil
 		}

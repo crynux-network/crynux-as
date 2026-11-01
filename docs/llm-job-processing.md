@@ -131,11 +131,11 @@ The success settle transaction MUST lock the job row and, in one commit, write:
 1. release of the Credits hold when `credits_lock_status` is `held`, then set `credits_lock_status` to `released`
 2. one success `task_call_records` row with final tokens and the Credits recalculation snapshot
 3. when `charge = min(computed_credits, balance)` is greater than zero, one processed LLM `credit_events` row and the matching `credit_accounts` debit of `charge`
-4. the job terminal update to status `completed`, billing status `billed`, raw and formatted results, `completed_at`, and `llm_call_record_id`
+4. the job terminal update to status `completed`, billing status `billed`, raw and formatted results, `completed_at`, and `task_call_record_id`
 
 The transaction MUST NOT write final token counts onto the job row. The transaction MUST NOT write the charged Credits amount onto the call record. Unlock and terminal settle MUST NOT commit in separate transactions.
 
-If the job already has `llm_call_record_id`, or is already `completed` and `billed`, the settle path MUST leave existing rows unchanged and MUST NOT create another call record, Credits event, or second unlock debit.
+If the job already has `task_call_record_id`, or is already `completed` and `billed`, the settle path MUST leave existing rows unchanged and MUST NOT create another call record, Credits event, or second unlock debit.
 
 ### Failure record transaction
 
@@ -143,17 +143,19 @@ The failure record transaction MUST lock the job row and, in one commit, write:
 
 1. release of the Credits hold when `credits_lock_status` is `held`, then set `credits_lock_status` to `released`
 2. one failed `task_call_records` row
-3. the job terminal update to status `failed`, billing status `not_billed`, error message, `completed_at`, and `llm_call_record_id`
+3. the job terminal update to status `failed`, billing status `not_billed`, error message, `completed_at`, and `task_call_record_id`
 
 It MUST NOT create a Credits event and MUST NOT change the account balance.
 
-If the job is already terminal with a call record, the failure path MUST leave existing rows unchanged and MUST NOT unlock again.
+If the job already has `task_call_record_id`, the failure path MUST leave existing rows unchanged and MUST NOT unlock again.
 
 ### Raw Task abort
 
 Raw Task abort is specified in [raw-task-api.md](./raw-task-api.md). The worker MUST treat a job that is already terminal as finished and MUST NOT submit it to Bridge, poll Bridge status for settlement, download a result, or enter the success settle transaction for that job. When abort succeeds through the failure record transaction before Bridge submit, the worker MUST NOT create a Bridge task for that job.
 
 Abort of a job that already has a Bridge client task ID MUST call Bridge abort and MUST run the failure record transaction only after Bridge abort succeeds. AS MUST NOT mark the job failed or unlock Credits while Bridge still reports the ClientTask as running.
+
+Worker phase and status updates for Bridge in-flight jobs MUST update only rows whose status is still `submitted` or `in_progress`. Startup reset of incomplete jobs MUST update only rows whose status is still `submitted` or `in_progress` and whose `task_call_record_id` is null. A concurrent abort that has already committed the failure record transaction MUST leave the terminal job unchanged.
 
 ### Responses lookup
 
@@ -221,4 +223,4 @@ Any retry, duplicate worker tick, or repeated settle/failure call MUST satisfy a
 * at most one `task_call_records` row per `task_job_id`
 * at most one task charge `credit_events` row per call record ID
 * at most one balance debit for that charge
-* job `llm_call_record_id` set only after the matching call record exists in the same transaction
+* job `task_call_record_id` set only after the matching call record exists in the same transaction

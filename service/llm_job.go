@@ -280,12 +280,13 @@ func CompleteAndSettleTaskJob(
 			First(&locked, job.ID).Error; err != nil {
 			return err
 		}
-		if locked.Status == models.TaskJobStatusCompleted && locked.BillingStatus == models.TaskJobBillingBilled {
+		if locked.TaskCallRecordID != nil {
 			*job = locked
 			return nil
 		}
-		if locked.TaskCallRecordID != nil {
-			return fmt.Errorf("task job %d already has call record %d", locked.ID, *locked.TaskCallRecordID)
+		if locked.Status == models.TaskJobStatusCompleted && locked.BillingStatus == models.TaskJobBillingBilled {
+			*job = locked
+			return nil
 		}
 
 		if err := releaseCreditsHoldTx(tx, &locked); err != nil {
@@ -371,7 +372,7 @@ func FailAndRecordTaskJob(ctx context.Context, db *gorm.DB, job *models.TaskJob,
 			First(&locked, job.ID).Error; err != nil {
 			return err
 		}
-		if locked.IsTerminal() && locked.TaskCallRecordID != nil {
+		if locked.TaskCallRecordID != nil {
 			*job = locked
 			return nil
 		}
@@ -523,7 +524,9 @@ func UpdateTaskJobStatus(ctx context.Context, db *gorm.DB, jobID uint, status mo
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Update("status", status).Error
+	return db.WithContext(dbCtx).Model(&models.TaskJob{}).
+		Where("id = ? AND status IN ?", jobID, nonTerminalTaskJobStatuses()).
+		Update("status", status).Error
 }
 
 func UpdateTaskJobPhase(
@@ -546,20 +549,40 @@ func UpdateTaskJobPhase(
 	} else {
 		updates["estimated_completion_at"] = nil
 	}
-	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(updates).Error
+	// Only advance non-terminal jobs so a concurrent abort cannot be overwritten
+	// back to in_progress after the failure record transaction commits.
+	return db.WithContext(dbCtx).Model(&models.TaskJob{}).
+		Where("id = ? AND status IN ?", jobID, []models.TaskJobStatus{
+			models.TaskJobStatusSubmitted,
+			models.TaskJobStatusInProgress,
+		}).
+		Updates(updates).Error
 }
 
 func ResetTaskJobToPending(ctx context.Context, db *gorm.DB, jobID uint) error {
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	return db.WithContext(dbCtx).Model(&models.TaskJob{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"status":                  models.TaskJobStatusPendingSubmit,
-		"phase":                   "queued",
-		"estimated_completion_at": nil,
-		"bridge_client_task_id":   nil,
-		"started_at":              nil,
-	}).Error
+	return db.WithContext(dbCtx).Model(&models.TaskJob{}).
+		Where("id = ? AND status IN ? AND task_call_record_id IS NULL", jobID, []models.TaskJobStatus{
+			models.TaskJobStatusSubmitted,
+			models.TaskJobStatusInProgress,
+		}).
+		Updates(map[string]interface{}{
+			"status":                  models.TaskJobStatusPendingSubmit,
+			"phase":                   "queued",
+			"estimated_completion_at": nil,
+			"bridge_client_task_id":   nil,
+			"started_at":              nil,
+		}).Error
+}
+
+func nonTerminalTaskJobStatuses() []models.TaskJobStatus {
+	return []models.TaskJobStatus{
+		models.TaskJobStatusPendingSubmit,
+		models.TaskJobStatusSubmitted,
+		models.TaskJobStatusInProgress,
+	}
 }
 
 const taskJobCleanupBatchSize = 200
