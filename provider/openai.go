@@ -39,12 +39,12 @@ func (a *OpenAIAdapter) ValidateCredential(ctx context.Context, secret []byte) (
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, a.baseURL+"/v1/models", nil)
 	if err != nil {
-		return CredentialTemporarilyUnavailable, err
+		return CredentialTemporarilyUnavailable, nil
 	}
 	req.Header.Set("Authorization", "Bearer "+string(secret))
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return CredentialTemporarilyUnavailable, err
+		return CredentialTemporarilyUnavailable, nil
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -97,7 +97,7 @@ func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+path, bytes.NewReader(payload))
 	if err != nil {
-		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: err.Error(), KeySpecific: false}, nil
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "failed to create request", KeySpecific: false}, nil
 	}
 	req.Header.Set("Authorization", "Bearer "+string(secret))
 	req.Header.Set("Content-Type", "application/json")
@@ -109,7 +109,7 @@ func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 		if ctx.Err() != nil {
 			return ExecuteResult{Acceptance: AcceptanceUncertain, AcceptanceKnown: true, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "request cancelled or timed out after send"}, nil
 		}
-		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: err.Error()}, nil
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "provider connection failed"}, nil
 	}
 	defer resp.Body.Close()
 	upstreamID := resp.Header.Get("x-request-id")

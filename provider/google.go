@@ -36,14 +36,15 @@ func NewGoogleAdapter(cfg config.ProviderServiceConfig) *GoogleAdapter {
 func (a *GoogleAdapter) ValidateCredential(ctx context.Context, secret []byte) (CredentialValidationResult, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, time.Duration(a.cfg.CredentialValidationTimeoutSeconds)*time.Second)
 	defer cancel()
-	url := a.baseURL + "/v1beta/models?key=" + string(secret)
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	endpoint := a.baseURL + "/v1beta/models"
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return CredentialTemporarilyUnavailable, err
+		return CredentialTemporarilyUnavailable, nil
 	}
+	req.Header.Set("x-goog-api-key", string(secret))
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return CredentialTemporarilyUnavailable, err
+		return CredentialTemporarilyUnavailable, nil
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -70,22 +71,23 @@ func (a *GoogleAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	if canonical.Stream {
 		method = "streamGenerateContent"
 	}
-	endpoint := fmt.Sprintf("%s/v1beta/models/%s:%s?key=%s", a.baseURL, url.PathEscape(model), method, url.QueryEscape(string(secret)))
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:%s", a.baseURL, url.PathEscape(model), method)
 	if canonical.Stream {
-		endpoint += "&alt=sse"
+		endpoint += "?alt=sse"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(native))
 	if err != nil {
-		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: err.Error()}, nil
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "failed to create request"}, nil
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", string(secret))
 	_ = tryIndex
 	resp, err := a.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "request cancelled or timed out after send"}, nil
 		}
-		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: err.Error()}, nil
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "provider connection failed"}, nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {

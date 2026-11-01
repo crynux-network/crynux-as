@@ -133,7 +133,8 @@ It MUST:
 * suppress the internal usage request option from public output when the client did not request it;
 * parse Chat Completions SSE and Responses events incrementally;
 * assemble one final normalized result;
-* capture upstream request ID from headers or response fields when available.
+* capture upstream request ID from headers or response fields when available;
+* return redacted transport-error messages that exclude request URLs and Shared API Key plaintext.
 
 Normalized usage MUST map:
 
@@ -158,7 +159,8 @@ It MUST:
 * translate content-block stream events into the selected OpenAI-compatible stream;
 * assemble text and tool-call output;
 * preserve stop reason semantics through the AS public mapping;
-* capture the Anthropic request ID when available.
+* capture the Anthropic request ID when available;
+* return redacted transport-error messages that exclude request URLs and Shared API Key plaintext.
 
 Normalized usage MUST map:
 
@@ -175,12 +177,14 @@ The Google adapter MUST translate validated Chat Completions and Responses seman
 
 It MUST:
 
+* authenticate with the `x-goog-api-key` header and MUST NOT place the Shared API Key in the request URL;
 * send the configured model name through the provider's required model path or field without changing the public name;
 * convert system instructions, messages, tools, tool choices, and tool results;
 * parse streaming candidate events incrementally;
 * assemble one final normalized result;
 * convert safety or policy termination into a normalized public outcome;
-* capture request identity when available.
+* capture request identity when available;
+* return redacted transport-error messages that exclude request URLs and Shared API Key plaintext.
 
 Normalized usage MUST map:
 

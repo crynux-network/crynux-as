@@ -38,13 +38,13 @@ func (a *AnthropicAdapter) ValidateCredential(ctx context.Context, secret []byte
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, a.baseURL+"/v1/models", nil)
 	if err != nil {
-		return CredentialTemporarilyUnavailable, err
+		return CredentialTemporarilyUnavailable, nil
 	}
 	req.Header.Set("x-api-key", string(secret))
 	req.Header.Set("anthropic-version", "2023-06-01")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return CredentialTemporarilyUnavailable, err
+		return CredentialTemporarilyUnavailable, nil
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -69,7 +69,7 @@ func (a *AnthropicAdapter) Execute(ctx context.Context, secret []byte, apiType m
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(native))
 	if err != nil {
-		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: err.Error()}, nil
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "failed to create request"}, nil
 	}
 	req.Header.Set("x-api-key", string(secret))
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -82,7 +82,7 @@ func (a *AnthropicAdapter) Execute(ctx context.Context, secret []byte, apiType m
 		if ctx.Err() != nil {
 			return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "request cancelled or timed out after send"}, nil
 		}
-		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: err.Error()}, nil
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "provider connection failed"}, nil
 	}
 	defer resp.Body.Close()
 	upstreamID := resp.Header.Get("request-id")
