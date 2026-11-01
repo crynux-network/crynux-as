@@ -27,6 +27,9 @@ func setupRawImagePrepareEnv(t *testing.T, loadedRows []map[string]any) {
 	cfg.LLM.MinCatalogOnDiskNodeCount = 1
 	cfg.LLM.CreditsPerGwei = "1"
 	cfg.LLM.BaseVRAM = 8
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
+	cfg.LLM.DefaultAutoMaxCreditsPerTask = "100"
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
 	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	cfg.LLM.EmptyQueueMedianPriorityGwei = "1"
@@ -151,12 +154,18 @@ func TestParseTaskArgs(t *testing.T) {
 	}
 }
 
+func testRawImageProject() *models.Project {
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(1_000_000_000)}
+	return &models.Project{
+		PriorityGwei:          models.BigInt{Int: *big.NewInt(10)},
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
+}
+
 func TestPrepareTaskImageAutoMissRejects(t *testing.T) {
 	setupRawImagePrepareEnv(t, nil)
 	taskType := models.TaskTypeImage
-	_, err := prepareTask(context.Background(), &models.Project{
-		PriorityGwei: models.BigInt{Int: *big.NewInt(10)},
-	}, CreateTaskRequest{
+	_, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
 		TaskType: &taskType,
 		TaskArgs: `{
 			"version": "3.7.1",
@@ -176,9 +185,7 @@ func TestPrepareTaskImageAutoPersistsResolvedTaskArgs(t *testing.T) {
 		testImageLoadedRow("plain", "org/image", "bfloat16", nil, nil, 18),
 	})
 	taskType := models.TaskTypeImage
-	prepared, err := prepareTask(context.Background(), &models.Project{
-		PriorityGwei: models.BigInt{Int: *big.NewInt(10)},
-	}, CreateTaskRequest{
+	prepared, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
 		TaskType: &taskType,
 		TaskArgs: `{
 			"version": "3.7.1",
@@ -207,9 +214,7 @@ func TestPrepareTaskImageConcreteDtypeAllowsNewModel(t *testing.T) {
 		testImageLoadedRow("other", "org/image", "bfloat16", nil, nil, 18),
 	})
 	taskType := models.TaskTypeImage
-	prepared, err := prepareTask(context.Background(), &models.Project{
-		PriorityGwei: models.BigInt{Int: *big.NewInt(10)},
-	}, CreateTaskRequest{
+	prepared, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
 		TaskType: &taskType,
 		TaskArgs: `{
 			"version": "3.7.1",
