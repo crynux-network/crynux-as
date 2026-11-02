@@ -4,6 +4,8 @@ import (
 	"context"
 	"crynux_as/config"
 	"crynux_as/models"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -49,16 +51,23 @@ func TestAnthropicAdapterTransportErrorOmitsSecret(t *testing.T) {
 
 func TestAnthropicAdapterClientTimeoutOmitsSecret(t *testing.T) {
 	const secret = "anthropic-secret-key-value"
-	server := slowAuthHeaderServer(t, "x-api-key", secret)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-api-key"); got != secret {
+			t.Errorf("x-api-key = %q, want %s", got, secret)
+		}
+		time.Sleep(2 * time.Second)
+		w.WriteHeader(http.StatusOK)
+	}))
 	defer server.Close()
 
 	adapter := NewAnthropicAdapter(config.ProviderServiceConfig{
 		BaseURL:                            server.URL,
-		RequestTimeoutSeconds:              0,
-		ResponseHeaderTimeoutSeconds:       0,
+		ConnectTimeoutSeconds:              5,
+		ResponseHeaderTimeoutSeconds:       5,
+		StreamIdleTimeoutSeconds:           5,
+		RequestTimeoutSeconds:              1,
 		CredentialValidationTimeoutSeconds: 1,
 	}, 2048)
-	adapter.client.Timeout = 50 * time.Millisecond
 
 	exec, err := adapter.Execute(
 		context.Background(),
@@ -76,7 +85,7 @@ func TestAnthropicAdapterClientTimeoutOmitsSecret(t *testing.T) {
 	if strings.Contains(exec.ErrorMessage, secret) {
 		t.Fatalf("ErrorMessage must not contain secret: %q", exec.ErrorMessage)
 	}
-	if exec.ErrorMessage != "provider connection failed" {
-		t.Fatalf("ErrorMessage = %q, want provider connection failed", exec.ErrorMessage)
+	if exec.ErrorMessage != "request cancelled or timed out after send" {
+		t.Fatalf("ErrorMessage = %q, want request cancelled or timed out after send", exec.ErrorMessage)
 	}
 }

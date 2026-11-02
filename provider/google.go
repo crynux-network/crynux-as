@@ -26,12 +26,7 @@ func NewGoogleAdapter(cfg config.ProviderServiceConfig, defaultMaxTokens int) *G
 		baseURL:          strings.TrimRight(cfg.BaseURL, "/"),
 		cfg:              cfg,
 		defaultMaxTokens: defaultMaxTokens,
-		client: &http.Client{
-			Timeout: time.Duration(cfg.RequestTimeoutSeconds) * time.Second,
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: time.Duration(cfg.ResponseHeaderTimeoutSeconds) * time.Second,
-			},
-		},
+		client:           newProviderHTTPClient(cfg),
 	}
 }
 
@@ -77,7 +72,9 @@ func (a *GoogleAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	if canonical.Stream {
 		endpoint += "?alt=sse"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(native))
+	reqCtx, cancel := withNonStreamRequestTimeout(ctx, canonical.Stream, a.cfg.RequestTimeoutSeconds)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, bytes.NewReader(native))
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "failed to create request"}, nil
 	}
@@ -86,8 +83,8 @@ func (a *GoogleAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	_, _ = jobID, tryIndex
 	resp, err := a.client.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return cancelledExecuteResult(ctx), nil
+		if reqCtx.Err() != nil {
+			return cancelledExecuteResult(reqCtx), nil
 		}
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "provider connection failed"}, nil
 	}
@@ -151,6 +148,8 @@ func classifyGoogleHTTPError(resp *http.Response) (ExecuteResult, error) {
 }
 
 func (a *GoogleAdapter) readStream(body io.Reader, apiType models.TaskAPIType, model string, sink EventSink) (ExecuteResult, error) {
+	body, stopIdle := withStreamIdleTimeout(body, a.cfg.StreamIdleTimeoutSeconds)
+	defer stopIdle()
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	acc := AssembledMessage{}

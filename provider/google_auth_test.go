@@ -129,18 +129,19 @@ func TestGoogleAdapterClientTimeoutOmitsSecret(t *testing.T) {
 		if got := r.Header.Get("x-goog-api-key"); got != secret {
 			t.Errorf("x-goog-api-key = %q, want %q", got, secret)
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(2 * time.Second)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
 	adapter := NewGoogleAdapter(config.ProviderServiceConfig{
 		BaseURL:                            server.URL,
-		RequestTimeoutSeconds:              0,
-		ResponseHeaderTimeoutSeconds:       0,
+		ConnectTimeoutSeconds:              5,
+		ResponseHeaderTimeoutSeconds:       5,
+		StreamIdleTimeoutSeconds:           5,
+		RequestTimeoutSeconds:              1,
 		CredentialValidationTimeoutSeconds: 1,
 	}, 2048)
-	adapter.client.Timeout = 50 * time.Millisecond
 
 	exec, err := adapter.Execute(
 		context.Background(),
@@ -158,7 +159,7 @@ func TestGoogleAdapterClientTimeoutOmitsSecret(t *testing.T) {
 	if strings.Contains(exec.ErrorMessage, secret) {
 		t.Fatalf("ErrorMessage must not contain secret: %q", exec.ErrorMessage)
 	}
-	if exec.ErrorMessage != "provider connection failed" {
-		t.Fatalf("ErrorMessage = %q, want provider connection failed", exec.ErrorMessage)
+	if exec.ErrorMessage != "request cancelled or timed out after send" {
+		t.Fatalf("ErrorMessage = %q, want request cancelled or timed out after send", exec.ErrorMessage)
 	}
 }

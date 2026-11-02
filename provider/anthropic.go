@@ -26,12 +26,7 @@ func NewAnthropicAdapter(cfg config.ProviderServiceConfig, defaultMaxTokens int)
 		baseURL:          strings.TrimRight(cfg.BaseURL, "/"),
 		cfg:              cfg,
 		defaultMaxTokens: defaultMaxTokens,
-		client: &http.Client{
-			Timeout: time.Duration(cfg.RequestTimeoutSeconds) * time.Second,
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: time.Duration(cfg.ResponseHeaderTimeoutSeconds) * time.Second,
-			},
-		},
+		client:           newProviderHTTPClient(cfg),
 	}
 }
 
@@ -69,7 +64,9 @@ func (a *AnthropicAdapter) Execute(ctx context.Context, secret []byte, apiType m
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(native))
+	reqCtx, cancel := withNonStreamRequestTimeout(ctx, canonical.Stream, a.cfg.RequestTimeoutSeconds)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, a.baseURL+"/v1/messages", bytes.NewReader(native))
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "failed to create request"}, nil
 	}
@@ -81,8 +78,8 @@ func (a *AnthropicAdapter) Execute(ctx context.Context, secret []byte, apiType m
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return cancelledExecuteResult(ctx), nil
+		if reqCtx.Err() != nil {
+			return cancelledExecuteResult(reqCtx), nil
 		}
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorAcceptanceUncertain, ErrorMessage: "provider connection failed"}, nil
 	}
@@ -145,6 +142,8 @@ func classifyAnthropicHTTPError(resp *http.Response, upstreamID string) (Execute
 }
 
 func (a *AnthropicAdapter) readStream(body io.Reader, apiType models.TaskAPIType, model, upstreamID string, sink EventSink) (ExecuteResult, error) {
+	body, stopIdle := withStreamIdleTimeout(body, a.cfg.StreamIdleTimeoutSeconds)
+	defer stopIdle()
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	acc := AssembledMessage{}

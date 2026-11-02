@@ -22,17 +22,11 @@ type OpenAIAdapter struct {
 }
 
 func NewOpenAIAdapter(cfg config.ProviderServiceConfig, defaultMaxTokens int) *OpenAIAdapter {
-	timeout := time.Duration(cfg.RequestTimeoutSeconds) * time.Second
 	return &OpenAIAdapter{
 		baseURL:          strings.TrimRight(cfg.BaseURL, "/"),
 		cfg:              cfg,
 		defaultMaxTokens: defaultMaxTokens,
-		client: &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: time.Duration(cfg.ResponseHeaderTimeoutSeconds) * time.Second,
-			},
-		},
+		client:           newProviderHTTPClient(cfg),
 	}
 }
 
@@ -79,7 +73,9 @@ func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/v1/chat/completions", bytes.NewReader(payload))
+	reqCtx, cancel := withNonStreamRequestTimeout(ctx, canonical.Stream, a.cfg.RequestTimeoutSeconds)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, a.baseURL+"/v1/chat/completions", bytes.NewReader(payload))
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "failed to create request", KeySpecific: false}, nil
 	}
@@ -90,8 +86,8 @@ func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType mode
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return cancelledExecuteResult(ctx), nil
+		if reqCtx.Err() != nil {
+			return cancelledExecuteResult(reqCtx), nil
 		}
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorConnectionFailedBeforeSend, ErrorMessage: "provider connection failed"}, nil
 	}
@@ -209,6 +205,8 @@ func (a *openAIStreamAccumulator) finalizeTools() {
 }
 
 func (a *OpenAIAdapter) readChatStream(body io.Reader, apiType models.TaskAPIType, model, upstreamID string, sink EventSink) (ExecuteResult, error) {
+	body, stopIdle := withStreamIdleTimeout(body, a.cfg.StreamIdleTimeoutSeconds)
+	defer stopIdle()
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	acc := &openAIStreamAccumulator{model: model, created: time.Now().Unix()}
