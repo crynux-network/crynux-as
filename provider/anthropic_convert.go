@@ -113,8 +113,19 @@ func convertCanonicalToAnthropic(req CanonicalRequest) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	thinkingType, effort, effortOmitted := MapAnthropicEffort(req.ReasoningEffort)
+	if !effortOmitted {
+		out["thinking"] = map[string]any{"type": thinkingType}
+	}
+	outputConfig := map[string]any{}
 	if format != nil {
-		out["output_config"] = map[string]any{"format": format}
+		outputConfig["format"] = format
+	}
+	if !effortOmitted && effort != "" {
+		outputConfig["effort"] = effort
+	}
+	if len(outputConfig) > 0 {
+		out["output_config"] = outputConfig
 	}
 	return json.Marshal(out)
 }

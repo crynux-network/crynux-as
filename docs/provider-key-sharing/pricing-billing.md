@@ -60,9 +60,13 @@ Common usage components are:
 * reasoning or thinking tokens;
 * tool-use prompt tokens.
 
+OpenAI and Google model configuration MUST include a `reasoning_tokens` weight because those adapters can return positive reasoning or thoughts counts. Anthropic configuration MUST NOT require a separate `reasoning_tokens` weight; Anthropic thinking tokens are already counted in output tokens.
+
 Weights are normalized Provider work units per usage item. They MUST be parsed as exact rational numbers. Floating-point arithmetic MUST NOT be used for ledger amounts.
 
 An adapter MUST reject a terminal usage object containing a positive component for which the pricing snapshot has no weight.
+
+Effort values do not change usage weights. Different `reasoning_effort` or `reasoning.effort` values affect only the actual token counts returned by the Service Provider. Consumer Credits and Key Owner earnings MUST continue to use the job pricing snapshot weights multiplied by those actual counts.
 
 ## Provider Work
 
@@ -150,6 +154,8 @@ estimated_credits =
 ## Actual-Usage Settlement
 
 The adapter MUST produce one normalized final usage object. Component semantics MUST state whether a field is a total or a subset so categories are not double-counted.
+
+OpenAI `reasoning_tokens` are a subset of `completion_tokens` and MUST be subtracted from ordinary output before both weights are applied. Google `thoughtsTokenCount` is billed in addition to `candidatesTokenCount` and MUST NOT be subtracted from ordinary output. Anthropic thinking tokens remain inside `output_tokens` and MUST NOT appear as a separate billed reasoning component.
 
 Settlement MUST:
 

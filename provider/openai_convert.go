@@ -99,6 +99,9 @@ func convertCanonicalToOpenAIChat(req CanonicalRequest) ([]byte, error) {
 	if choice != nil {
 		out["tool_choice"] = choice
 	}
+	if req.ReasoningEffort != "" {
+		out["reasoning_effort"] = req.ReasoningEffort
+	}
 	return json.Marshal(out)
 }
 

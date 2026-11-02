@@ -226,6 +226,13 @@ func ParseResponsesRequest(body []byte) (ResponsesRequest, error) {
 	if err := validateResponsesInputItems(req.Input.Items); err != nil {
 		return ResponsesRequest{}, err
 	}
+	if req.Reasoning != nil {
+		effort, err := ValidateReasoningEffort("reasoning.effort", req.Reasoning.Effort)
+		if err != nil {
+			return ResponsesRequest{}, err
+		}
+		req.Reasoning.Effort = effort
+	}
 
 	return req, nil
 }

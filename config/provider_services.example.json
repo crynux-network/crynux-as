@@ -107,7 +107,8 @@
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
-          "cached_input_tokens": "0.05"
+          "cached_input_tokens": "0.05",
+          "reasoning_tokens": "5"
         }
       },
       {
@@ -115,7 +116,8 @@
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
-          "cached_input_tokens": "0.1"
+          "cached_input_tokens": "0.1",
+          "reasoning_tokens": "5"
         }
       },
       {
@@ -123,7 +125,8 @@
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "25/3",
-          "cached_input_tokens": "0.1"
+          "cached_input_tokens": "0.1",
+          "reasoning_tokens": "25/3"
         }
       }
     ]

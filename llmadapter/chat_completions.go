@@ -240,6 +240,11 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 	if err != nil {
 		return "", ChatCompletionsMeta{}, err
 	}
+	reasoningEffort, err := ValidateReasoningEffort("reasoning_effort", req.ReasoningEffort)
+	if err != nil {
+		return "", ChatCompletionsMeta{}, err
+	}
+	req.ReasoningEffort = reasoningEffort
 
 	messages := make([]models.Message, len(req.Messages))
 	for i, m := range req.Messages {

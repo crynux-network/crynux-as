@@ -780,3 +780,86 @@ func TestEstimateProviderInputTokensSupportsGPT6Astra(t *testing.T) {
 		t.Fatalf("estimate=%+v", got)
 	}
 }
+
+func TestEstimateProviderInputTokensRejectsInvalidReasoningEffort(t *testing.T) {
+	body := []byte(`{
+		"model":"gpt-6-astra",
+		"messages":[{"role":"user","content":"hi"}],
+		"reasoning_effort":"ultra"
+	}`)
+	route := ProviderModelRoute{
+		ServiceProvider: models.ServiceProviderOpenAI,
+		ModelName:       "gpt-6-astra",
+	}
+	_, err := EstimateProviderInputTokens(route, models.TaskAPITypeChatCompletions, body, 1<<20)
+	if err == nil {
+		t.Fatal("expected invalid reasoning_effort rejection before credits reservation")
+	}
+}
+
+func TestCalculateProviderUnitsOpenAIReasoningIsSubset(t *testing.T) {
+	units, err := CalculateProviderUnits(ProviderUsageComponents{
+		OutputTokens:              10,
+		ReasoningTokens:           4,
+		ReasoningIncludedInOutput: true,
+	}, map[string]string{
+		"output_tokens":     "1",
+		"reasoning_tokens":  "1",
+		"input_tokens":      "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// (10-4)*1 + 4*1 = 10
+	if units.Cmp(big.NewRat(10, 1)) != 0 {
+		t.Fatalf("units=%s", units.FloatString(18))
+	}
+}
+
+func TestCalculateProviderUnitsGoogleReasoningIsAdditional(t *testing.T) {
+	units, err := CalculateProviderUnits(ProviderUsageComponents{
+		OutputTokens:              3,
+		ReasoningTokens:           1,
+		ReasoningIncludedInOutput: false,
+	}, map[string]string{
+		"output_tokens":    "5",
+		"reasoning_tokens": "5",
+		"input_tokens":     "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 3*5 + 1*5 = 20
+	if units.Cmp(big.NewRat(20, 1)) != 0 {
+		t.Fatalf("units=%s", units.FloatString(18))
+	}
+}
+
+func TestCalculateProviderUnitsEffortDoesNotChangeWeights(t *testing.T) {
+	weights := map[string]string{
+		"input_tokens":     "1",
+		"output_tokens":    "5",
+		"reasoning_tokens": "5",
+	}
+	low, err := CalculateProviderUnits(ProviderUsageComponents{
+		InputTokens:               10,
+		OutputTokens:              20,
+		ReasoningTokens:           8,
+		ReasoningIncludedInOutput: true,
+	}, weights)
+	if err != nil {
+		t.Fatal(err)
+	}
+	high, err := CalculateProviderUnits(ProviderUsageComponents{
+		InputTokens:               10,
+		OutputTokens:              40,
+		ReasoningTokens:           25,
+		ReasoningIncludedInOutput: true,
+	}, weights)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if low.Cmp(high) >= 0 {
+		t.Fatalf("higher actual token usage must increase units: low=%s high=%s", low, high)
+	}
+}

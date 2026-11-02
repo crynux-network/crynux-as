@@ -117,13 +117,14 @@ func SettleProviderTaskJob(
 		return errors.New("missing provider billing snapshot")
 	}
 	components := ProviderUsageComponents{
-		InputTokens:           usage.InputTokens,
-		OutputTokens:          usage.OutputTokens,
-		CachedInputTokens:     usage.CachedInputTokens,
-		CacheWriteInputTokens: usage.CacheWriteInputTokens,
-		ReasoningTokens:       usage.ReasoningTokens,
-		ToolUsePromptTokens:   usage.ToolUsePromptTokens,
-		TotalTokens:           usage.TotalTokens,
+		InputTokens:               usage.InputTokens,
+		OutputTokens:              usage.OutputTokens,
+		CachedInputTokens:         usage.CachedInputTokens,
+		CacheWriteInputTokens:     usage.CacheWriteInputTokens,
+		ReasoningTokens:           usage.ReasoningTokens,
+		ToolUsePromptTokens:       usage.ToolUsePromptTokens,
+		TotalTokens:               usage.TotalTokens,
+		ReasoningIncludedInOutput: usage.ReasoningIncludedInOutput,
 	}
 	units, err := CalculateProviderUnits(components, billing.Provider.UsageWeights)
 	if err != nil {

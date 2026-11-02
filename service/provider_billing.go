@@ -13,13 +13,14 @@ import (
 
 // ProviderUsageComponents holds non-negative integer usage components for settlement.
 type ProviderUsageComponents struct {
-	InputTokens           uint64
-	OutputTokens          uint64
-	CachedInputTokens     uint64
-	CacheWriteInputTokens uint64
-	ReasoningTokens       uint64
-	ToolUsePromptTokens   uint64
-	TotalTokens           uint64
+	InputTokens               uint64
+	OutputTokens              uint64
+	CachedInputTokens         uint64
+	CacheWriteInputTokens     uint64
+	ReasoningTokens           uint64
+	ToolUsePromptTokens       uint64
+	TotalTokens               uint64
+	ReasoningIncludedInOutput bool
 }
 
 func parseRationalWeight(value string) (*big.Rat, error) {
@@ -169,7 +170,9 @@ func CalculateProviderUnits(usage ProviderUsageComponents, weights map[string]st
 		units.Add(units, part)
 		return nil
 	}
-	// Detail fields replace portions of parent totals for pricing rather than stacking.
+	// Detail fields replace portions of parent totals for pricing rather than stacking
+	// when the adapter reports them as subsets. Google thoughts are billed in addition
+	// to candidates output and must not be subtracted from OutputTokens.
 	billableInput := usage.InputTokens
 	if usage.CachedInputTokens > 0 || usage.CacheWriteInputTokens > 0 || usage.ToolUsePromptTokens > 0 {
 		detail := usage.CachedInputTokens + usage.CacheWriteInputTokens + usage.ToolUsePromptTokens
@@ -178,7 +181,7 @@ func CalculateProviderUnits(usage ProviderUsageComponents, weights map[string]st
 		}
 	}
 	billableOutput := usage.OutputTokens
-	if usage.ReasoningTokens > 0 && billableOutput >= usage.ReasoningTokens {
+	if usage.ReasoningIncludedInOutput && usage.ReasoningTokens > 0 && billableOutput >= usage.ReasoningTokens {
 		billableOutput -= usage.ReasoningTokens
 	}
 	if err := add(billableInput, "input_tokens"); err != nil {

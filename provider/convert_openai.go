@@ -22,6 +22,9 @@ type CanonicalRequest struct {
 	Stream              bool
 	ResponseFormat      map[string]any
 	ParallelToolCalls   *bool
+	// ReasoningEffort is the validated OpenAI-compatible public effort value.
+	// An empty string means the client omitted the field.
+	ReasoningEffort string
 }
 
 const (
@@ -105,8 +108,13 @@ func parseChatAsCanonical(requestJSON []byte, model string, defaultMaxTokens int
 		Stream              bool              `json:"stream"`
 		ResponseFormat      map[string]any    `json:"response_format"`
 		ParallelToolCalls   *bool             `json:"parallel_tool_calls"`
+		ReasoningEffort     string            `json:"reasoning_effort"`
 	}
 	if err := json.Unmarshal(requestJSON, &raw); err != nil {
+		return CanonicalRequest{}, err
+	}
+	effort, err := llmadapter.ValidateReasoningEffort("reasoning_effort", raw.ReasoningEffort)
+	if err != nil {
 		return CanonicalRequest{}, err
 	}
 	out := CanonicalRequest{
@@ -119,6 +127,7 @@ func parseChatAsCanonical(requestJSON []byte, model string, defaultMaxTokens int
 		ResponseFormat:    raw.ResponseFormat,
 		ParallelToolCalls: raw.ParallelToolCalls,
 		MaxTokens:         defaultMaxTokens,
+		ReasoningEffort:   effort,
 	}
 	if raw.MaxTokens != nil && *raw.MaxTokens > 0 {
 		out.MaxTokens = *raw.MaxTokens
@@ -209,18 +218,29 @@ func parseChatTool(raw json.RawMessage) (CanonicalTool, error) {
 
 func parseResponsesAsCanonical(requestJSON []byte, model string, defaultMaxTokens int) (CanonicalRequest, error) {
 	var raw struct {
-		Input             any            `json:"input"`
-		Instructions      string         `json:"instructions"`
+		Input             any               `json:"input"`
+		Instructions      string            `json:"instructions"`
 		Tools             []json.RawMessage `json:"tools"`
-		ToolChoice        any            `json:"tool_choice"`
-		MaxOutputTokens   *int           `json:"max_output_tokens"`
-		Temperature       *float64       `json:"temperature"`
-		TopP              *float64       `json:"top_p"`
-		Stream            bool           `json:"stream"`
-		Text              map[string]any `json:"text"`
-		ParallelToolCalls *bool          `json:"parallel_tool_calls"`
+		ToolChoice        any               `json:"tool_choice"`
+		MaxOutputTokens   *int              `json:"max_output_tokens"`
+		Temperature       *float64          `json:"temperature"`
+		TopP              *float64          `json:"top_p"`
+		Stream            bool              `json:"stream"`
+		Text              map[string]any    `json:"text"`
+		ParallelToolCalls *bool             `json:"parallel_tool_calls"`
+		Reasoning         *struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
 	}
 	if err := json.Unmarshal(requestJSON, &raw); err != nil {
+		return CanonicalRequest{}, err
+	}
+	effortValue := ""
+	if raw.Reasoning != nil {
+		effortValue = raw.Reasoning.Effort
+	}
+	effort, err := llmadapter.ValidateReasoningEffort("reasoning.effort", effortValue)
+	if err != nil {
 		return CanonicalRequest{}, err
 	}
 	out := CanonicalRequest{
@@ -231,6 +251,7 @@ func parseResponsesAsCanonical(requestJSON []byte, model string, defaultMaxToken
 		Stream:            raw.Stream,
 		ParallelToolCalls: raw.ParallelToolCalls,
 		MaxTokens:         defaultMaxTokens,
+		ReasoningEffort:   effort,
 	}
 	if raw.MaxOutputTokens != nil && *raw.MaxOutputTokens > 0 {
 		out.MaxTokens = *raw.MaxOutputTokens

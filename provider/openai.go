@@ -371,9 +371,10 @@ func parseOpenAIUsage(raw []byte, _ models.TaskAPIType) (*NormalizedUsage, error
 		return nil, err
 	}
 	usage := &NormalizedUsage{
-		InputTokens:  u.PromptTokens,
-		OutputTokens: u.CompletionTokens,
-		TotalTokens:  u.TotalTokens,
+		InputTokens:               u.PromptTokens,
+		OutputTokens:              u.CompletionTokens,
+		TotalTokens:               u.TotalTokens,
+		ReasoningIncludedInOutput: true,
 	}
 	if u.PromptTokensDetails != nil {
 		usage.CachedInputTokens = u.PromptTokensDetails.CachedTokens

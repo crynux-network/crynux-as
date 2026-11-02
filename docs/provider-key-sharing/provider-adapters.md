@@ -126,6 +126,25 @@ When converting a public request into an upstream Provider body, adapters MUST r
 
 OpenAI upstream bodies MUST carry that value as `max_completion_tokens`. Anthropic upstream bodies MUST carry it as `max_tokens`. Google upstream bodies MUST carry it as `generationConfig.maxOutputTokens`. Adapters MUST NOT use a separate hardcoded default that differs from `llm.default_max_tokens`.
 
+## Reasoning Effort
+
+Public Chat Completions `reasoning_effort` and Responses `reasoning.effort` share one validated OpenAI-compatible enum: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. When the field is omitted or empty, adapters MUST NOT inject a native effort or thinking-control field, so the upstream model default remains in effect.
+
+Adapters MUST map a present value as follows:
+
+* OpenAI: send the validated value unchanged as Chat Completions `reasoning_effort`.
+* Anthropic:
+  * `none` MUST set `thinking.type` to `disabled` and MUST NOT set `output_config.effort`;
+  * every other value MUST set `thinking.type` to `adaptive`;
+  * `minimal` and `low` MUST set `output_config.effort` to `low`;
+  * `medium`, `high`, `xhigh`, and `max` MUST set `output_config.effort` to the same value;
+  * when structured output already requires `output_config`, effort MUST be merged into that object.
+* Google:
+  * `none` MUST omit `generationConfig.thinkingConfig`;
+  * `minimal` and `low` MUST set `thinkingConfig.thinkingLevel` to `low`;
+  * `medium` MUST set `thinkingLevel` to `medium`;
+  * `high`, `xhigh`, and `max` MUST set `thinkingLevel` to `high`.
+
 ## Canonical Multimodal Content
 
 The shared canonical request MUST keep ordered text and image content parts. Image parts MUST store MIME type, base64 payload, optional OpenAI `detail`, and MUST NOT keep a decoded image bitmap after width and height are read from the header.
@@ -147,6 +166,7 @@ It MUST:
 * send the configured model name unchanged;
 * use Bearer authentication;
 * translate validated public Chat Completions and Responses semantics into one Chat Completions upstream body through the shared canonical request shape;
+* pass through validated `reasoning_effort` when present;
 * restore canonical image parts as Chat Completions `image_url` data URLs and pass through a valid `detail` value;
 * omit AS-local fields such as `previous_response_id` from the upstream body;
 * request final stream usage even when the API Consumer did not request a public usage chunk;
@@ -163,7 +183,7 @@ Normalized usage MUST map:
 * cached token details to cached input;
 * reasoning token details to reasoning.
 
-Detail fields included in parent totals MUST replace the corresponding portion for pricing rather than being added on top of the parent total.
+OpenAI reasoning tokens are a subset of completion tokens. Settlement MUST subtract them from ordinary output before applying both weights. Detail fields included in parent totals MUST replace the corresponding portion for pricing rather than being added on top of the parent total.
 
 ## Anthropic Adapter
 
@@ -171,6 +191,7 @@ The Anthropic adapter MUST translate validated Chat Completions and Responses se
 
 It MUST:
 
+* convert validated public effort into Anthropic `thinking` and `output_config.effort` as specified in Reasoning Effort;
 * construct system and message content without exposing AS-only fields;
 * convert canonical image parts to Anthropic base64 image source blocks and drop OpenAI `detail`;
 * convert function tools and tool choices;
@@ -198,6 +219,7 @@ It MUST:
 
 * authenticate with the `x-goog-api-key` header and MUST NOT place the Shared API Key in the request URL;
 * send the configured model name through the provider's required model path or field without changing the public name;
+* convert validated public effort into `generationConfig.thinkingConfig.thinkingLevel` as specified in Reasoning Effort;
 * convert system instructions, messages, tools, tool choices, and tool results;
 * convert canonical image parts to Google `inlineData` and drop OpenAI `detail`;
 * parse streaming candidate events incrementally;
@@ -215,7 +237,7 @@ Normalized usage MUST map:
 * `toolUsePromptTokenCount` to tool-use prompt;
 * `totalTokenCount` to total.
 
-The adapter MUST treat detail fields as subsets when the provider reports them within parent totals.
+Google thoughts tokens are billed in addition to candidates output tokens. Settlement MUST NOT subtract `thoughtsTokenCount` from `candidatesTokenCount`. Other detail fields that the provider reports within parent totals MUST replace the corresponding portion for pricing rather than being added twice.
 
 ## Streaming Conversion
 

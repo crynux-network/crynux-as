@@ -580,6 +580,9 @@ func checkProviderConfig(v *viper.Viper) error {
 			if err := checkProviderUsageWeights(serviceID, name, model.UsageWeights); err != nil {
 				return err
 			}
+			if err := checkProviderRequiredUsageWeights(serviceID, name, model.UsageWeights); err != nil {
+				return err
+			}
 		}
 		p.Services[serviceID] = svc
 	}
@@ -639,6 +642,18 @@ func checkProviderUsageWeights(serviceID, modelName string, weights ProviderUsag
 	}
 	if !hasPositive {
 		return fmt.Errorf("provider.services.%s.models[%s] must have at least one positive usage weight", serviceID, modelName)
+	}
+	return nil
+}
+
+// checkProviderRequiredUsageWeights requires usage weights for components that
+// the OpenAI and Google adapters can return as positive reasoning counts.
+func checkProviderRequiredUsageWeights(serviceID, modelName string, weights ProviderUsageWeightsConfig) error {
+	switch serviceID {
+	case "openai", "google":
+		if strings.TrimSpace(weights.ReasoningTokens) == "" {
+			return fmt.Errorf("provider.services.%s.models[%s].usage_weights.reasoning_tokens is required", serviceID, modelName)
+		}
 	}
 	return nil
 }

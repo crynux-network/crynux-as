@@ -114,6 +114,9 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 			gen["responseSchema"] = schema
 		}
 	}
+	if level, omitted := MapGoogleThinkingLevel(req.ReasoningEffort); !omitted {
+		gen["thinkingConfig"] = map[string]any{"thinkingLevel": level}
+	}
 	if len(gen) > 0 {
 		out["generationConfig"] = gen
 	}
@@ -305,12 +308,13 @@ func parseGoogleGenerateContentResponse(raw []byte) (AssembledMessage, *Normaliz
 		msg.FinishReason = "tool_calls"
 	}
 	usage := &NormalizedUsage{
-		InputTokens:         resp.UsageMetadata.PromptTokenCount,
-		OutputTokens:        resp.UsageMetadata.CandidatesTokenCount,
-		CachedInputTokens:   resp.UsageMetadata.CachedContentTokenCount,
-		ReasoningTokens:     resp.UsageMetadata.ThoughtsTokenCount,
-		ToolUsePromptTokens: resp.UsageMetadata.ToolUsePromptTokenCount,
-		TotalTokens:         resp.UsageMetadata.TotalTokenCount,
+		InputTokens:               resp.UsageMetadata.PromptTokenCount,
+		OutputTokens:              resp.UsageMetadata.CandidatesTokenCount,
+		CachedInputTokens:         resp.UsageMetadata.CachedContentTokenCount,
+		ReasoningTokens:           resp.UsageMetadata.ThoughtsTokenCount,
+		ToolUsePromptTokens:       resp.UsageMetadata.ToolUsePromptTokenCount,
+		TotalTokens:               resp.UsageMetadata.TotalTokenCount,
+		ReasoningIncludedInOutput: false,
 	}
 	if usage.TotalTokens == 0 {
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens

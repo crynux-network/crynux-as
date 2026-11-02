@@ -48,6 +48,11 @@ type NormalizedUsage struct {
 	ReasoningTokens       uint64 `json:"reasoning_tokens"`
 	ToolUsePromptTokens   uint64 `json:"tool_use_prompt_tokens"`
 	TotalTokens           uint64 `json:"total_tokens"`
+	// ReasoningIncludedInOutput is true when ReasoningTokens are already counted
+	// inside OutputTokens and must be subtracted before separate billing.
+	// OpenAI completion_tokens include reasoning_tokens. Google
+	// candidatesTokenCount does not include thoughtsTokenCount.
+	ReasoningIncludedInOutput bool `json:"reasoning_included_in_output,omitempty"`
 }
 
 type StreamEventKind string
