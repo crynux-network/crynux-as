@@ -101,6 +101,7 @@ type AppConfig struct {
 		JobRetentionDays              uint64            `mapstructure:"job_retention_days"`
 		TaskResultDir                 string            `mapstructure:"task_result_dir"`
 		ProjectRecentRequestsLimit    uint64            `mapstructure:"project_recent_requests_limit"`
+		MaxCrynuxTaskArgsBytes        uint64            `mapstructure:"max_crynux_task_args_bytes"`
 	} `mapstructure:"llm"`
 
 	UsageStats struct {
@@ -181,6 +182,7 @@ type ProviderConfig struct {
 	StreamSubscriberBuffer        uint64                           `mapstructure:"stream_subscriber_buffer"`
 	ShutdownTimeoutSeconds        uint64                           `mapstructure:"shutdown_timeout_seconds"`
 	MaxSecretBytes                uint64                           `mapstructure:"max_secret_bytes"`
+	MaxInputImageBytes            uint64                           `mapstructure:"max_input_image_bytes"`
 	KeyEncryption                 ProviderKeyEncryptionConfig      `mapstructure:"key_encryption"`
 	ServicesFile                  string                           `mapstructure:"services_file"`
 	Services                      map[string]ProviderServiceConfig `mapstructure:"-"`

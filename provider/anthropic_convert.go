@@ -40,21 +40,21 @@ func convertCanonicalToAnthropic(req CanonicalRequest) ([]byte, error) {
 		switch msg.Role {
 		case "system", "developer":
 			flushToolResults()
-			if msg.Content != "" {
-				systemParts = append(systemParts, msg.Content)
+			if text := msg.Text(); text != "" {
+				systemParts = append(systemParts, text)
 			}
 		case "tool":
 			block := map[string]any{
 				"type":        "tool_result",
 				"tool_use_id": msg.ToolCallID,
-				"content":     msg.Content,
+				"content":     msg.Text(),
 			}
 			pendingToolResults = append(pendingToolResults, block)
 		case "assistant":
 			flushToolResults()
 			content := make([]map[string]any, 0)
-			if msg.Content != "" {
-				content = append(content, map[string]any{"type": "text", "text": msg.Content})
+			if text := msg.Text(); text != "" {
+				content = append(content, map[string]any{"type": "text", "text": text})
 			}
 			for _, tc := range msg.ToolCalls {
 				var input any = map[string]any{}
@@ -78,7 +78,7 @@ func convertCanonicalToAnthropic(req CanonicalRequest) ([]byte, error) {
 			flushToolResults()
 			messages = append(messages, map[string]any{
 				"role":    "user",
-				"content": msg.Content,
+				"content": anthropicUserContent(msg),
 			})
 		}
 	}
@@ -117,6 +117,32 @@ func convertCanonicalToAnthropic(req CanonicalRequest) ([]byte, error) {
 		out["output_config"] = map[string]any{"format": format}
 	}
 	return json.Marshal(out)
+}
+
+// anthropicUserContent returns a plain string for text-only messages and ordered
+// text and base64 image source blocks otherwise. The OpenAI detail value is not
+// part of the Anthropic image block and is dropped.
+func anthropicUserContent(msg CanonicalMessage) any {
+	if !msg.HasImages() {
+		return msg.Text()
+	}
+	content := make([]map[string]any, 0, len(msg.Parts))
+	for _, part := range msg.Parts {
+		switch part.Type {
+		case CanonicalPartText:
+			content = append(content, map[string]any{"type": "text", "text": part.Text})
+		case CanonicalPartImage:
+			content = append(content, map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": part.MIMEType,
+					"data":       part.Data,
+				},
+			})
+		}
+	}
+	return content
 }
 
 func joinSystem(parts []string) string {

@@ -279,11 +279,6 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	} else if validationErr != nil {
 		return nil, fmt.Errorf("invalid task_args: %s", validationErr.Error())
 	}
-	if *request.TaskType == models.TaskTypeImage {
-		if err := models.ValidateImageTaskArgsImagesSize(request.TaskArgs); err != nil {
-			return nil, err
-		}
-	}
 	if err := service.ValidateOptionalQueueTimeout(request.QueueTimeout); err != nil {
 		return nil, err
 	}
@@ -321,6 +316,9 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := models.ValidateCrynuxTaskArgsSize(taskArgs, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
+		return nil, err
 	}
 	kind := huggingface.ModelKindLLM
 	if *request.TaskType == models.TaskTypeImage {

@@ -46,10 +46,15 @@ type Message struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 }
 
+// MessageContentBlock is one ordered text or image content block.
+// MimeType and Detail carry Provider image metadata and MUST be cleared before
+// the block is serialized into Crynux TaskArgs.
 type MessageContentBlock struct {
-	Type   string `json:"type"`
-	Text   string `json:"text,omitempty"`
-	Base64 string `json:"base64,omitempty"`
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	Base64   string `json:"base64,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 type GPTGenerationConfig struct {

@@ -33,7 +33,7 @@ Platform economics remain determined by:
 
 `llm.max_task_price_cnx.<service_provider>` MUST cap that Service Provider's consumer charge and Key Owner earning through the same post-cap `billable_gwei`. The job billing snapshot MUST store the configured CNX string used for that cap.
 
-`llm.min_task_price_cnx.providers` MUST define the shared Provider admission floor in CNX units. For the current request's estimated input bytes and maximum generated tokens, admission MUST:
+`llm.min_task_price_cnx.providers` MUST define the shared Provider admission floor in CNX units. For the current request's estimated input tokens and maximum generated tokens, admission MUST:
 
 1. estimate Provider units for every configured Provider model under those same request parameters;
 2. select the cheapest positive unit estimate;
@@ -105,7 +105,17 @@ Provider admission in auto mode MUST read one complete published snapshot. It MU
 
 Admission MUST reserve an upper estimate before queueing.
 
-For text inputs, the estimate MUST count the UTF-8 byte length of all text, tool definitions, structured-output schemas, instructions, and locally expanded history as input-token estimate. This one-byte-per-token estimate intentionally over-reserves relative to ordinary tokenization.
+For text inputs, the estimate MUST count the UTF-8 byte length of all text, tool definitions, structured-output schemas, instructions, and locally expanded history as the text input-token upper bound. The `image_url` value of Chat Completions `image_url` parts and Responses `input_image` parts MUST be excluded from that text walk. This one-byte-per-token text estimate intentionally over-reserves relative to ordinary tokenization.
+
+For image inputs, admission MUST parse the same canonical request used by Provider adapters, validate JPEG/PNG/WebP base64 payloads against `provider.max_input_image_bytes`, read only image headers for width and height, and estimate visual input tokens with the target Service Provider's official model-family rules. Those rules live in `provider/` code, not YAML. A request that includes images for a model whose image token rule is unknown MUST return HTTP 400 before Credits reservation. A text-only request for that model MUST still be accepted.
+
+The admission input-token estimate MUST be:
+
+```text
+estimated_input_tokens = estimated_text_input_tokens + estimated_image_input_tokens
+```
+
+Both parts use the model's configured `input_tokens` weight family. Settlement MUST continue to use the Service Provider's returned actual input tokens and MUST NOT charge image tokens a second time.
 
 For generated usage:
 
@@ -122,9 +132,11 @@ For input categories not known before execution:
 The estimated Provider units MUST be:
 
 ```text
-estimated_input_bytes * maximum_input_weight
+estimated_input_tokens * maximum_input_weight
 + maximum_generated_tokens * maximum_generated_weight
 ```
+
+The job billing snapshot MUST store `estimated_input_tokens`, `estimated_text_input_tokens`, and `estimated_image_input_tokens`.
 
 The estimated billable amount MUST then use the same Cost Level and cap rules as final settlement. Admission MUST apply the shared `min_task_price_cnx.providers` Cost Level lower bound derived from the cheapest configured Provider model under the current request's estimated input and maximum generated tokens before Credits reservation.
 

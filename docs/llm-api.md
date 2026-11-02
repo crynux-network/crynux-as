@@ -28,6 +28,8 @@ The chat, completions, and responses request and response formats MUST be OpenAI
 
 Chat Completions MUST accept `chat_template_kwargs` and `reasoning_effort`. Responses MUST accept `chat_template_kwargs` and `reasoning.effort`. For Crynux models, Chat Completions, Completions, and Responses MUST accept optional `dtype` and `quantization_config` body fields used to select a loaded-models row and populate canonical TaskArgs. Provider models MUST reject those Crynux execution fields. Chat Completions, Completions, Responses, Images generations, and Images edits MUST accept optional top-level `queue_timeout` as specified in Queue Timeout. AS MUST map applicable public fields to canonical `template_args` as specified in [model-compatibility/architecture.md](./model-compatibility/architecture.md). `chat_template_kwargs` MUST carry model-template keys such as `enable_thinking` or `thinking`. `reasoning_effort` and `reasoning.effort` MUST only inject `enable_thinking`; they MUST NOT rename keys for other templates.
 
+Provider Chat Completions and Responses MUST accept OpenAI-compatible base64 image inputs as specified in [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md): Chat Completions `image_url` parts and Responses `input_image` parts, JPEG/PNG/WebP only, no HTTP URLs, bounded by `provider.max_input_image_bytes`. Crynux LLM and Image jobs MUST enforce `llm.max_crynux_task_args_bytes` on the final TaskArgs JSON before Credits reservation.
+
 ## Images Generations API
 
 ### `POST /api/<endpoint_token>/v1/images/generations`

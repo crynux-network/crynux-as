@@ -33,6 +33,7 @@ func setupRawImagePrepareEnv(t *testing.T, loadedRows []map[string]any) {
 	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
 	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	cfg.LLM.EmptyQueueMedianPriorityGwei = "1"
+	cfg.LLM.MaxCrynuxTaskArgsBytes = 1000000
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() {
 		config.SetConfigForTest(nil)
@@ -206,6 +207,26 @@ func TestPrepareTaskImageAutoPersistsResolvedTaskArgs(t *testing.T) {
 	}
 	if prepared.minVram == nil || *prepared.minVram != 18 {
 		t.Fatalf("minVram = %#v", prepared.minVram)
+	}
+}
+
+func TestPrepareTaskRejectsOversizedFinalTaskArgs(t *testing.T) {
+	setupRawImagePrepareEnv(t, []map[string]any{
+		testImageLoadedRow("plain", "org/image", "bfloat16", nil, nil, 18),
+	})
+	config.GetConfig().LLM.MaxCrynuxTaskArgsBytes = 200
+	taskType := models.TaskTypeImage
+	_, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
+		TaskType: &taskType,
+		TaskArgs: `{
+			"version": "3.7.1",
+			"base_model": {"name": "org/image"},
+			"prompt": "` + strings.Repeat("a", 150) + `",
+			"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1}
+		}`,
+	})
+	if err == nil || err.Error() != "task_args size exceeds the 200-byte limit" {
+		t.Fatalf("error = %v", err)
 	}
 }
 

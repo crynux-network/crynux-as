@@ -94,6 +94,11 @@ func CreateResponse(c *gin.Context) {
 		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
 		return
 	}
+	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, appCfg.LLM.MaxCrynuxTaskArgsBytes); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	userVram, err := vramlimit.ResolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
 	if err != nil {

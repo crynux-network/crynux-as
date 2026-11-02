@@ -4,16 +4,12 @@ import (
 	"crynux_as/config"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 	_ "github.com/santhosh-tekuri/jsonschema/v5/httploader"
 )
-
-// MaxImageTaskArgsImagesBytes is the maximum total byte length of all Image
-// TaskArgs `images` entries. Node workers reject WebSocket frames above 1 MiB,
-// and those frames carry the full TaskArgs JSON dominated by these strings.
-const MaxImageTaskArgsImagesBytes = 1 << 20
 
 var sdInferenceTaskSchema *jsonschema.Schema
 var gptInferenceTaskSchema *jsonschema.Schema
@@ -28,22 +24,12 @@ func ValidateTaskArgsJsonStr(jsonStr string, taskType TaskType) (validationError
 	return validateSDFinetuneLoraTaskArgs(jsonStr)
 }
 
-// ValidateImageTaskArgsImagesSize rejects Image TaskArgs whose `images` strings
-// exceed MaxImageTaskArgsImagesBytes in total. Length is measured on the JSON
-// string values as stored (including data-URL prefixes); base64 is not decoded.
-func ValidateImageTaskArgsImagesSize(jsonStr string) error {
-	var payload struct {
-		Images []string `json:"images"`
-	}
-	if err := json.Unmarshal([]byte(jsonStr), &payload); err != nil {
-		return err
-	}
-	total := 0
-	for _, image := range payload.Images {
-		total += len(image)
-		if total > MaxImageTaskArgsImagesBytes {
-			return errors.New("task_args.images total size exceeds the 1mb limit")
-		}
+// ValidateCrynuxTaskArgsSize rejects final Crynux TaskArgs JSON whose byte
+// length exceeds maxBytes. Node workers receive the full TaskArgs JSON inside
+// one WebSocket frame, so the limit applies to the complete serialized string.
+func ValidateCrynuxTaskArgsSize(jsonStr string, maxBytes uint64) error {
+	if uint64(len(jsonStr)) > maxBytes {
+		return fmt.Errorf("task_args size exceeds the %d-byte limit", maxBytes)
 	}
 	return nil
 }

@@ -20,6 +20,8 @@ All Provider Key Sharing values MUST be explicit in every YAML template and in t
 The YAML configuration shape is:
 
 ```yaml
+llm:
+  max_crynux_task_args_bytes: 1000000
 provider:
   max_concurrency_per_key: 2
   scheduler_interval_milliseconds: 100
@@ -32,6 +34,7 @@ provider:
   stream_subscriber_buffer: 128
   shutdown_timeout_seconds: 600
   max_secret_bytes: 4096
+  max_input_image_bytes: 10485760
   key_encryption:
     encryption_key_file: "config/secrets/provider_key_encryption.txt"
   services_file: "config/provider_services.json"
@@ -46,6 +49,8 @@ provider:
         max_withdrawals_per_day: 3
         fee_receiver_address: "0x0000000000000000000000000000000000000003"
 ```
+
+`llm.max_crynux_task_args_bytes` MUST limit the final Crynux TaskArgs JSON byte length before Credits reservation. `provider.max_input_image_bytes` MUST limit the total decoded base64 image payload size of one Provider request.
 
 `provider.services_file` MUST point to a JSON object whose keys are Service Provider IDs. Each value MUST define that Service Provider's display name, base URL, timeouts, and models. The template is [config/provider_services.example.json](../../config/provider_services.example.json).
 

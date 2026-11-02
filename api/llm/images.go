@@ -71,6 +71,11 @@ func ImagesGenerations(c *gin.Context) {
 	if userVram != nil {
 		billedVram = *userVram
 	}
+	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
+		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if validationErr, err := models.ValidateTaskArgsJsonStr(taskArgsJSON, models.TaskTypeImage); err != nil {
 		log.Errorf("Validate image task args for project %d failed: %v", project.ID, err)
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
@@ -238,7 +243,7 @@ func ImagesEdits(c *gin.Context) {
 	if userVram != nil {
 		billedVram = *userVram
 	}
-	if err := models.ValidateImageTaskArgsImagesSize(taskArgsJSON); err != nil {
+	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
 		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return

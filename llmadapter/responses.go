@@ -310,7 +310,7 @@ func BuildResponsesTaskArgsWithHistory(req ResponsesRequest, history []models.Me
 		taskArgs.DType = models.DType(strings.ToLower(strings.TrimSpace(req.Dtype)))
 	}
 
-	taskMessages, err := BuildTemplateToolCallMessages(req.Model, messages)
+	taskMessages, err := BuildTemplateToolCallMessages(req.Model, crynuxTaskMessages(messages))
 	if err != nil {
 		return "", newValidationError("input", err.Error())
 	}
@@ -462,10 +462,14 @@ func MessagesToResponsesInputItems(messages []models.Message) ([]map[string]any,
 			// System/instructions are not inherited into input items.
 			continue
 		case models.LLMRoleUser:
+			content, err := userMessageToResponsesContent(msg.Content)
+			if err != nil {
+				return nil, err
+			}
 			items = append(items, map[string]any{
 				"type":    "message",
 				"role":    "user",
-				"content": messageContentToString(msg.Content),
+				"content": content,
 			})
 		case models.LLMRoleAssistant:
 			text := messageContentToString(msg.Content)
@@ -495,6 +499,46 @@ func MessagesToResponsesInputItems(messages []models.Message) ([]map[string]any,
 		}
 	}
 	return items, nil
+}
+
+// userMessageToResponsesContent converts user content into a Responses input
+// content value. Image blocks become ordered input_image data URLs. Blocks
+// without a stored MIME type, such as Crynux history, use the MIME type sniffed
+// from the payload.
+func userMessageToResponsesContent(content any) (any, error) {
+	blocks, ok, err := messageContentBlocks(content)
+	if err != nil {
+		return nil, newValidationError("previous_response_id", "previous response is invalid")
+	}
+	if !ok {
+		return messageContentToString(content), nil
+	}
+	parts := make([]map[string]any, 0, len(blocks))
+	for _, block := range blocks {
+		switch block.Type {
+		case "text":
+			parts = append(parts, map[string]any{"type": "input_text", "text": block.Text})
+		case "image":
+			mimeType := block.MimeType
+			if mimeType == "" {
+				mimeType, err = DetectImageMIMEType(block.Base64)
+				if err != nil {
+					return nil, newValidationError("input", fmt.Sprintf("image content: %v", err))
+				}
+			}
+			part := map[string]any{
+				"type":      "input_image",
+				"image_url": FormatImageDataURL(mimeType, block.Base64),
+			}
+			if block.Detail != "" {
+				part["detail"] = block.Detail
+			}
+			parts = append(parts, part)
+		default:
+			return nil, newValidationError("previous_response_id", "previous response is invalid")
+		}
+	}
+	return parts, nil
 }
 
 // ExpandProviderResponsesRequest expands previous_response_id history into input
@@ -819,11 +863,16 @@ func parseResponsesMessageContent(index int, raw json.RawMessage) (any, error) {
 				if part.ImageURL == "" {
 					return nil, newValidationError("input", fmt.Sprintf("input[%d].content[%d].image_url is required", index, partIndex))
 				}
-				base64Payload, err := ExtractBase64PayloadFromDataURL(part.ImageURL)
+				parsed, err := ParseImageDataURL(part.ImageURL)
 				if err != nil {
 					return nil, newValidationError("input", fmt.Sprintf("input[%d].content[%d]: %v", index, partIndex, err))
 				}
-				blocks = append(blocks, models.MessageContentBlock{Type: "image", Base64: base64Payload})
+				blocks = append(blocks, models.MessageContentBlock{
+					Type:     "image",
+					Base64:   parsed.Data,
+					MimeType: parsed.MIMEType,
+					Detail:   part.Detail,
+				})
 			default:
 				return nil, newValidationError("input", fmt.Sprintf("input[%d].content[%d]: unsupported type %q", index, partIndex, part.Type))
 			}
@@ -841,6 +890,7 @@ type responsesContentInputPart struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 func responsesRoleToLLMRole(role string) models.LLMRole {

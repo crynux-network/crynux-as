@@ -20,6 +20,46 @@ type llmTaskArgsPayload struct {
 	QuantizationConfig any                         `json:"quantization_config"`
 }
 
+// crynuxTaskMessages returns a copy of messages whose image blocks contain only
+// the fields accepted by Crynux LLM workers.
+func crynuxTaskMessages(messages []models.Message) []models.Message {
+	out := make([]models.Message, len(messages))
+	for i, msg := range messages {
+		out[i] = msg
+		blocks, ok := msg.Content.([]models.MessageContentBlock)
+		if !ok {
+			continue
+		}
+		stripped := make([]models.MessageContentBlock, len(blocks))
+		for j, block := range blocks {
+			stripped[j] = models.MessageContentBlock{Type: block.Type, Text: block.Text, Base64: block.Base64}
+		}
+		out[i].Content = stripped
+	}
+	return out
+}
+
+// messageContentBlocks returns content as ordered content blocks when it is a
+// block array, either typed or decoded from stored JSON.
+func messageContentBlocks(content any) ([]models.MessageContentBlock, bool, error) {
+	switch v := content.(type) {
+	case []models.MessageContentBlock:
+		return v, true, nil
+	case []any:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return nil, false, err
+		}
+		var blocks []models.MessageContentBlock
+		if err := json.Unmarshal(raw, &blocks); err != nil {
+			return nil, false, err
+		}
+		return blocks, true, nil
+	default:
+		return nil, false, nil
+	}
+}
+
 func buildLLMTaskArgsPayload(args models.GPTTaskArgs, messages any, seed *int) llmTaskArgsPayload {
 	version := args.Version
 	if version == "" {

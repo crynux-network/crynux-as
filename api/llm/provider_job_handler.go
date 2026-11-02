@@ -36,6 +36,12 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 
 	db := config.GetDB()
 	appCfg := config.GetConfig()
+	inputEstimate, err := service.EstimateProviderInputTokens(route, apiType, body, appCfg.Provider.MaxInputImageBytes)
+	if err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	priorityGwei, err := service.ResolveProviderEffectivePriority(project)
 	if err != nil {
 		log.Errorf("resolve provider priority failed: %v", err)
@@ -43,9 +49,8 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 		writeServerError(c)
 		return
 	}
-	inputBytes := service.EstimateProviderInputBytes(body)
 	maxCompletion := service.ResolveMaxCompletionTokens(parsed.maxTokens, parsed.maxCompletionTokens, appCfg.LLM.DefaultMaxTokens)
-	snapshot, credits, err := service.BuildProviderBillingData(project, route, priorityGwei, inputBytes, maxCompletion, nil)
+	snapshot, credits, err := service.BuildProviderBillingData(project, route, priorityGwei, inputEstimate, maxCompletion, nil)
 	if err != nil {
 		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), priorityGwei, nil)
 		if errors.Is(err, service.ErrTaskFeeBelowMinimum) ||

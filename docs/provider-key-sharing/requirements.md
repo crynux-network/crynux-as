@@ -22,8 +22,11 @@
 8. A Provider model name MUST be globally unique among Provider models and MUST NOT collide with a Crynux model name.
 9. AS MUST expose and forward the official model name without adding a Service Provider prefix or alias.
 10. Every configured Provider model MUST support the AS Chat Completions and Responses APIs through its Service Provider adapter. Provider models MUST reject Completions.
-11. AS MUST implement Responses `previous_response_id` locally for every Provider model. Shared API Key selection MAY assign a different key to a later request, so a previous response stored under one upstream key is not available to the next request. Anthropic and Google adapters have no equivalent previous-response store. AS MUST expand same-project retained history before Provider submission and MUST NOT forward `previous_response_id` to any Service Provider.
+11. AS MUST implement Responses `previous_response_id` locally for every Provider model. Shared API Key selection MAY assign a different key to a later request, so a previous response stored under one upstream key is not available to the next request. Anthropic and Google adapters have no equivalent previous-response store. AS MUST expand same-project retained history before Provider submission and MUST NOT forward `previous_response_id` to any Service Provider. Expanded history MUST preserve ordered image content with original MIME type, base64 payload, and `detail` when present.
 12. The OpenAI adapter MUST send both public Chat Completions and public Responses requests to OpenAI Chat Completions. It MUST NOT call OpenAI Responses. Public Responses results MUST be assembled by AS after the Chat Completions response.
+13. Provider Chat Completions and Responses MUST accept OpenAI-compatible base64 image inputs for `image/jpeg`, `image/png`, and `image/webp` only. HTTP and HTTPS image URLs, unsupported MIME types, invalid base64, images outside user messages, and total decoded image payloads above `provider.max_input_image_bytes` MUST return HTTP 400 before Credits reservation.
+14. OpenAI adapters MUST pass through a valid image `detail` value. Anthropic and Google adapters MUST ignore `detail`.
+15. Admission MUST estimate text input tokens without counting image base64 payloads, estimate image input tokens with Provider model-family rules in `provider/`, and reserve Credits from the sum using the model's input-token weight. Settlement MUST use actual upstream input tokens and MUST NOT charge images twice.
 
 ## Key Lifecycle
 

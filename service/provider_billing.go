@@ -3,6 +3,7 @@ package service
 import (
 	"crynux_as/config"
 	"crynux_as/models"
+	"crynux_as/provider"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,8 +60,21 @@ func maxWeight(weights map[string]string, keys ...string) (*big.Rat, error) {
 	return max, nil
 }
 
-// EstimateProviderInputBytes counts UTF-8 bytes of text fields in a Provider request body.
-func EstimateProviderInputBytes(requestJSON []byte) uint64 {
+// ProviderInputTokenEstimate is the admission upper bound of Provider input tokens.
+type ProviderInputTokenEstimate struct {
+	TextTokens  uint64
+	ImageTokens uint64
+}
+
+// Total returns the combined text and image input-token estimate.
+func (e ProviderInputTokenEstimate) Total() uint64 {
+	return e.TextTokens + e.ImageTokens
+}
+
+// EstimateProviderTextInputTokens returns the UTF-8 byte count of text fields in
+// a Provider request body as the text input-token upper bound. The image_url
+// value of image_url and input_image content parts is excluded.
+func EstimateProviderTextInputTokens(requestJSON []byte) uint64 {
 	if len(requestJSON) == 0 {
 		return 0
 	}
@@ -88,7 +102,11 @@ func EstimateProviderInputBytes(requestJSON []byte) uint64 {
 		}
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(v, &obj); err == nil {
-			for _, item := range obj {
+			skipImageURL := isImageContentPart(obj)
+			for key, item := range obj {
+				if skipImageURL && key == "image_url" {
+					continue
+				}
 				walk(item)
 			}
 		}
@@ -98,6 +116,38 @@ func EstimateProviderInputBytes(requestJSON []byte) uint64 {
 		return uint64(len(requestJSON))
 	}
 	return uint64(total)
+}
+
+func isImageContentPart(obj map[string]json.RawMessage) bool {
+	var typ string
+	if err := json.Unmarshal(obj["type"], &typ); err != nil {
+		return false
+	}
+	return typ == "image_url" || typ == "input_image"
+}
+
+// EstimateProviderInputTokens validates Provider image inputs and returns the
+// admission input-token upper bound for one request. Every returned error is
+// caused by the request content: invalid JSON or images, images above
+// maxImageBytes in total, or images sent to a model without a known image token
+// rule.
+func EstimateProviderInputTokens(route ProviderModelRoute, apiType models.TaskAPIType, requestJSON []byte, maxImageBytes uint64) (ProviderInputTokenEstimate, error) {
+	canonical, err := provider.ParseCanonicalRequest(requestJSON, route.ModelName, apiType, 0)
+	if err != nil {
+		return ProviderInputTokenEstimate{}, err
+	}
+	images, err := provider.ValidateCanonicalImages(canonical, maxImageBytes)
+	if err != nil {
+		return ProviderInputTokenEstimate{}, err
+	}
+	imageTokens, err := provider.EstimateImageInputTokens(route.ServiceProvider, route.ModelName, images)
+	if err != nil {
+		return ProviderInputTokenEstimate{}, err
+	}
+	return ProviderInputTokenEstimate{
+		TextTokens:  EstimateProviderTextInputTokens(requestJSON),
+		ImageTokens: imageTokens,
+	}, nil
 }
 
 func CalculateProviderUnits(usage ProviderUsageComponents, weights map[string]string) (*big.Rat, error) {
@@ -152,7 +202,7 @@ func CalculateProviderUnits(usage ProviderUsageComponents, weights map[string]st
 	return units, nil
 }
 
-func EstimateProviderUnits(weights map[string]string, inputBytes, maxOutputTokens uint64) (*big.Rat, error) {
+func EstimateProviderUnits(weights map[string]string, inputTokens, maxOutputTokens uint64) (*big.Rat, error) {
 	inputWeight, err := maxWeight(weights, "input_tokens", "cached_input_tokens", "cache_write_input_tokens", "tool_use_prompt_tokens")
 	if err != nil {
 		return nil, err
@@ -162,7 +212,7 @@ func EstimateProviderUnits(weights map[string]string, inputBytes, maxOutputToken
 		return nil, err
 	}
 	units := big.NewRat(0, 1)
-	units.Add(units, new(big.Rat).Mul(new(big.Rat).SetUint64(inputBytes), inputWeight))
+	units.Add(units, new(big.Rat).Mul(new(big.Rat).SetUint64(inputTokens), inputWeight))
 	units.Add(units, new(big.Rat).Mul(new(big.Rat).SetUint64(maxOutputTokens), outputWeight))
 	return units, nil
 }
@@ -269,11 +319,11 @@ func ceilPriorityFromFeeAndUnits(minFeeGwei *big.Int, units *big.Rat) (*big.Int,
 
 // CheapestProviderUnits returns the smallest estimated Provider units across all
 // configured Provider models for the same input and maximum-output estimates.
-func CheapestProviderUnits(inputBytes, maxOutputTokens uint64) (*big.Rat, error) {
+func CheapestProviderUnits(inputTokens, maxOutputTokens uint64) (*big.Rat, error) {
 	routes := ListConfiguredProviderModels()
 	var cheapest *big.Rat
 	for _, route := range routes {
-		units, err := EstimateProviderUnits(route.UsageWeights, inputBytes, maxOutputTokens)
+		units, err := EstimateProviderUnits(route.UsageWeights, inputTokens, maxOutputTokens)
 		if err != nil {
 			return nil, fmt.Errorf("estimate units for %s: %w", route.ModelName, err)
 		}
@@ -293,7 +343,7 @@ func CheapestProviderUnits(inputBytes, maxOutputTokens uint64) (*big.Rat, error)
 // ResolveProviderSharedMinPriority converts llm.min_task_price_cnx.providers into
 // the shared Cost Level lower bound for one request workload. When the configured
 // providers minimum is 0 or no Provider models are configured, it returns nil.
-func ResolveProviderSharedMinPriority(inputBytes, maxOutputTokens uint64) (*big.Int, error) {
+func ResolveProviderSharedMinPriority(inputTokens, maxOutputTokens uint64) (*big.Int, error) {
 	cfg := config.GetConfig()
 	if cfg == nil {
 		return nil, errors.New("config is not initialized")
@@ -305,7 +355,7 @@ func ResolveProviderSharedMinPriority(inputBytes, maxOutputTokens uint64) (*big.
 	if minFeeGwei.Sign() <= 0 {
 		return nil, nil
 	}
-	cheapestUnits, err := CheapestProviderUnits(inputBytes, maxOutputTokens)
+	cheapestUnits, err := CheapestProviderUnits(inputTokens, maxOutputTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +449,8 @@ func BuildProviderBillingData(
 	project *models.Project,
 	route ProviderModelRoute,
 	effectivePriority *big.Int,
-	inputBytes, maxOutputTokens uint64,
+	input ProviderInputTokenEstimate,
+	maxOutputTokens uint64,
 	lockedCredits *big.Int,
 ) (models.ProviderTaskBillingData, *big.Int, error) {
 	cfg := config.GetConfig()
@@ -407,14 +458,15 @@ func BuildProviderBillingData(
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
-	units, err := EstimateProviderUnits(route.UsageWeights, inputBytes, maxOutputTokens)
+	inputTokens := input.Total()
+	units, err := EstimateProviderUnits(route.UsageWeights, inputTokens, maxOutputTokens)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
 	feeAtPriority := func(priority *big.Int) (*big.Rat, error) {
 		return ProviderBillableGwei(priority, units, maxTaskPriceCNX)
 	}
-	sharedMinPriority, err := ResolveProviderSharedMinPriority(inputBytes, maxOutputTokens)
+	sharedMinPriority, err := ResolveProviderSharedMinPriority(inputTokens, maxOutputTokens)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}
@@ -435,15 +487,17 @@ func BuildProviderBillingData(
 		lockedCredits = credits
 	}
 	return models.ProviderTaskBillingData{
-		ServiceProvider:        string(route.ServiceProvider),
-		ModelName:              route.ModelName,
-		UsageWeights:           route.UsageWeights,
-		EffectivePriorityGwei:  adjustedPriority.String(),
-		CreditsPerGwei:         cfg.LLM.CreditsPerGwei,
-		MaxTaskPriceCNX:        maxTaskPriceCNX,
-		EstimatedInputBytes:    inputBytes,
-		EstimatedOutputTokens:  maxOutputTokens,
-		EstimatedProviderUnits: units.FloatString(18),
-		LockedCredits:          lockedCredits.String(),
+		ServiceProvider:           string(route.ServiceProvider),
+		ModelName:                 route.ModelName,
+		UsageWeights:              route.UsageWeights,
+		EffectivePriorityGwei:     adjustedPriority.String(),
+		CreditsPerGwei:            cfg.LLM.CreditsPerGwei,
+		MaxTaskPriceCNX:           maxTaskPriceCNX,
+		EstimatedInputTokens:      inputTokens,
+		EstimatedTextInputTokens:  input.TextTokens,
+		EstimatedImageInputTokens: input.ImageTokens,
+		EstimatedOutputTokens:     maxOutputTokens,
+		EstimatedProviderUnits:    units.FloatString(18),
+		LockedCredits:             lockedCredits.String(),
 	}, credits, nil
 }

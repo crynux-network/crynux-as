@@ -278,7 +278,7 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 		taskArgs.DType = models.DType(strings.ToLower(strings.TrimSpace(req.Dtype)))
 	}
 
-	taskMessages, err := BuildTemplateToolCallMessages(req.Model, messages)
+	taskMessages, err := BuildTemplateToolCallMessages(req.Model, crynuxTaskMessages(messages))
 	if err != nil {
 		return "", ChatCompletionsMeta{}, newValidationError("messages", err.Error())
 	}
@@ -452,13 +452,15 @@ func convertReqContentToTaskContent(content *CCReqMessageContent) (any, error) {
 			if part.ImageURL == nil {
 				return nil, fmt.Errorf("content part %d: image_url is required when type is image_url", i)
 			}
-			base64Payload, err := ExtractBase64PayloadFromDataURL(part.ImageURL.URL)
+			parsed, err := ParseImageDataURL(part.ImageURL.URL)
 			if err != nil {
 				return nil, fmt.Errorf("content part %d: %w", i, err)
 			}
 			blocks = append(blocks, models.MessageContentBlock{
-				Type:   "image",
-				Base64: base64Payload,
+				Type:     "image",
+				Base64:   parsed.Data,
+				MimeType: parsed.MIMEType,
+				Detail:   part.ImageURL.Detail,
 			})
 		default:
 			return nil, fmt.Errorf("content part %d: unsupported type %q", i, part.Type)

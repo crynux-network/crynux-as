@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"encoding/json"
 	"fmt"
@@ -23,12 +24,57 @@ type CanonicalRequest struct {
 	ParallelToolCalls   *bool
 }
 
+const (
+	CanonicalPartText  = "text"
+	CanonicalPartImage = "image"
+)
+
+// CanonicalContentPart is one ordered text or base64 image content part.
+type CanonicalContentPart struct {
+	Type     string
+	Text     string
+	MIMEType string
+	// Data is the raw base64 image payload without the data URL prefix.
+	Data string
+	// Detail is the OpenAI image detail value. Only the OpenAI converter uses it.
+	Detail string
+}
+
 type CanonicalMessage struct {
 	Role       string
-	Content    string
+	Parts      []CanonicalContentPart
 	ToolCalls  []AssembledToolCall
 	ToolCallID string
 	Name       string
+}
+
+// TextOnlyParts returns a single text part, or no parts for an empty string.
+func TextOnlyParts(s string) []CanonicalContentPart {
+	if s == "" {
+		return nil
+	}
+	return []CanonicalContentPart{{Type: CanonicalPartText, Text: s}}
+}
+
+// Text concatenates all text parts in order.
+func (m CanonicalMessage) Text() string {
+	var b strings.Builder
+	for _, part := range m.Parts {
+		if part.Type == CanonicalPartText {
+			b.WriteString(part.Text)
+		}
+	}
+	return b.String()
+}
+
+// HasImages reports whether the message contains at least one image part.
+func (m CanonicalMessage) HasImages() bool {
+	for _, part := range m.Parts {
+		if part.Type == CanonicalPartImage {
+			return true
+		}
+	}
+	return false
 }
 
 type CanonicalTool struct {
@@ -115,13 +161,13 @@ func parseChatMessage(raw json.RawMessage) (CanonicalMessage, error) {
 	if err := json.Unmarshal(raw, &msg); err != nil {
 		return CanonicalMessage{}, err
 	}
-	content, err := flattenContent(msg.Content)
+	parts, err := parseContentParts(msg.Content)
 	if err != nil {
 		return CanonicalMessage{}, err
 	}
 	out := CanonicalMessage{
 		Role:       msg.Role,
-		Content:    content,
+		Parts:      parts,
 		Name:       msg.Name,
 		ToolCallID: msg.ToolCallID,
 	}
@@ -190,7 +236,7 @@ func parseResponsesAsCanonical(requestJSON []byte, model string, defaultMaxToken
 		out.MaxTokens = *raw.MaxOutputTokens
 	}
 	if raw.Instructions != "" {
-		out.Messages = append(out.Messages, CanonicalMessage{Role: "system", Content: raw.Instructions})
+		out.Messages = append(out.Messages, CanonicalMessage{Role: "system", Parts: TextOnlyParts(raw.Instructions)})
 	}
 	if format := responsesTextFormat(raw.Text); format != nil {
 		out.ResponseFormat = format
@@ -245,7 +291,7 @@ func parseResponsesInput(input any) ([]CanonicalMessage, error) {
 	}
 	switch v := input.(type) {
 	case string:
-		return []CanonicalMessage{{Role: "user", Content: v}}, nil
+		return []CanonicalMessage{{Role: "user", Parts: TextOnlyParts(v)}}, nil
 	case []any:
 		var out []CanonicalMessage
 		for _, item := range v {
@@ -253,7 +299,7 @@ func parseResponsesInput(input any) ([]CanonicalMessage, error) {
 			if err != nil {
 				return nil, err
 			}
-			if msg.Role != "" || len(msg.ToolCalls) > 0 || msg.Content != "" {
+			if msg.Role != "" || len(msg.ToolCalls) > 0 || len(msg.Parts) > 0 {
 				out = append(out, msg)
 			}
 		}
@@ -267,7 +313,7 @@ func parseResponsesInput(input any) ([]CanonicalMessage, error) {
 		if err := json.Unmarshal(raw, &items); err != nil {
 			var s string
 			if err2 := json.Unmarshal(raw, &s); err2 == nil {
-				return []CanonicalMessage{{Role: "user", Content: s}}, nil
+				return []CanonicalMessage{{Role: "user", Parts: TextOnlyParts(s)}}, nil
 			}
 			return nil, err
 		}
@@ -291,8 +337,11 @@ func parseResponsesInputItem(item any) (CanonicalMessage, error) {
 		if role == "" {
 			role = "user"
 		}
-		content, _ := flattenAnyContent(obj["content"])
-		return CanonicalMessage{Role: role, Content: content}, nil
+		parts, err := parseAnyContentParts(obj["content"])
+		if err != nil {
+			return CanonicalMessage{}, err
+		}
+		return CanonicalMessage{Role: role, Parts: parts}, nil
 	case "function_call":
 		id, _ := obj["call_id"].(string)
 		if id == "" {
@@ -308,14 +357,20 @@ func parseResponsesInputItem(item any) (CanonicalMessage, error) {
 		}, nil
 	case "function_call_output":
 		callID, _ := obj["call_id"].(string)
-		output, _ := flattenAnyContent(obj["output"])
-		return CanonicalMessage{Role: "tool", ToolCallID: callID, Content: output}, nil
+		parts, err := parseAnyContentParts(obj["output"])
+		if err != nil {
+			return CanonicalMessage{}, err
+		}
+		return CanonicalMessage{Role: "tool", ToolCallID: callID, Parts: parts}, nil
 	default:
-		content, _ := flattenAnyContent(obj["content"])
+		parts, err := parseAnyContentParts(obj["content"])
+		if err != nil {
+			return CanonicalMessage{}, err
+		}
 		if role == "" {
 			role = "user"
 		}
-		return CanonicalMessage{Role: role, Content: content}, nil
+		return CanonicalMessage{Role: role, Parts: parts}, nil
 	}
 }
 
@@ -343,45 +398,89 @@ func parseResponsesTool(raw json.RawMessage) (CanonicalTool, error) {
 	}, nil
 }
 
-func flattenContent(raw json.RawMessage) (string, error) {
+// parseContentParts converts string or content-array JSON into ordered parts.
+// Text parts come from text, input_text, and output_text. Image parts come from
+// Chat Completions image_url objects and Responses input_image items. Other
+// part types are ignored.
+func parseContentParts(raw json.RawMessage) ([]CanonicalContentPart, error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		return "", nil
+		return nil, nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return s, nil
+		return TextOnlyParts(s), nil
 	}
-	var parts []map[string]any
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		return "", err
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
 	}
-	var b strings.Builder
-	for _, part := range parts {
-		typ, _ := part["type"].(string)
+	var out []CanonicalContentPart
+	for i, item := range items {
+		var typ string
+		_ = json.Unmarshal(item["type"], &typ)
 		switch typ {
 		case "text", "input_text", "output_text":
-			if t, ok := part["text"].(string); ok {
-				b.WriteString(t)
+			var text string
+			_ = json.Unmarshal(item["text"], &text)
+			if text != "" {
+				out = append(out, CanonicalContentPart{Type: CanonicalPartText, Text: text})
 			}
+		case "image_url":
+			var image struct {
+				URL    string `json:"url"`
+				Detail string `json:"detail"`
+			}
+			if err := json.Unmarshal(item["image_url"], &image); err != nil {
+				return nil, fmt.Errorf("content[%d].image_url must be an object with url", i)
+			}
+			part, err := parseCanonicalImagePart(image.URL, image.Detail)
+			if err != nil {
+				return nil, fmt.Errorf("content[%d]: %w", i, err)
+			}
+			out = append(out, part)
+		case "input_image":
+			var url, detail string
+			if err := json.Unmarshal(item["image_url"], &url); err != nil {
+				return nil, fmt.Errorf("content[%d].image_url must be a base64 data URL string", i)
+			}
+			if raw, ok := item["detail"]; ok {
+				_ = json.Unmarshal(raw, &detail)
+			}
+			part, err := parseCanonicalImagePart(url, detail)
+			if err != nil {
+				return nil, fmt.Errorf("content[%d]: %w", i, err)
+			}
+			out = append(out, part)
 		}
 	}
-	return b.String(), nil
+	return out, nil
 }
 
-func flattenAnyContent(v any) (string, error) {
+func parseCanonicalImagePart(url, detail string) (CanonicalContentPart, error) {
+	parsed, err := llmadapter.ParseImageDataURL(url)
+	if err != nil {
+		return CanonicalContentPart{}, err
+	}
+	return CanonicalContentPart{
+		Type:     CanonicalPartImage,
+		MIMEType: parsed.MIMEType,
+		Data:     parsed.Data,
+		Detail:   detail,
+	}, nil
+}
+
+func parseAnyContentParts(v any) ([]CanonicalContentPart, error) {
 	if v == nil {
-		return "", nil
+		return nil, nil
 	}
-	switch t := v.(type) {
-	case string:
-		return t, nil
-	default:
-		raw, err := json.Marshal(v)
-		if err != nil {
-			return "", err
-		}
-		return flattenContent(raw)
+	if s, ok := v.(string); ok {
+		return TextOnlyParts(s), nil
 	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return parseContentParts(raw)
 }
 
 // namedFunctionToolChoiceName extracts the function name from Chat Completions

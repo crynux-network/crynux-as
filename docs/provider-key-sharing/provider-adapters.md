@@ -126,6 +126,18 @@ When converting a public request into an upstream Provider body, adapters MUST r
 
 OpenAI upstream bodies MUST carry that value as `max_completion_tokens`. Anthropic upstream bodies MUST carry it as `max_tokens`. Google upstream bodies MUST carry it as `generationConfig.maxOutputTokens`. Adapters MUST NOT use a separate hardcoded default that differs from `llm.default_max_tokens`.
 
+## Canonical Multimodal Content
+
+The shared canonical request MUST keep ordered text and image content parts. Image parts MUST store MIME type, base64 payload, optional OpenAI `detail`, and MUST NOT keep a decoded image bitmap after width and height are read from the header.
+
+Adapters MUST convert those parts as follows:
+
+* OpenAI Chat Completions: `image_url` data URLs with `detail` passed through when present;
+* Anthropic Messages: `{"type":"image","source":{"type":"base64","media_type":"...","data":"..."}}` and drop `detail`;
+* Google `generateContent`: `{"inlineData":{"mimeType":"...","data":"..."}}` and drop `detail`.
+
+Image input-token estimation MUST use the same validated image metadata and MUST live beside the adapters in `provider/`. Estimation MUST follow each Service Provider's current official model-family rules and MUST NOT be configured in YAML. Settlement MUST use the adapter's normalized actual input tokens, which already include visual tokens when the upstream reports them.
+
 ## OpenAI Adapter
 
 The OpenAI adapter MUST call OpenAI Chat Completions for both public Chat Completions and public Responses requests. It MUST NOT call OpenAI Responses.
@@ -135,6 +147,7 @@ It MUST:
 * send the configured model name unchanged;
 * use Bearer authentication;
 * translate validated public Chat Completions and Responses semantics into one Chat Completions upstream body through the shared canonical request shape;
+* restore canonical image parts as Chat Completions `image_url` data URLs and pass through a valid `detail` value;
 * omit AS-local fields such as `previous_response_id` from the upstream body;
 * request final stream usage even when the API Consumer did not request a public usage chunk;
 * suppress the internal usage request option from public output when the client did not request it;
@@ -159,6 +172,7 @@ The Anthropic adapter MUST translate validated Chat Completions and Responses se
 It MUST:
 
 * construct system and message content without exposing AS-only fields;
+* convert canonical image parts to Anthropic base64 image source blocks and drop OpenAI `detail`;
 * convert function tools and tool choices;
 * convert tool-use and tool-result history;
 * translate content-block stream events into the selected OpenAI-compatible stream;
@@ -185,6 +199,7 @@ It MUST:
 * authenticate with the `x-goog-api-key` header and MUST NOT place the Shared API Key in the request URL;
 * send the configured model name through the provider's required model path or field without changing the public name;
 * convert system instructions, messages, tools, tool choices, and tool results;
+* convert canonical image parts to Google `inlineData` and drop OpenAI `detail`;
 * parse streaming candidate events incrementally;
 * assemble one final normalized result;
 * convert safety or policy termination into a normalized public outcome;

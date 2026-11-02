@@ -22,6 +22,7 @@ The word `provider` in field and package names means Service Provider. It never 
 The first release:
 
 * supports Chat Completions and Responses for every configured Provider model through Service Provider adapters;
+* accepts OpenAI-compatible base64 image inputs on those APIs for JPEG, PNG, and WebP only;
 * rejects Completions for Provider models;
 * keeps official Service Provider model names, such as `gpt-5.6-sol`, without a prefix, suffix, or alias;
 * routes Crynux repository model names through the existing Bridge path;
@@ -36,7 +37,7 @@ The first release:
 
 The first release does not:
 
-* support Provider image, audio, video, or Raw Task execution;
+* support Provider audio, video, or Raw Task execution;
 * discover or publish models from an upstream `/models` response;
 * allow Key Owners to set prices or per-key concurrency;
 * maintain a per-key model allowlist;

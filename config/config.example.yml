@@ -89,6 +89,7 @@ llm:
   job_retention_days: 30
   task_result_dir: "data/task_results"
   project_recent_requests_limit: 50
+  max_crynux_task_args_bytes: 1000000
 usage_stats:
   recent_failure_window_seconds: 3600
   recent_failure_rate_threshold: "0.2"
@@ -118,6 +119,7 @@ provider:
   stream_subscriber_buffer: 128
   shutdown_timeout_seconds: 600
   max_secret_bytes: 4096
+  max_input_image_bytes: 10485760
   key_encryption:
     encryption_key_file: "config/secrets/provider_key_encryption.txt"
   services_file: "config/provider_services.json"

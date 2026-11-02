@@ -105,6 +105,21 @@ The following Crynux execution extensions MUST be rejected for Provider models:
 
 Provider-specific request fields that are not part of the AS public contract MUST be rejected as unknown fields. AS MUST NOT forward arbitrary extra JSON.
 
+## Image Input
+
+Provider Chat Completions and Responses MUST accept OpenAI-compatible base64 image inputs:
+
+* Chat Completions uses `content[].type = "image_url"` with nested `image_url.url`;
+* Responses uses `content[].type = "input_image"` with direct `image_url`;
+* `image_url` MUST be a `data:<mime>;base64,<payload>` URL;
+* absolute `http` and `https` URLs MUST be rejected with HTTP 400 before Credits reservation;
+* allowed MIME types are `image/jpeg`, `image/png`, and `image/webp` only;
+* the decoded base64 payloads of all images in one request MUST NOT exceed `provider.max_input_image_bytes`;
+* images MUST appear only in user messages;
+* OpenAI `detail` values `auto`, `low`, and `high` are accepted; OpenAI adapters MUST pass a present value through; Anthropic and Google adapters MUST drop it.
+
+AS MUST expand `previous_response_id` history before Provider submission and MUST preserve ordered image parts with their original MIME type, base64 payload, and `detail` when present. Image validation and token estimation MUST run on the expanded request body.
+
 ## Tools and Structured Output
 
 AS MUST apply its existing OpenAI-compatible validation rules before calling a Provider adapter.

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"encoding/json"
 	"fmt"
@@ -42,7 +43,7 @@ func convertCanonicalToOpenAIChat(req CanonicalRequest) ([]byte, error) {
 		switch msg.Role {
 		case "tool":
 			item["tool_call_id"] = msg.ToolCallID
-			item["content"] = msg.Content
+			item["content"] = msg.Text()
 		case "assistant":
 			if len(msg.ToolCalls) > 0 {
 				toolCalls := make([]map[string]any, 0, len(msg.ToolCalls))
@@ -57,16 +58,16 @@ func convertCanonicalToOpenAIChat(req CanonicalRequest) ([]byte, error) {
 					})
 				}
 				item["tool_calls"] = toolCalls
-				if msg.Content == "" {
+				if text := msg.Text(); text == "" {
 					item["content"] = nil
 				} else {
-					item["content"] = msg.Content
+					item["content"] = text
 				}
 			} else {
-				item["content"] = msg.Content
+				item["content"] = msg.Text()
 			}
 		default:
-			item["content"] = msg.Content
+			item["content"] = openAIChatContent(msg)
 		}
 		messages = append(messages, item)
 	}
@@ -99,6 +100,29 @@ func convertCanonicalToOpenAIChat(req CanonicalRequest) ([]byte, error) {
 		out["tool_choice"] = choice
 	}
 	return json.Marshal(out)
+}
+
+// openAIChatContent returns a plain string for text-only messages and an ordered
+// Chat Completions content array with image_url data URLs otherwise. The image
+// detail value is passed through unchanged when present.
+func openAIChatContent(msg CanonicalMessage) any {
+	if !msg.HasImages() {
+		return msg.Text()
+	}
+	content := make([]map[string]any, 0, len(msg.Parts))
+	for _, part := range msg.Parts {
+		switch part.Type {
+		case CanonicalPartText:
+			content = append(content, map[string]any{"type": "text", "text": part.Text})
+		case CanonicalPartImage:
+			imageURL := map[string]any{"url": llmadapter.FormatImageDataURL(part.MIMEType, part.Data)}
+			if part.Detail != "" {
+				imageURL["detail"] = part.Detail
+			}
+			content = append(content, map[string]any{"type": "image_url", "image_url": imageURL})
+		}
+	}
+	return content
 }
 
 func mapOpenAIChatToolChoice(choice any) (any, error) {

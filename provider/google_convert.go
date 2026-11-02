@@ -13,16 +13,16 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 	for _, msg := range req.Messages {
 		switch msg.Role {
 		case "system", "developer":
-			if msg.Content != "" {
+			if text := msg.Text(); text != "" {
 				if systemText != "" {
 					systemText += "\n\n"
 				}
-				systemText += msg.Content
+				systemText += text
 			}
 		case "assistant":
 			parts := make([]map[string]any, 0)
-			if msg.Content != "" {
-				parts = append(parts, map[string]any{"text": msg.Content})
+			if text := msg.Text(); text != "" {
+				parts = append(parts, map[string]any{"text": text})
 			}
 			for _, tc := range msg.ToolCalls {
 				var args any = map[string]any{}
@@ -50,7 +50,7 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 			fr := map[string]any{
 				"name": name,
 				"response": map[string]any{
-					"result": msg.Content,
+					"result": msg.Text(),
 				},
 			}
 			if msg.ToolCallID != "" {
@@ -61,7 +61,7 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 		default:
 			contents = append(contents, map[string]any{
 				"role":  "user",
-				"parts": []map[string]any{{"text": msg.Content}},
+				"parts": googleUserParts(msg),
 			})
 		}
 	}
@@ -123,6 +123,29 @@ func convertCanonicalToGoogle(req CanonicalRequest) ([]byte, error) {
 		return nil, fmt.Errorf("google does not support tools together with JSON structured output")
 	}
 	return json.Marshal(out)
+}
+
+// googleUserParts returns one text part for text-only messages and ordered text
+// and inlineData parts otherwise. The OpenAI detail value is dropped.
+func googleUserParts(msg CanonicalMessage) []map[string]any {
+	if !msg.HasImages() {
+		return []map[string]any{{"text": msg.Text()}}
+	}
+	parts := make([]map[string]any, 0, len(msg.Parts))
+	for _, part := range msg.Parts {
+		switch part.Type {
+		case CanonicalPartText:
+			parts = append(parts, map[string]any{"text": part.Text})
+		case CanonicalPartImage:
+			parts = append(parts, map[string]any{
+				"inlineData": map[string]any{
+					"mimeType": part.MIMEType,
+					"data":     part.Data,
+				},
+			})
+		}
+	}
+	return parts
 }
 
 func lookupToolName(messages []CanonicalMessage, toolCallID string) string {

@@ -281,3 +281,52 @@ func TestExpandProviderResponsesRequestStripsPreviousAndMergesHistory(t *testing
 		t.Fatalf("last=%v", last)
 	}
 }
+
+func TestExpandProviderResponsesRequestPreservesImages(t *testing.T) {
+	const pngB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAEElEQVR4nGL6z8AACAAA//8DCQECWLbVUAAAAABJRU5ErkJggg=="
+	history := []models.Message{
+		{
+			Role: models.LLMRoleUser,
+			Content: []models.MessageContentBlock{
+				{Type: "text", Text: "first"},
+				{Type: "image", Base64: pngB64, MimeType: "image/png", Detail: "high"},
+			},
+		},
+		{Role: models.LLMRoleAssistant, Content: "seen"},
+	}
+	body := []byte(`{
+		"model":"gpt-4o",
+		"previous_response_id":"resp_old",
+		"input":[{"type":"message","role":"user","content":[
+			{"type":"input_image","image_url":"data:image/png;base64,` + pngB64 + `","detail":"low"},
+			{"type":"input_text","text":"again"}
+		]}]
+	}`)
+	expanded, err := ExpandProviderResponsesRequest(body, history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(expanded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	input := payload["input"].([]any)
+	if len(input) != 3 {
+		t.Fatalf("input len=%d", len(input))
+	}
+	histContent := input[0].(map[string]any)["content"].([]any)
+	histImage := histContent[1].(map[string]any)
+	if histImage["type"] != "input_image" || histImage["detail"] != "high" {
+		t.Fatalf("history image=%v", histImage)
+	}
+	if histImage["image_url"] != FormatImageDataURL("image/png", pngB64) {
+		t.Fatalf("history url=%v", histImage["image_url"])
+	}
+	current := input[2].(map[string]any)["content"].([]any)
+	if current[0].(map[string]any)["type"] != "input_image" || current[0].(map[string]any)["detail"] != "low" {
+		t.Fatalf("current image=%v", current[0])
+	}
+	if current[1].(map[string]any)["text"] != "again" {
+		t.Fatalf("current text=%v", current[1])
+	}
+}

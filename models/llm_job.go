@@ -113,16 +113,18 @@ type TaskBillingData struct {
 
 // ProviderTaskBillingData is the immutable Provider pricing snapshot persisted on a job.
 type ProviderTaskBillingData struct {
-	ServiceProvider        string            `json:"service_provider"`
-	ModelName              string            `json:"model_name"`
-	UsageWeights           map[string]string `json:"usage_weights"`
-	EffectivePriorityGwei  string            `json:"effective_priority_gwei"`
-	CreditsPerGwei         string            `json:"credits_per_gwei"`
-	MaxTaskPriceCNX        string            `json:"max_task_price_cnx"`
-	EstimatedInputBytes    uint64            `json:"estimated_input_bytes"`
-	EstimatedOutputTokens  uint64            `json:"estimated_output_tokens"`
-	EstimatedProviderUnits string            `json:"estimated_provider_units"`
-	LockedCredits          string            `json:"locked_credits"`
+	ServiceProvider           string            `json:"service_provider"`
+	ModelName                 string            `json:"model_name"`
+	UsageWeights              map[string]string `json:"usage_weights"`
+	EffectivePriorityGwei     string            `json:"effective_priority_gwei"`
+	CreditsPerGwei            string            `json:"credits_per_gwei"`
+	MaxTaskPriceCNX           string            `json:"max_task_price_cnx"`
+	EstimatedInputTokens      uint64            `json:"estimated_input_tokens"`
+	EstimatedTextInputTokens  uint64            `json:"estimated_text_input_tokens"`
+	EstimatedImageInputTokens uint64            `json:"estimated_image_input_tokens"`
+	EstimatedOutputTokens     uint64            `json:"estimated_output_tokens"`
+	EstimatedProviderUnits    string            `json:"estimated_provider_units"`
+	LockedCredits             string            `json:"locked_credits"`
 }
 
 type LLMTaskBillingData struct {

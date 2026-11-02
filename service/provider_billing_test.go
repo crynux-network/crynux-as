@@ -5,6 +5,7 @@ import (
 	"crynux_as/models"
 	"errors"
 	"math/big"
+	"strings"
 	"testing"
 )
 
@@ -422,7 +423,7 @@ func TestBuildProviderBillingDataRejectsStaticBelowSharedMinimum(t *testing.T) {
 		CostLevelMode:         models.CostLevelModeStatic,
 		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
-	_, _, err := BuildProviderBillingData(project, route, big.NewInt(1), 10, 50, nil)
+	_, _, err := BuildProviderBillingData(project, route, big.NewInt(1), ProviderInputTokenEstimate{TextTokens: 10}, 50, nil)
 	if !errors.Is(err, ErrTaskFeeBelowMinimum) {
 		t.Fatalf("err=%v, want ErrTaskFeeBelowMinimum", err)
 	}
@@ -465,11 +466,11 @@ func TestBuildProviderBillingDataAutoRaisesToSharedMinimum(t *testing.T) {
 		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
 
-	cheapSnapshot, _, err := BuildProviderBillingData(project, cheap, big.NewInt(1), 10, 50, nil)
+	cheapSnapshot, _, err := BuildProviderBillingData(project, cheap, big.NewInt(1), ProviderInputTokenEstimate{TextTokens: 10}, 50, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expensiveSnapshot, _, err := BuildProviderBillingData(project, expensive, big.NewInt(1), 10, 50, nil)
+	expensiveSnapshot, _, err := BuildProviderBillingData(project, expensive, big.NewInt(1), ProviderInputTokenEstimate{TextTokens: 10}, 50, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -521,11 +522,11 @@ func TestBuildProviderBillingDataKeepsModelWeightProportions(t *testing.T) {
 		CostLevelMode:         models.CostLevelModeAuto,
 		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
-	_, cheapCredits, err := BuildProviderBillingData(project, cheap, big.NewInt(1), 10, 50, nil)
+	_, cheapCredits, err := BuildProviderBillingData(project, cheap, big.NewInt(1), ProviderInputTokenEstimate{TextTokens: 10}, 50, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, expensiveCredits, err := BuildProviderBillingData(project, expensive, big.NewInt(1), 10, 50, nil)
+	_, expensiveCredits, err := BuildProviderBillingData(project, expensive, big.NewInt(1), ProviderInputTokenEstimate{TextTokens: 10}, 50, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,7 +565,7 @@ func TestBuildProviderBillingDataAutoRejectsWhenMaxCreditsBelowSharedMinimum(t *
 		CostLevelMode:         models.CostLevelModeAuto,
 		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
-	_, _, err := BuildProviderBillingData(project, route, big.NewInt(1), 10, 50, nil)
+	_, _, err := BuildProviderBillingData(project, route, big.NewInt(1), ProviderInputTokenEstimate{TextTokens: 10}, 50, nil)
 	if !errors.Is(err, ErrAutoMaxCreditsInsufficient) {
 		t.Fatalf("err=%v, want ErrAutoMaxCreditsInsufficient", err)
 	}
@@ -600,7 +601,7 @@ func TestBuildProviderBillingDataAllowsZeroMinimum(t *testing.T) {
 		CostLevelMode:         models.CostLevelModeStatic,
 		AutoMaxCreditsPerTask: &autoMaxCredits,
 	}
-	snapshot, credits, err := BuildProviderBillingData(project, route, big.NewInt(1), 100, 10, nil)
+	snapshot, credits, err := BuildProviderBillingData(project, route, big.NewInt(1), ProviderInputTokenEstimate{TextTokens: 100}, 10, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,5 +676,66 @@ func TestApplyMaxTaskPriceCapComparesRationalBillable(t *testing.T) {
 	}
 	if capped.Cmp(big.NewRat(1, 1)) != 0 {
 		t.Fatalf("capped=%s, want 1", capped.RatString())
+	}
+}
+
+func TestEstimateProviderTextInputTokensSkipsImageURLPayload(t *testing.T) {
+	large := strings.Repeat("A", 10000)
+	body := []byte(`{
+		"model":"gpt-4o",
+		"messages":[{"role":"user","content":[
+			{"type":"text","text":"hello"},
+			{"type":"image_url","image_url":{"url":"data:image/png;base64,` + large + `","detail":"high"}}
+		]}]
+	}`)
+	got := EstimateProviderTextInputTokens(body)
+	if got >= uint64(len(large)) {
+		t.Fatalf("text estimate included image payload: got=%d", got)
+	}
+	if got < uint64(len("hello")) {
+		t.Fatalf("text estimate missing hello: got=%d", got)
+	}
+}
+
+func TestBuildProviderBillingDataRecordsImageTokenBreakdown(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
+	cfg.LLM.MaxTaskPriceCNX = map[string]string{"openai": "100"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{
+		config.MaxTaskPriceProviderCrynux: "0",
+		config.MinTaskPriceProviders:      "0",
+	}
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	route := ProviderModelRoute{
+		ServiceProvider: models.ServiceProviderOpenAI,
+		ModelName:       "gpt-4o",
+		UsageWeights: map[string]string{
+			"input_tokens":  "1",
+			"output_tokens": "1",
+		},
+	}
+	setProviderBillingTestCatalog(t, route)
+	autoMaxCredits := models.BigInt{Int: *big.NewInt(1_000_000)}
+	project := &models.Project{
+		CostLevelMode:         models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMaxCredits,
+	}
+	snapshot, _, err := BuildProviderBillingData(
+		project,
+		route,
+		big.NewInt(1),
+		ProviderInputTokenEstimate{TextTokens: 10, ImageTokens: 765},
+		20,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.EstimatedInputTokens != 775 || snapshot.EstimatedTextInputTokens != 10 || snapshot.EstimatedImageInputTokens != 765 {
+		t.Fatalf("snapshot=%+v", snapshot)
 	}
 }

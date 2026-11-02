@@ -167,6 +167,14 @@ Each adapter MUST run against a local fake server and cover:
 * tools and tool results;
 * tool definitions, every supported tool choice, tool-call history, and tool-result history for OpenAI, Anthropic, and Google;
 * text, JSON object, and JSON schema structured output for OpenAI, Anthropic, and Google;
+* JPEG, PNG, and WebP base64 image inputs on Chat Completions and Responses;
+* ordered mixed text and image content, image-only user messages, and multi-image requests;
+* rejection of HTTP image URLs, unsupported MIME types, invalid base64, and payloads above `provider.max_input_image_bytes`;
+* OpenAI `detail` passthrough and Anthropic/Google `detail` drop;
+* `previous_response_id` history that preserves image MIME, base64, order, and detail;
+* image input-token estimation for OpenAI, Anthropic, and Google model families;
+* text admission estimates that skip image base64 payloads;
+* settlement that uses actual input tokens without a second image charge;
 * malformed response;
 * missing usage;
 * connection failure before send;

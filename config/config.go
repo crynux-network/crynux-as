@@ -290,6 +290,12 @@ func checkLLMConfig() error {
 	if appConfig.LLM.ProjectRecentRequestsLimit == 0 {
 		return errors.New("llm.project_recent_requests_limit is not set")
 	}
+	if appConfig.LLM.MaxCrynuxTaskArgsBytes == 0 {
+		return errors.New("llm.max_crynux_task_args_bytes is not set")
+	}
+	if appConfig.LLM.MaxCrynuxTaskArgsBytes >= MaxCrynuxWebSocketFrameBytes {
+		return fmt.Errorf("llm.max_crynux_task_args_bytes must be less than %d", MaxCrynuxWebSocketFrameBytes)
+	}
 	return nil
 }
 
@@ -390,6 +396,10 @@ func parseNonNegativeCNXDecimal(value string) (*big.Int, error) {
 	}
 	return new(big.Int).Set(scaled.Num()), nil
 }
+
+// MaxCrynuxWebSocketFrameBytes is the WebSocket frame limit enforced by Crynux
+// Node workers. Each frame carries the full TaskArgs JSON plus outer task fields.
+const MaxCrynuxWebSocketFrameBytes = 1 << 20
 
 // MaxTaskPriceProviderCrynux is the llm.max_task_price_cnx map key for Crynux Network tasks.
 const MaxTaskPriceProviderCrynux = "crynux"
@@ -504,6 +514,9 @@ func checkProviderConfig(v *viper.Viper) error {
 	}
 	if p.MaxSecretBytes == 0 {
 		return errors.New("provider.max_secret_bytes must be greater than 0")
+	}
+	if p.MaxInputImageBytes == 0 {
+		return errors.New("provider.max_input_image_bytes must be greater than 0")
 	}
 	if strings.TrimSpace(p.KeyEncryption.EncryptionKeyFile) == "" {
 		return errors.New("provider.key_encryption.encryption_key_file is not set")

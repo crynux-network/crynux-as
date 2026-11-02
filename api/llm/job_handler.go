@@ -70,6 +70,11 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 	parsed.taskArgsJSON = taskArgsJSON
+	if err := models.ValidateCrynuxTaskArgsSize(parsed.taskArgsJSON, appCfg.LLM.MaxCrynuxTaskArgsBytes); err != nil {
+		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	userVram, err := vramlimit.ResolveUserVramLimit(parsed.vramLimit, c.Param("vram_limit"))
 	if err != nil {
