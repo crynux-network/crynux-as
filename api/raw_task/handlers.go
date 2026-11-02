@@ -282,13 +282,8 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if err := service.ValidateOptionalQueueTimeout(request.QueueTimeout); err != nil {
 		return nil, err
 	}
-	hasGPUName := strings.TrimSpace(request.RequiredGPU) != ""
-	hasGPUVram := request.RequiredGPUVram > 0
-	if request.MinVram != nil && (hasGPUName || hasGPUVram) {
-		return nil, errors.New("min_vram must not be combined with required_gpu or required_gpu_vram")
-	}
-	if hasGPUName != hasGPUVram {
-		return nil, errors.New("required_gpu and required_gpu_vram must be provided together")
+	if strings.TrimSpace(request.RequiredGPU) != "" || request.RequiredGPUVram > 0 {
+		return nil, errors.New("required_gpu and required_gpu_vram are not supported")
 	}
 
 	taskArgs, err := service.NormalizeTaskArgsModelNames(request.TaskArgs, *request.TaskType)
@@ -331,7 +326,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if minVram != nil && *minVram == 0 {
 		return nil, errors.New("min_vram must be a positive integer")
 	}
-	if minVram == nil && !hasGPUName {
+	if minVram == nil {
 		resolved := config.GetConfig().LLM.DefaultVramLimit
 		if *request.TaskType == models.TaskTypeImage {
 			resolved = resolvedImageMinVRAM
@@ -342,10 +337,7 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		}
 		minVram = &resolved
 	}
-	billedVram := request.RequiredGPUVram
-	if billedVram == 0 {
-		billedVram = *minVram
-	}
+	billedVram := *minVram
 	priority, err := service.ResolveEffectivePriorityGwei(project)
 	if err != nil {
 		return nil, err
@@ -355,10 +347,6 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		Dtype:              dtype,
 		QuantizationConfig: quantConfig,
 		MinVRAM:            minVram,
-		GPUName:            request.RequiredGPU,
-	}
-	if hasGPUVram {
-		query.GPUVRAM = &request.RequiredGPUVram
 	}
 	var estimate *service.CalcTaskFeeResult
 	var llmBilling *models.LLMTaskBillingData
@@ -436,8 +424,7 @@ func createPreparedTask(ctx context.Context, project *models.Project, prepared *
 	return service.ReserveCreditsAndCreateRawTaskJob(ctx, config.GetDB(), service.CreateRawTaskJobInput{
 		Project: project, TaskType: *prepared.request.TaskType, Model: prepared.model,
 		TaskArgsJSON: prepared.taskArgs, TaskVersion: prepared.request.TaskVersion,
-		MinVram: prepared.minVram, RequiredGPU: prepared.request.RequiredGPU,
-		RequiredGPUVram: prepared.request.RequiredGPUVram,
+		MinVram: prepared.minVram,
 		PriorityGwei: priority, BilledVram: prepared.billedVram, TaskFeeWei: fee,
 		LLMBilling: prepared.llmBilling, ImageCredits: credits, CreditsToLock: credits,
 		QueueTimeout: prepared.request.QueueTimeout,

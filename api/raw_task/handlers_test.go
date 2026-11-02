@@ -103,7 +103,7 @@ func TestPrepareTaskRejectsClientTaskFee(t *testing.T) {
 	}
 }
 
-func TestPrepareTaskValidatesHardwareSelection(t *testing.T) {
+func TestPrepareTaskRejectsRequiredGPU(t *testing.T) {
 	cfg := &config.AppConfig{}
 	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
 	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
@@ -115,15 +115,29 @@ func TestPrepareTaskValidatesHardwareSelection(t *testing.T) {
 	})
 
 	taskType := models.TaskTypeLLM
-	minVram := uint64(24)
-	_, err := prepareTask(context.Background(), &models.Project{}, CreateTaskRequest{
-		TaskArgs:    `{"version":"3.7.1","model":"example/model","messages":[]}`,
-		TaskType:    &taskType,
-		MinVram:     &minVram,
-		RequiredGPU: "GPU",
-	})
-	if err == nil || !strings.Contains(err.Error(), "min_vram") {
-		t.Fatalf("error = %v", err)
+	cases := []CreateTaskRequest{
+		{
+			TaskArgs:    `{"version":"3.7.1","model":"example/model","messages":[]}`,
+			TaskType:    &taskType,
+			RequiredGPU: "GPU",
+		},
+		{
+			TaskArgs:        `{"version":"3.7.1","model":"example/model","messages":[]}`,
+			TaskType:        &taskType,
+			RequiredGPUVram: 24,
+		},
+		{
+			TaskArgs:        `{"version":"3.7.1","model":"example/model","messages":[]}`,
+			TaskType:        &taskType,
+			RequiredGPU:     "GPU",
+			RequiredGPUVram: 24,
+		},
+	}
+	for i, req := range cases {
+		_, err := prepareTask(context.Background(), &models.Project{}, req)
+		if err == nil || !strings.Contains(err.Error(), "required_gpu") {
+			t.Fatalf("case %d: error = %v", i, err)
+		}
 	}
 }
 
