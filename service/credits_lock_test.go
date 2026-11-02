@@ -7,6 +7,8 @@ import (
 	"errors"
 	"math/big"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 func TestReserveCreditsRejectsWhenAvailableInsufficient(t *testing.T) {
@@ -493,22 +495,53 @@ func TestReserveTransactionFailureLeavesLockedUnchanged(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
-	// Missing project FK is fine in sqlite; force create failure with empty model after reserve
-	// by using invalid credits path: CreditsToLock nil rejected before TX.
+	project := models.Project{
+		UserID: user.ID, Name: "p", EndpointToken: "e-rb",
+		APIKeyHash: "h-rb", APIKeyPrefix: "prefixrb",
+		PriorityGwei: models.BigInt{Int: *big.NewInt(10)},
+		Status:       models.ProjectStatusActive,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Fail TaskJob create after reserveCreditsTx succeeds so the transaction rolls back.
+	if err := db.Callback().Create().Before("gorm:create").
+		Register("test_force_task_job_create_fail", func(tx *gorm.DB) {
+			if tx.Statement.Table == "task_jobs" {
+				_ = tx.AddError(errors.New("forced task job create failure"))
+			}
+		}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = db.Callback().Create().Remove("test_force_task_job_create_fail")
+	})
+
+	c, si, so, vw := 1.0, 0.0, 0.0, 1.0
 	_, err := ReserveCreditsAndCreateTaskJob(ctx, db, CreateTaskJobInput{
-		Project: &models.Project{ID: 1, UserID: user.ID},
-		APIType: models.TaskAPITypeChatCompletions, Model: "m",
+		Project: &project, APIType: models.TaskAPITypeChatCompletions, Model: "m",
 		BilledVram: 8, TaskArgsJSON: "{}", PriorityGwei: big.NewInt(10),
-		TaskFeeGwei: big.NewInt(10),
+		TaskFeeGwei: big.NewInt(10), VramWeight: &vw, ConstantSeconds: &c,
+		SecondsPerInputToken: &si, SecondsPerOutputToken: &so,
+		CreditsToLock: big.NewInt(200),
 	})
 	if err == nil {
-		t.Fatal("expected validation error")
+		t.Fatal("expected create failure inside transaction")
 	}
+
 	var account models.CreditAccount
 	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
 		t.Fatal(err)
 	}
 	if account.Locked.Cmp(big.NewInt(0)) != 0 {
-		t.Fatalf("locked=%s", account.Locked.String())
+		t.Fatalf("locked=%s after rollback, want 0", account.Locked.String())
+	}
+	var jobCount int64
+	if err := db.Model(&models.TaskJob{}).Count(&jobCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if jobCount != 0 {
+		t.Fatalf("jobCount=%d after rollback, want 0", jobCount)
 	}
 }

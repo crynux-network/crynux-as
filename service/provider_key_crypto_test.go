@@ -48,8 +48,3 @@ func TestFingerprintAPIKeyStable(t *testing.T) {
 		t.Fatalf("fingerprint unstable: %q %q", a, b)
 	}
 }
-
-func TestFormatSortablePriorityOrder(t *testing.T) {
-	// Import models in test via service package helpers already using models.FormatSortablePriority through Create path.
-	// Direct check lives in models; keep a smoke assertion here through padding length.
-}

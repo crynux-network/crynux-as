@@ -282,6 +282,14 @@ func applyDepositReferralReward(tx *gorm.DB, deposit *models.Deposit) error {
 		return err
 	}
 
+	// Serialize same-referrer deposit rewards: lock before prior_count / tier selection.
+	var referrerAccount models.CreditAccount
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id = ?", binding.ReferrerUserID).
+		First(&referrerAccount).Error; err != nil {
+		return err
+	}
+
 	priorCount, err := CountInviteePurchases(tx, binding.ReferrerUserID, deposit.ID)
 	if err != nil {
 		return err
@@ -350,5 +358,7 @@ func applyDepositReferralReward(tx *gorm.DB, deposit *models.Deposit) error {
 		}
 		return err
 	}
-	return creditAccountLocked(tx, binding.ReferrerUserID, rewardInt)
+
+	referrerAccount.Balance = models.BigInt{Int: *new(big.Int).Add(&referrerAccount.Balance.Int, rewardInt)}
+	return tx.Save(&referrerAccount).Error
 }
