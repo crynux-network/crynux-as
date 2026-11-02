@@ -35,7 +35,7 @@ func NewDBLogger() *Logger {
 
 	return &Logger{
 		SkipErrRecordNotFound: true,
-		Debug:                 true,
+		Debug:                 logrusInstance.IsLevelEnabled(log.DebugLevel),
 	}
 }
 
@@ -100,25 +100,29 @@ func (l *Logger) Error(ctx context.Context, s string, args ...interface{}) {
 	logrusInstance.WithContext(ctx).Errorf(s, args...)
 }
 
+// Trace logs query duration and row count without interpolated SQL bind values.
 func (l *Logger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
 	elapsed := time.Since(begin)
-	sql, _ := fc()
-	fields := log.Fields{}
+	_, rows := fc()
+	fields := log.Fields{
+		"elapsed": elapsed.String(),
+		"rows":    rows,
+	}
 	if l.SourceField != "" {
 		fields[l.SourceField] = utils.FileWithLineNum()
 	}
 	if err != nil && !(errors.Is(err, gorm.ErrRecordNotFound) && l.SkipErrRecordNotFound) {
 		fields[log.ErrorKey] = err
-		logrusInstance.WithContext(ctx).WithFields(fields).Errorf("%s [%s]", sql, elapsed)
+		logrusInstance.WithContext(ctx).WithFields(fields).Error("db query failed")
 		return
 	}
 
 	if l.SlowThreshold != 0 && elapsed > l.SlowThreshold {
-		logrusInstance.WithContext(ctx).WithFields(fields).Warnf("%s [%s]", sql, elapsed)
+		logrusInstance.WithContext(ctx).WithFields(fields).Warn("db query slow")
 		return
 	}
 
 	if l.Debug {
-		logrusInstance.WithContext(ctx).WithFields(fields).Debugf("%s [%s]", sql, elapsed)
+		logrusInstance.WithContext(ctx).WithFields(fields).Debug("db query")
 	}
 }

@@ -101,6 +101,8 @@ The following data MUST never appear in logs, traces, errors, database diagnosti
 * encryption key;
 * request body fields that can contain a key.
 
+Database query diagnostics MUST log elapsed time, affected row count, and error only. They MUST NOT log interpolated SQL that includes bind values. Per-query debug logging MUST follow `db.log.level`.
+
 Key-related logs MAY include:
 
 * logical key ID;
