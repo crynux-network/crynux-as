@@ -209,6 +209,48 @@ func TestImageRowsDifferingOnlyByComponentRepoAreRetained(t *testing.T) {
 	}
 }
 
+func TestRefreshLoadedModelsSkipsProviderNameCollisions(t *testing.T) {
+	if err := InitProviderCatalog(&config.AppConfig{
+		Provider: config.ProviderConfig{
+			Services: map[string]config.ProviderServiceConfig{
+				"openai": {
+					DisplayName: "OpenAI",
+					Models: []config.ProviderModelConfig{
+						{Name: "reserved/llm", UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", OutputTokens: "1"}},
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("InitProviderCatalog: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = InitProviderCatalog(&config.AppConfig{})
+	})
+
+	refreshTestLoadedModels(t, 0, 24,
+		testLLMRow("reserved", "Reserved/LLM", "bfloat16", nil, 8, 1, 1),
+		testLLMRow("keep", "keep/llm", "bfloat16", nil, 8, 1, 1),
+		testImageRow("reserved-image", "reserved/llm", "float16", nil, nil, nil, 8, 1, 1),
+		testImageRow("keep-image", "keep/image", "float16", nil, nil, nil, 8, 1, 1),
+	)
+
+	llmModels := ListLoadedLLMModels()
+	if len(llmModels) != 1 || llmModels[0].ModelID != "keep/llm" {
+		t.Fatalf("LLM models = %+v", llmModels)
+	}
+	if _, ok := GetLoadedLLMModel("reserved/llm"); ok {
+		t.Fatal("provider-reserved LLM name must not enter Crynux cache")
+	}
+	imageModels := ListLoadedSDModels()
+	if len(imageModels) != 1 || imageModels[0].ModelID != "keep/image" {
+		t.Fatalf("image models = %+v", imageModels)
+	}
+	if _, ok := GetLoadedSDModel("reserved/llm"); ok {
+		t.Fatal("provider-reserved image name must not enter Crynux cache")
+	}
+}
+
 func TestInconsistentLoadedModelRowsAreSkipped(t *testing.T) {
 	missingHash := testLLMRow("missing-hash", "org/llm", "auto", nil, 8, 1, 1)
 	delete(missingHash, "model_cache_hash")

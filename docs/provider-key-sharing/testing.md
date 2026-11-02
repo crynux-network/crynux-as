@@ -71,9 +71,9 @@ Tests MUST cover:
 
 Tests MUST cover:
 
-* exact official Provider model match;
+* exact official Provider model match after lowercase normalization;
 * no Provider prefix or alias;
-* case-sensitive Provider lookup;
+* Provider lookup matches when request or config letter case differs;
 * unchanged Hugging Face normalization on a non-Provider model;
 * every configured Provider model routes through Chat Completions and Responses;
 * OpenAI public Responses executes against OpenAI Chat Completions and never against OpenAI Responses;

@@ -46,14 +46,14 @@ The YAML configuration MUST define:
 * each model's usage weights;
 * withdrawal networks, fees, Beneficial Address contracts, and Wallet signer.
 
-Configuration loading MUST construct an immutable in-memory map keyed by exact Provider model name. Provider model declarations MUST NOT be stored in the database. A configuration change takes effect only after a successful AS restart.
+Configuration loading MUST lowercase and trim every configured Provider model name, then construct an immutable in-memory map keyed by that canonical lowercase name. Names that differ only by letter case collide during validation. Provider model declarations MUST NOT be stored in the database. A configuration change takes effect only after a successful AS restart.
 
 ## Model Routing
 
 Request routing MUST occur before Credits reservation.
 
-1. Trim surrounding whitespace from the public `model` value.
-2. Look for an exact, case-sensitive match in the configured Provider model map.
+1. Trim surrounding whitespace from the public `model` value and lowercase it to the canonical Provider model name.
+2. Look for an exact match in the configured Provider model map.
 3. When found, set `execution_source` to the configured Service Provider value (`openai`, `anthropic`, or `google`) and select its usage weights.
 4. When not found, run the existing Hugging Face model normalization, validation, loaded-model resolution, and Bridge routing.
 5. Route Chat Completions and Responses requests through the selected Service Provider adapter, which owns translation to its native API.

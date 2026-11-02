@@ -102,8 +102,20 @@ func loadProviderServices() error {
 	if len(services) == 0 {
 		return errors.New("provider.services_file must define at least one service")
 	}
+	for serviceID, svc := range services {
+		for i := range svc.Models {
+			svc.Models[i].Name = NormalizeProviderModelName(svc.Models[i].Name)
+		}
+		services[serviceID] = svc
+	}
 	appConfig.Provider.Services = services
 	return nil
+}
+
+// NormalizeProviderModelName returns the canonical Provider model name used after config load
+// and request intake: surrounding whitespace trimmed, then lowercased.
+func NormalizeProviderModelName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
 
 func checkHttpConfig() error {
@@ -540,10 +552,11 @@ func checkProviderConfig(v *viper.Viper) error {
 			return fmt.Errorf("provider.services.%s.credential_validation_timeout_seconds must be greater than 0", serviceID)
 		}
 		for i, model := range svc.Models {
-			name := strings.TrimSpace(model.Name)
+			name := NormalizeProviderModelName(model.Name)
 			if name == "" {
 				return fmt.Errorf("provider.services.%s.models[%d].name is not set", serviceID, i)
 			}
+			svc.Models[i].Name = name
 			if other, exists := modelNames[name]; exists {
 				return fmt.Errorf("provider model name %q is duplicated between %s and %s", name, other, serviceID)
 			}
@@ -552,6 +565,7 @@ func checkProviderConfig(v *viper.Viper) error {
 				return err
 			}
 		}
+		p.Services[serviceID] = svc
 	}
 	if !common.IsHexAddress(p.Wallet.SignerAddress) {
 		return errors.New("provider.wallet.signer_address is invalid")

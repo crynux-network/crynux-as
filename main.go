@@ -95,6 +95,13 @@ func main() {
 	service.InitLoadedModelsCache(relayClient)
 	service.InitQueuedPriorityCache(relayClient)
 	service.InitExecutionTimeCache(relayClient, conf.LLM.ExecutionTimeCacheTTL)
+	if err := service.ValidateProviderCrynuxCollisions(context.Background()); err != nil {
+		if errors.Is(err, service.ErrLoadedModelsFetchFailed) {
+			log.Errorf("provider/Crynux model-name collision check skipped: %v", err)
+		} else {
+			log.Fatalln(err)
+		}
+	}
 	if err := service.RefreshLoadedModels(context.Background()); err != nil {
 		log.Errorf("initial loaded models refresh failed: %v", err)
 	}

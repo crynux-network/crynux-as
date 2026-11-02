@@ -2,6 +2,7 @@ package llm
 
 import (
 	"crynux_as/config"
+	"crynux_as/llmadapter"
 	"crynux_as/service"
 	"net/http"
 	"sort"
@@ -119,11 +120,12 @@ func ImageModels(c *gin.Context) {
 // RetrieveModel implements the OpenAI-compatible retrieve model endpoint.
 // When multiple catalog rows share a model id, the response is a list envelope.
 func RetrieveModel(c *gin.Context) {
-	modelID := strings.TrimPrefix(c.Param("model"), "/")
-	if modelID == "image" {
+	requested := strings.TrimPrefix(c.Param("model"), "/")
+	if requested == "image" {
 		ImageModels(c)
 		return
 	}
+	modelID := llmadapter.NormalizeModelID(requested)
 	models := service.ListCatalogLLMModelsByID(modelID)
 	data := make([]modelObject, 0, len(models)+1)
 	for _, model := range models {
@@ -140,7 +142,7 @@ func RetrieveModel(c *gin.Context) {
 	if len(data) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": gin.H{
-				"message": "The model '" + modelID + "' does not exist",
+				"message": "The model '" + requested + "' does not exist",
 				"type":    "invalid_request_error",
 				"code":    "model_not_found",
 			},

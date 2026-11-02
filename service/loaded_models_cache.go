@@ -226,6 +226,14 @@ func RefreshLoadedModels(ctx context.Context) error {
 			log.Warnf("skip loaded model %q (type %s, cache hash %q): %v", loadedModel.ModelID, loadedModel.ModelType, loadedModel.ModelCacheHash, err)
 			continue
 		}
+		if IsConfiguredProviderModel(entry.ModelID) {
+			log.Warnf(
+				"skip Crynux loaded model %q (type %s): name reserved by Provider configuration",
+				entry.ModelID,
+				loadedModel.ModelType,
+			)
+			continue
+		}
 		key := modelCacheKey(entry.ModelCacheHash, entry.ExecutionDType)
 		if loadedModel.ModelType == loadedModelTypeLLM {
 			llmSnapshot[key] = entry

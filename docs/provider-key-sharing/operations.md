@@ -57,10 +57,12 @@ Each Wallet network MUST reference an existing AS blockchain configuration so Be
 
 `provider.default_max_input_tokens` and `provider.default_max_output_tokens` MUST define the positive token limits assigned to every newly created Shared API Key.
 
+Startup MUST lowercase and trim every Provider model name when loading `provider.services_file`. Names that differ only by letter case are the same name for uniqueness checks.
+
 Startup MUST validate:
 
 * every positive integer and duration;
-* global model-name uniqueness;
+* global model-name uniqueness after lowercase normalization;
 * no configured Provider name collides with the initial Crynux catalog;
 * known Service Provider IDs;
 * non-negative rational usage weights;

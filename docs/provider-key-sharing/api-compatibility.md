@@ -40,7 +40,7 @@ A Provider model name on `POST /completions` MUST return HTTP 400 with the exist
 
 ## Model Names
 
-Provider model names MUST be exact official API model names from YAML configuration.
+Provider model names MUST be official API model names from configuration. AS lowercases and trims configured names on load and lowercases and trims request model values before Provider lookup, so letter case in the config file or request body does not change routing.
 
 For example:
 
@@ -50,13 +50,13 @@ For example:
 
 AS MUST:
 
-* trim surrounding whitespace for lookup;
-* preserve the configured model name in public responses;
-* send the configured model name to the selected Service Provider;
+* trim surrounding whitespace and lowercase the public `model` value for Provider lookup;
+* use the canonical lowercase configured model name in public responses;
+* send that canonical lowercase model name to the selected Service Provider;
 * avoid adding `openai/`, `anthropic/`, `google/`, or any other prefix;
 * avoid aliases and client-visible internal IDs.
 
-Provider lookup is exact and case-sensitive. Crynux repository names continue to use existing Hugging Face normalization rules.
+Provider lookup uses the canonical lowercase name. Crynux repository names continue to use existing Hugging Face normalization rules.
 
 ## Model Catalog Merge
 
