@@ -184,3 +184,30 @@ func TestCheckMinTaskPriceCNXConfigAcceptsCrynuxAndProviders(t *testing.T) {
 		t.Fatalf("unexpected err: %v", err)
 	}
 }
+
+func TestCheckHttpConfigRejectsEmptyJWTSecretOutsideTest(t *testing.T) {
+	prev := GetConfig()
+	t.Cleanup(func() { SetConfigForTest(prev) })
+
+	cfg := &AppConfig{Environment: EnvDebug}
+	cfg.Http.MaxBodyBytes = 1024
+	cfg.Http.JWT.ExpiresIn = 3600
+	cfg.Http.JWT.SecretKey = ""
+	SetConfigForTest(cfg)
+	if err := checkHttpConfig(); err == nil {
+		t.Fatal("empty JWT secret was accepted outside test environment")
+	}
+
+	cfg.Http.JWT.SecretKey = "non-empty-secret"
+	SetConfigForTest(cfg)
+	if err := checkHttpConfig(); err != nil {
+		t.Fatalf("non-empty JWT secret rejected: %v", err)
+	}
+
+	cfg.Environment = EnvTest
+	cfg.Http.JWT.SecretKey = ""
+	SetConfigForTest(cfg)
+	if err := checkHttpConfig(); err != nil {
+		t.Fatalf("empty JWT secret rejected in test environment: %v", err)
+	}
+}

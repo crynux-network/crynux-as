@@ -125,6 +125,9 @@ func checkHttpConfig() error {
 	if appConfig.Http.JWT.ExpiresIn == 0 {
 		return errors.New("http.jwt.expires_in is not set")
 	}
+	if appConfig.Environment != EnvTest && appConfig.Http.JWT.SecretKey == "" {
+		return errors.New("http.jwt secret key is not set")
+	}
 	return nil
 }
 
