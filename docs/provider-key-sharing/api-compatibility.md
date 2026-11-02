@@ -116,7 +116,7 @@ Provider Chat Completions and Responses MUST accept OpenAI-compatible base64 ima
 * allowed MIME types are `image/jpeg`, `image/png`, and `image/webp` only;
 * the decoded base64 payloads of all images in one request MUST NOT exceed `provider.max_input_image_bytes`;
 * images MUST appear only in user messages;
-* OpenAI `detail` values `auto`, `low`, and `high` are accepted; OpenAI adapters MUST pass a present value through; Anthropic and Google adapters MUST drop it.
+* OpenAI `detail` values `auto`, `low`, `high`, and `original` are accepted at parse time; whether a value is supported for the selected model MUST be decided by that model's image token rule before Credits reservation; OpenAI adapters MUST pass a present value through; Anthropic and Google adapters MUST drop it.
 
 AS MUST expand `previous_response_id` history before Provider submission and MUST preserve ordered image parts with their original MIME type, base64 payload, and `detail` when present. Image validation and token estimation MUST run on the expanded request body.
 

@@ -739,3 +739,44 @@ func TestBuildProviderBillingDataRecordsImageTokenBreakdown(t *testing.T) {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
 }
+
+func TestEstimateProviderInputTokensRejectsUnsupportedOriginal(t *testing.T) {
+	const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAEElEQVR4nGL6z8AACAAA//8DCQECWLbVUAAAAABJRU5ErkJggg=="
+	body := []byte(`{
+		"model":"gpt-5.2",
+		"messages":[{"role":"user","content":[
+			{"type":"image_url","image_url":{"url":"data:image/png;base64,` + png + `","detail":"original"}}
+		]}]
+	}`)
+	route := ProviderModelRoute{
+		ServiceProvider: models.ServiceProviderOpenAI,
+		ModelName:       "gpt-5.2",
+	}
+	_, err := EstimateProviderInputTokens(route, models.TaskAPITypeChatCompletions, body, 1<<20)
+	if err == nil || !strings.Contains(err.Error(), "detail") {
+		t.Fatalf("expected detail rejection, got %v", err)
+	}
+}
+
+func TestEstimateProviderInputTokensSupportsGPT6Astra(t *testing.T) {
+	const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAEElEQVR4nGL6z8AACAAA//8DCQECWLbVUAAAAABJRU5ErkJggg=="
+	body := []byte(`{
+		"model":"gpt-6-astra",
+		"messages":[{"role":"user","content":[
+			{"type":"text","text":"hi"},
+			{"type":"image_url","image_url":{"url":"data:image/png;base64,` + png + `","detail":"high"}}
+		]}]
+	}`)
+	route := ProviderModelRoute{
+		ServiceProvider: models.ServiceProviderOpenAI,
+		ModelName:       "gpt-6-astra",
+	}
+	got, err := EstimateProviderInputTokens(route, models.TaskAPITypeChatCompletions, body, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1x1 image -> 1 patch * 1.2 -> 2 image tokens
+	if got.ImageTokens != 2 || got.TextTokens < uint64(len("hi")) {
+		t.Fatalf("estimate=%+v", got)
+	}
+}

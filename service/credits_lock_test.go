@@ -545,3 +545,152 @@ func TestReserveTransactionFailureLeavesLockedUnchanged(t *testing.T) {
 		t.Fatalf("jobCount=%d after rollback, want 0", jobCount)
 	}
 }
+
+func TestSettleDoesNotConsumeOtherJobsLockedCredits(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	user := models.User{Address: "0xisolate"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CreditAccount{
+		UserID: user.ID, Balance: models.BigInt{Int: *big.NewInt(200)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID: user.ID, Name: "p", EndpointToken: "e-iso",
+		APIKeyHash: "h-iso", APIKeyPrefix: "prefixiso",
+		PriorityGwei: models.BigInt{Int: *big.NewInt(10)},
+		Status:       models.ProjectStatusActive,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	imageArgs := `{"version":"0.1.0","base_model":{"name":"org/image"},"prompt":"p","task_config":{"image_width":64,"image_height":64,"steps":1,"num_images_per_prompt":1,"seed":1}}`
+	jobA, err := ReserveCreditsAndCreateRawTaskJob(ctx, db, CreateRawTaskJobInput{
+		Project: &project, TaskType: models.TaskTypeImage, APIType: models.TaskAPITypeImagesGenerations,
+		Model: "org/image", TaskArgsJSON: imageArgs, PriorityGwei: big.NewInt(10),
+		BilledVram: 8, TaskFeeWei: big.NewInt(0), ImageCredits: big.NewInt(150),
+		CreditsToLock: big.NewInt(100),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobB, err := ReserveCreditsAndCreateRawTaskJob(ctx, db, CreateRawTaskJobInput{
+		Project: &project, TaskType: models.TaskTypeImage, APIType: models.TaskAPITypeImagesGenerations,
+		Model: "org/image", TaskArgsJSON: imageArgs, PriorityGwei: big.NewInt(10),
+		BilledVram: 8, TaskFeeWei: big.NewInt(0), ImageCredits: big.NewInt(100),
+		CreditsToLock: big.NewInt(100),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CompleteAndSettleImageTaskJob(ctx, db, jobA); err != nil {
+		t.Fatal(err)
+	}
+	var account models.CreditAccount
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.Balance.Cmp(big.NewInt(100)) != 0 || account.Locked.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("after A balance=%s locked=%s", account.Balance.String(), account.Locked.String())
+	}
+	var events []models.CreditEvent
+	if err := db.Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Amount.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("events=%+v", events)
+	}
+
+	if _, err := CompleteAndSettleImageTaskJob(ctx, db, jobB); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.Balance.Cmp(big.NewInt(0)) != 0 || account.Locked.Cmp(big.NewInt(0)) != 0 {
+		t.Fatalf("after B balance=%s locked=%s", account.Balance.String(), account.Locked.String())
+	}
+}
+
+func TestSettleChargesZeroWhenOtherLocksConsumeAvailable(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	cfg := &config.AppConfig{}
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	user := models.User{Address: "0xzerocharge"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CreditAccount{
+		UserID: user.ID, Balance: models.BigInt{Int: *big.NewInt(200)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID: user.ID, Name: "p", EndpointToken: "e-zc",
+		APIKeyHash: "h-zc", APIKeyPrefix: "prefixzc",
+		PriorityGwei: models.BigInt{Int: *big.NewInt(10)},
+		Status:       models.ProjectStatusActive,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	imageArgs := `{"version":"0.1.0","base_model":{"name":"org/image"},"prompt":"p","task_config":{"image_width":64,"image_height":64,"steps":1,"num_images_per_prompt":1,"seed":1}}`
+	jobA, err := ReserveCreditsAndCreateRawTaskJob(ctx, db, CreateRawTaskJobInput{
+		Project: &project, TaskType: models.TaskTypeImage, APIType: models.TaskAPITypeImagesGenerations,
+		Model: "org/image", TaskArgsJSON: imageArgs, PriorityGwei: big.NewInt(10),
+		BilledVram: 8, TaskFeeWei: big.NewInt(0), ImageCredits: big.NewInt(150),
+		CreditsToLock: big.NewInt(100),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReserveCreditsAndCreateRawTaskJob(ctx, db, CreateRawTaskJobInput{
+		Project: &project, TaskType: models.TaskTypeImage, APIType: models.TaskAPITypeImagesGenerations,
+		Model: "org/image", TaskArgsJSON: imageArgs, PriorityGwei: big.NewInt(10),
+		BilledVram: 8, TaskFeeWei: big.NewInt(0), ImageCredits: big.NewInt(100),
+		CreditsToLock: big.NewInt(100),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Drain balance so remaining locked Credits leave no available amount after A releases.
+	if err := db.Model(&models.CreditAccount{}).Where("user_id = ?", user.ID).
+		Update("balance", "100").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := CompleteAndSettleImageTaskJob(ctx, db, jobA); err != nil {
+		t.Fatal(err)
+	}
+	var account models.CreditAccount
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.Balance.Cmp(big.NewInt(100)) != 0 || account.Locked.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("balance=%s locked=%s", account.Balance.String(), account.Locked.String())
+	}
+	var eventCount int64
+	if err := db.Model(&models.CreditEvent{}).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("eventCount=%d, want 0 when chargeable available is 0", eventCount)
+	}
+}

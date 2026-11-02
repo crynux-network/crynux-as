@@ -12,10 +12,11 @@ var allowedImageMIMETypes = map[string]struct{}{
 }
 
 var allowedImageDetails = map[string]struct{}{
-	"":     {},
-	"auto": {},
-	"low":  {},
-	"high": {},
+	"":         {},
+	"auto":     {},
+	"low":      {},
+	"high":     {},
+	"original": {},
 }
 
 // CanonicalImageInfo is the validated metadata of one canonical image part.
@@ -49,7 +50,7 @@ func ValidateCanonicalImages(req CanonicalRequest, maxBytes uint64) ([]Canonical
 				return nil, fmt.Errorf("image %d: unsupported MIME type %q; allowed types are image/jpeg, image/png, and image/webp", imageIndex, part.MIMEType)
 			}
 			if _, ok := allowedImageDetails[part.Detail]; !ok {
-				return nil, fmt.Errorf("image %d: unsupported detail %q; allowed values are auto, low, and high", imageIndex, part.Detail)
+				return nil, fmt.Errorf("image %d: unsupported detail %q; allowed values are auto, low, high, and original", imageIndex, part.Detail)
 			}
 			decoded, err := llmadapter.DecodeBase64Payload(part.Data)
 			if err != nil {

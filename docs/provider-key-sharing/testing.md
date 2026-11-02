@@ -170,9 +170,10 @@ Each adapter MUST run against a local fake server and cover:
 * JPEG, PNG, and WebP base64 image inputs on Chat Completions and Responses;
 * ordered mixed text and image content, image-only user messages, and multi-image requests;
 * rejection of HTTP image URLs, unsupported MIME types, invalid base64, and payloads above `provider.max_input_image_bytes`;
-* OpenAI `detail` passthrough and Anthropic/Google `detail` drop;
+* OpenAI `detail` passthrough including `original`, model-level rejection of unsupported detail values, and Anthropic/Google `detail` drop;
 * `previous_response_id` history that preserves image MIME, base64, order, and detail;
-* image input-token estimation for OpenAI, Anthropic, and Google model families;
+* image input-token estimation for OpenAI, Anthropic, and Google model families, including OpenAI gpt-5.2+, gpt-6*, and gpt-4.1-mini patch budgets;
+* settle that charges only `balance - remaining_locked` and still creates full Key Owner earnings when the consumer shortfall is absorbed by the platform;
 * text admission estimates that skip image base64 payloads;
 * settlement that uses actual input tokens without a second image charge;
 * malformed response;

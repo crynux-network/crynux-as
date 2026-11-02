@@ -107,7 +107,7 @@ Admission MUST reserve an upper estimate before queueing.
 
 For text inputs, the estimate MUST count the UTF-8 byte length of all text, tool definitions, structured-output schemas, instructions, and locally expanded history as the text input-token upper bound. The `image_url` value of Chat Completions `image_url` parts and Responses `input_image` parts MUST be excluded from that text walk. This one-byte-per-token text estimate intentionally over-reserves relative to ordinary tokenization.
 
-For image inputs, admission MUST parse the same canonical request used by Provider adapters, validate JPEG/PNG/WebP base64 payloads against `provider.max_input_image_bytes`, read only image headers for width and height, and estimate visual input tokens with the target Service Provider's official model-family rules. Those rules live in `provider/` code, not YAML. A request that includes images for a model whose image token rule is unknown MUST return HTTP 400 before Credits reservation. A text-only request for that model MUST still be accepted.
+For image inputs, admission MUST parse the same canonical request used by Provider adapters, validate JPEG/PNG/WebP base64 payloads against `provider.max_input_image_bytes`, read only image headers for width and height, and estimate visual input tokens with the target Service Provider's official model-family rules. Those rules live in `provider/` code, not YAML. OpenAI image rules MUST select the model family by exact configured model name, including date-suffixed snapshots after stripping `-YYYY-MM-DD`, and MUST apply that family's detail-level resizing, patch budget, and multiplier or tile formula. A request that includes images for a model whose image token rule is unknown, or that uses a `detail` value unsupported by that model, MUST return HTTP 400 before Credits reservation. A text-only request for that model MUST still be accepted.
 
 The admission input-token estimate MUST be:
 
@@ -195,13 +195,16 @@ Intermediate truncation MUST NOT occur between usage components.
 
 ## Charge Shortfall
 
-Actual usage is expected to fit the reserved estimate. If computed Credits exceed current balance after releasing the hold, the existing rule applies:
+Actual usage is expected to fit the reserved estimate. After the current job's Credits hold is released in the settle transaction, the consumer debit MUST use only available Credits:
 
 ```text
-consumer_charge = min(computed_credits, current_balance)
+available = max(balance - remaining_locked, 0)
+consumer_charge = min(computed_credits, available)
 ```
 
-The Key Owner earning MUST still use the full computed billable amount. Any uncollected balance shortfall MUST produce an error log with job ID, computed Credits, and charged Credits.
+`remaining_locked` MUST be the Credits still held by other jobs of the same user. The settle path MUST NOT reduce `balance` below that remaining locked amount.
+
+The Key Owner earning MUST still use the full computed billable amount. When `consumer_charge` is less than `computed_credits`, the platform MUST absorb the shortfall, and the settle path MUST emit an error log with job ID, computed Credits, charged Credits, balance, remaining locked, and shortfall.
 
 ## Settlement Usage
 

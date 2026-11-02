@@ -121,3 +121,23 @@ func TestImageOnlyUserMessageConverts(t *testing.T) {
 		t.Fatalf("openai content=%v", parts)
 	}
 }
+
+func TestOpenAIConvertPassesOriginalDetail(t *testing.T) {
+	body := chatImageBody("image/png", testPNG1B64, "original", "look")
+	canonical, err := ParseCanonicalRequest(body, "gpt-6-astra", models.TaskAPITypeChatCompletions, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native, err := convertCanonicalToOpenAIChat(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(native, &out); err != nil {
+		t.Fatal(err)
+	}
+	imageURL := out["messages"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)["image_url"].(map[string]any)
+	if imageURL["detail"] != "original" {
+		t.Fatalf("detail=%v", imageURL["detail"])
+	}
+}

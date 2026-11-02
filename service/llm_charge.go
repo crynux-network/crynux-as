@@ -239,12 +239,22 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 			First(&account).Error; err != nil {
 			return 0, err
 		}
-		if account.Balance.Cmp(chargeCredits) < 0 {
+		// Other jobs may still hold Credits. Charge only from balance that is not
+		// locked. The current job's hold MUST already be released in this
+		// transaction before processTaskCallTx runs.
+		available := AvailableCredits(&account.Balance.Int, &account.Locked.Int)
+		if available.Cmp(chargeCredits) < 0 {
+			jobID := uint(0)
+			if in.TaskJobID != nil {
+				jobID = *in.TaskJobID
+			}
 			log.Errorf(
-				"settle charge clamped to balance: user_id=%d project_id=%d computed=%s balance=%s",
-				in.UserID, in.ProjectID, chargeCredits.String(), account.Balance.String(),
+				"settle charge clamped to available credits: user_id=%d project_id=%d task_job_id=%d computed=%s charged=%s balance=%s locked=%s shortfall=%s",
+				in.UserID, in.ProjectID, jobID, chargeCredits.String(), available.String(),
+				account.Balance.String(), account.Locked.String(),
+				new(big.Int).Sub(chargeCredits, available).String(),
 			)
-			chargeCredits = new(big.Int).Set(&account.Balance.Int)
+			chargeCredits = available
 		}
 		if chargeCredits.Sign() == 0 {
 			shouldCharge = false

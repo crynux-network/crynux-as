@@ -140,3 +140,29 @@ func TestValidateCanonicalImagesRejectsAssistantImages(t *testing.T) {
 		t.Fatal("expected assistant image rejection")
 	}
 }
+
+func TestValidateCanonicalImagesAcceptsOriginalDetail(t *testing.T) {
+	body := chatImageBody("image/png", testPNG1B64, "original", "look")
+	req, err := ParseCanonicalRequest(body, "gpt-6-astra", models.TaskAPITypeChatCompletions, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	images, err := ValidateCanonicalImages(req, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 1 || images[0].Detail != "original" {
+		t.Fatalf("images=%+v", images)
+	}
+}
+
+func TestValidateCanonicalImagesRejectsUnknownDetail(t *testing.T) {
+	body := chatImageBody("image/png", testPNG1B64, "ultra", "")
+	req, err := ParseCanonicalRequest(body, "gpt-6-astra", models.TaskAPITypeChatCompletions, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateCanonicalImages(req, 1<<20); err == nil {
+		t.Fatal("expected unknown detail rejection")
+	}
+}

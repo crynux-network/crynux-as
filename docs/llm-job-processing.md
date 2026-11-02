@@ -77,7 +77,7 @@ For task charging:
 * The event `amount` MUST be the actual Credits debit applied to the account.
 * The `(type, ref_id)` pair MUST be unique so one call record produces at most one task charge event.
 
-When settle computes a positive Credits amount, the service MUST charge `min(computed_credits, balance)`. When that amount is greater than zero, the event amount MUST equal the applied debit. When balance is zero, the service MUST write the success call record and MUST NOT create a task charge event.
+When settle computes a positive Credits amount, the service MUST charge `min(computed_credits, available)` where `available = max(balance - remaining_locked, 0)` after the current job hold is released. The debit MUST NOT consume Credits still locked by other jobs. When that amount is greater than zero, the event amount MUST equal the applied debit. When available is zero, the service MUST write the success call record and MUST NOT create a task charge event. When the charged amount is less than the computed amount, the platform MUST absorb the shortfall.
 
 The destructive task-schema migration MUST reject any negative `credit_accounts.balance`, delete prior task, call-record, deposit, usage, and ledger history, and preserve users, projects, account balances, and blockchain cursors. It MUST create one processed opening-balance event for every positive account balance with amount equal to that balance and `ref_id` equal to the user ID. It MUST NOT create an opening event for a zero balance.
 
@@ -142,7 +142,7 @@ The success settle transaction MUST lock the job row and, in one commit, write:
 
 1. release of the Credits hold when `credits_lock_status` is `held`, then set `credits_lock_status` to `released`
 2. one success `task_call_records` row with final tokens and the Credits recalculation snapshot, and one matching `usage_stats_pending_call_records` row
-3. when `charge = min(computed_credits, balance)` is greater than zero, one processed LLM `credit_events` row and the matching `credit_accounts` debit of `charge`
+3. when `charge = min(computed_credits, available)` is greater than zero, where `available = max(balance - remaining_locked, 0)` after the current hold release, one processed LLM `credit_events` row and the matching `credit_accounts` debit of `charge`
 4. the job terminal update to status `completed`, billing status `billed`, raw and formatted results, `completed_at`, and `task_call_record_id`
 
 The transaction MUST NOT write final token counts onto the job row. The transaction MUST NOT write the charged Credits amount onto the call record. Unlock and terminal settle MUST NOT commit in separate transactions.
