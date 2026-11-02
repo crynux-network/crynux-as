@@ -86,8 +86,10 @@ func normalizeQuantizationConfig(raw json.RawMessage) (json.RawMessage, string, 
 	return json.RawMessage(key), key, nil
 }
 
-// newLoadedModel builds a cache row from a Relay row and verifies that the
-// top-level fields agree with the canonical model_cache_config.
+// newLoadedModel builds a cache row from a Relay row. model_cache_config carries
+// the request-side cache identity (including requested dtype, which MAY be
+// auto). execution_dtype is the actual dtype reported by a successful run and
+// MAY differ from model_cache_config.dtype.
 func newLoadedModel(loaded relay.LoadedModel) (LoadedLLMModel, error) {
 	modelID := strings.ToLower(strings.TrimSpace(loaded.ModelID))
 	if modelID == "" {
@@ -112,8 +114,8 @@ func newLoadedModel(loaded relay.LoadedModel) (LoadedLLMModel, error) {
 		return LoadedLLMModel{}, fmt.Errorf("model_cache_config model %q does not match model_id %q", cacheConfig.ModelID, modelID)
 	}
 	executionDType := strings.ToLower(strings.TrimSpace(loaded.ExecutionDType))
-	if cacheConfig.DType != executionDType {
-		return LoadedLLMModel{}, fmt.Errorf("model_cache_config dtype %q does not match execution_dtype %q", cacheConfig.DType, executionDType)
+	if executionDType == "" {
+		return LoadedLLMModel{}, errors.New("execution_dtype is empty")
 	}
 	_, quantKey, err := normalizeQuantizationConfig(loaded.QuantizationConfig)
 	if err != nil {

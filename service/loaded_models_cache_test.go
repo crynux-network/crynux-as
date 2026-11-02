@@ -260,8 +260,8 @@ func TestInconsistentLoadedModelRowsAreSkipped(t *testing.T) {
 	shortHash["model_cache_hash"] = "abcd"
 	wrongModel := testLLMRow("wrong-model", "org/llm", "auto", nil, 8, 1, 1)
 	wrongModel["model_id"] = "org/other"
-	wrongDType := testLLMRow("wrong-dtype", "org/llm", "auto", nil, 8, 1, 1)
-	wrongDType["execution_dtype"] = "float16"
+	emptyExecutionDType := testLLMRow("empty-execution-dtype", "org/llm", "auto", nil, 8, 1, 1)
+	emptyExecutionDType["execution_dtype"] = ""
 	wrongQuant := testLLMRow("wrong-quant", "org/llm", "auto", nil, 8, 1, 1)
 	wrongQuant["quantization_config"] = map[string]any{"quant_method": "awq", "quant_kwargs": map[string]any{}}
 	wrongKind := testImageRow("wrong-kind", "org/image", "auto", nil, nil, nil, 8, 1, 1)
@@ -271,7 +271,7 @@ func TestInconsistentLoadedModelRowsAreSkipped(t *testing.T) {
 	good := testLLMRow("good", "org/good", "auto", nil, 8, 1, 1)
 
 	refreshTestLoadedModels(t, 0, 24,
-		missingHash, missingConfig, shortHash, wrongModel, wrongDType, wrongQuant, wrongKind, incompleteComponent, good,
+		missingHash, missingConfig, shortHash, wrongModel, emptyExecutionDType, wrongQuant, wrongKind, incompleteComponent, good,
 	)
 
 	llmModels := ListLoadedLLMModels()
@@ -280,5 +280,27 @@ func TestInconsistentLoadedModelRowsAreSkipped(t *testing.T) {
 	}
 	if models := ListLoadedSDModels(); len(models) != 0 {
 		t.Fatalf("image models = %+v", models)
+	}
+}
+
+func TestRequestedAutoDTypeWithConcreteExecutionDTypeIsAccepted(t *testing.T) {
+	row := testLLMRow("auto-exec-bf16", "org/auto-llm", "auto", nil, 24, 2, 5)
+	row["execution_dtype"] = "bfloat16"
+
+	refreshTestLoadedModels(t, 0, 1, row)
+
+	got, ok := GetLoadedLLMModel("org/auto-llm")
+	if !ok {
+		t.Fatal("expected loaded model")
+	}
+	if got.ExecutionDType != "bfloat16" {
+		t.Fatalf("ExecutionDType=%q", got.ExecutionDType)
+	}
+	if got.ModelCacheHash != testCacheHash("auto-exec-bf16") {
+		t.Fatalf("ModelCacheHash=%q", got.ModelCacheHash)
+	}
+	catalog := ListLoadedLLMModels()
+	if len(catalog) != 1 || catalog[0].ModelID != "org/auto-llm" || catalog[0].ExecutionDType != "bfloat16" {
+		t.Fatalf("catalog = %+v", catalog)
 	}
 }
