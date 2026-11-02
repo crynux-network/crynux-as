@@ -346,7 +346,7 @@ func formatTaskJobResult(job *models.TaskJob, raw *models.GPTTaskResponse) ([]by
 		return llmadapter.FormatChatCompletionsResponseWithTaskArgs(raw, taskID, created, &taskArgs)
 	case models.TaskAPITypeCompletions:
 		taskID := fmt.Sprintf("cmpl-%d", job.ID)
-		return llmadapter.FormatCompletionsResponse(raw, taskID, created)
+		return llmadapter.FormatCompletionsResponse(raw, taskID, created, &taskArgs)
 	case models.TaskAPITypeResponses:
 		params := responsesObjectParamsFromJob(job, llmadapter.ResponsesStatusCompleted)
 		return llmadapter.FormatResponsesObjectWithTaskArgs(params, raw, &taskArgs)

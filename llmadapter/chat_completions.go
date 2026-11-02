@@ -345,6 +345,11 @@ func FormatChatCompletionsResponseWithTaskArgs(raw *models.GPTTaskResponse, task
 		} else if finishReason == "" {
 			finishReason = string(models.FinishReasonStop)
 		}
+		finishReason = correctFinishReasonForLengthCap(
+			finishReason,
+			raw.Usage.CompletionTokens,
+			maxNewTokensFromTaskArgs(taskArgs),
+		)
 
 		choices[i] = CCResChoice{
 			Index: choice.Index,

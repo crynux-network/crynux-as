@@ -161,7 +161,7 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 }
 
 // FormatCompletionsResponse converts a raw GPT task response into OpenAI completions JSON.
-func FormatCompletionsResponse(raw *models.GPTTaskResponse, taskID string, created int64) ([]byte, error) {
+func FormatCompletionsResponse(raw *models.GPTTaskResponse, taskID string, created int64, taskArgs *models.GPTTaskArgs) ([]byte, error) {
 	if raw == nil {
 		return nil, fmt.Errorf("gpt task response is required")
 	}
@@ -173,6 +173,11 @@ func FormatCompletionsResponse(raw *models.GPTTaskResponse, taskID string, creat
 		if finishReason == "" {
 			finishReason = string(models.FinishReasonStop)
 		}
+		finishReason = correctFinishReasonForLengthCap(
+			finishReason,
+			raw.Usage.CompletionTokens,
+			maxNewTokensFromTaskArgs(taskArgs),
+		)
 		choices[i] = CResChoice{
 			Text:         text,
 			Index:        choice.Index,
