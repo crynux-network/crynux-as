@@ -333,6 +333,11 @@ func processTaskCallTx(tx *gorm.DB, in RecordTaskCallInput) (uint, error) {
 		return 0, err
 	}
 
+	pending := models.UsageStatsPendingCallRecord{CallRecordID: record.ID}
+	if err := tx.Create(&pending).Error; err != nil {
+		return 0, err
+	}
+
 	if !shouldCharge {
 		return record.ID, nil
 	}

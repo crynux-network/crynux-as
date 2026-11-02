@@ -153,8 +153,18 @@ func (ProjectDurationHistogramSnapshot) TableName() string {
 	return "project_duration_histogram_snapshots"
 }
 
-// UsageStatsProgress tracks base aggregation cursor and per-project snapshot refresh state.
-// ProjectID == 0 is the singleton base-worker cursor row.
+// UsageStatsPendingCallRecord is a temporary queue row for unfinished base
+// usage-stats aggregation. CallRecordID equals the permanent task_call_records.id.
+type UsageStatsPendingCallRecord struct {
+	CallRecordID uint `json:"call_record_id" gorm:"primaryKey;autoIncrement:false"`
+}
+
+func (UsageStatsPendingCallRecord) TableName() string {
+	return "usage_stats_pending_call_records"
+}
+
+// UsageStatsProgress tracks per-project snapshot refresh state.
+// ProjectID == 0 is the singleton base-worker mutex row.
 type UsageStatsProgress struct {
 	ID                uint       `json:"id" gorm:"primarykey"`
 	CreatedAt         time.Time  `json:"created_at" gorm:"not null"`

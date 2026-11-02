@@ -1,6 +1,6 @@
 # Task Job Processing
 
-This document is the authority for `task_jobs`, `task_call_records`, `credit_events`, and `credit_accounts` ownership during task request processing. API field contracts remain in [llm-api.md](./llm-api.md). Credits formulas remain in [credits-billing.md](./credits-billing.md). System structure remains in [architecture.md](./architecture.md).
+This document is the authority for `task_jobs`, `task_call_records`, `usage_stats_pending_call_records`, `credit_events`, and `credit_accounts` ownership during task request processing. API field contracts remain in [llm-api.md](./llm-api.md). Credits formulas remain in [credits-billing.md](./credits-billing.md). System structure remains in [architecture.md](./architecture.md).
 
 ## Table Responsibilities
 
@@ -55,6 +55,18 @@ Failed call records MUST store the same identity and workload fields when known.
 
 `task_job_id` MUST remain as the source identifier and settle dedupe key. It is not a foreign key. After a job is deleted, the call record MUST keep `task_job_id` unchanged.
 
+### `usage_stats_pending_call_records`
+
+`usage_stats_pending_call_records` MUST store temporary queue rows for finished calls that have not yet entered base usage-stats aggregation.
+
+Each row MUST contain only:
+
+* `call_record_id`, equal to the permanent `task_call_records.id` and used as the primary key
+
+Creating a `task_call_records` row MUST insert the matching pending row in the same database transaction. The pending row MUST NOT be written outside that transaction. The pending table MUST NOT store request bodies, result bodies, Credits amounts, or aggregation state beyond the call-record identity.
+
+Retention cleanup of `task_jobs` MUST NOT delete pending rows. After base aggregation applies a bounded pending batch to the stats tables, the same aggregation transaction MUST delete those pending rows.
+
 ### `credit_events`
 
 `credit_events` MUST permanently store every actual Credits balance change.
@@ -97,7 +109,7 @@ flowchart TD
 
 ### Validation failure before job creation
 
-When authentication succeeds but request validation, VRAM resolution, task-fee estimation, or Credits reserve fails before an `task_jobs` row is created, the API MUST write one failed `task_call_records` row and MUST NOT create a job, MUST NOT create a Credits event, and MUST NOT change the account balance or `locked`.
+When authentication succeeds but request validation, VRAM resolution, task-fee estimation, or Credits reserve fails before an `task_jobs` row is created, the API MUST write one failed `task_call_records` row and one matching `usage_stats_pending_call_records` row, and MUST NOT create a job, MUST NOT create a Credits event, and MUST NOT change the account balance or `locked`.
 
 ### Job creation
 
@@ -129,7 +141,7 @@ A `pending_submit` job older than `llm.job_submit_timeout` seconds MUST be marke
 The success settle transaction MUST lock the job row and, in one commit, write:
 
 1. release of the Credits hold when `credits_lock_status` is `held`, then set `credits_lock_status` to `released`
-2. one success `task_call_records` row with final tokens and the Credits recalculation snapshot
+2. one success `task_call_records` row with final tokens and the Credits recalculation snapshot, and one matching `usage_stats_pending_call_records` row
 3. when `charge = min(computed_credits, balance)` is greater than zero, one processed LLM `credit_events` row and the matching `credit_accounts` debit of `charge`
 4. the job terminal update to status `completed`, billing status `billed`, raw and formatted results, `completed_at`, and `task_call_record_id`
 
@@ -142,7 +154,7 @@ If the job already has `task_call_record_id`, or is already `completed` and `bil
 The failure record transaction MUST lock the job row and, in one commit, write:
 
 1. release of the Credits hold when `credits_lock_status` is `held`, then set `credits_lock_status` to `released`
-2. one failed `task_call_records` row
+2. one failed `task_call_records` row and one matching `usage_stats_pending_call_records` row
 3. the job terminal update to status `failed`, billing status `not_billed`, error message, `completed_at`, and `task_call_record_id`
 
 It MUST NOT create a Credits event and MUST NOT change the account balance.
@@ -197,6 +209,18 @@ Each item MUST include `source` (`job` or `call_record`) and numeric `id`. Clien
 `GET /v1/account/charges` MUST select processed task charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then in one SQL statement join only the selected page of event `ref_id` values to `task_call_records` and those call records to `projects`. The response `credits` field MUST equal the event amount. The response MUST include `project_name` from the current project row. Charge items MUST include the same `task_type`, display identity, and Image workload fields as Recent Requests finished rows.
 
 ### Usage stats
+
+The base usage-stats worker MUST consume `usage_stats_pending_call_records` in bounded batches ordered by `call_record_id` ascending. Each batch MUST:
+
+1. lock the singleton `usage_stats_progress` row with `project_id = 0` using `SELECT ... FOR UPDATE`
+2. select at most a fixed batch of pending `call_record_id` values before joining other tables
+3. load only that bounded candidate set from `task_call_records` and matching processed task-charge `credit_events`
+4. update account hourly, project hourly, project-model 10-minute, and project-duration 10-minute stats by `accepted_at`
+5. set `projects.last_request_at` to the greater of its current value and each aggregated record's `accepted_at` Unix second
+6. mark affected projects dirty for snapshot refresh
+7. delete the processed pending rows in the same transaction
+
+The worker MUST NOT select unfinished aggregation work by scanning `task_call_records` with an advancing ID cursor. When a pending ID has no permanent call-record row, the batch MUST fail and MUST leave the pending rows unchanged.
 
 Usage stats workers MUST read token counts, Image `image_count`, Relay identity fields, and success/failure status from `task_call_records`, and MUST read charged Credits only from processed LLM `credit_events` referenced by call record ID.
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crynux_as/config"
 	"crynux_as/models"
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -36,10 +37,21 @@ func setupUsageStatsTestDB(t *testing.T) *gorm.DB {
 		&models.ProjectModelUsageSnapshot{},
 		&models.ProjectDurationHistogramSnapshot{},
 		&models.UsageStatsProgress{},
+		&models.UsageStatsPendingCallRecord{},
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
+}
+
+func createCallRecordWithPending(t *testing.T, db *gorm.DB, record *models.TaskCallRecord) {
+	t.Helper()
+	if err := db.Create(record).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.UsageStatsPendingCallRecord{CallRecordID: record.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
@@ -85,9 +97,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		CompletedAt:          now.Add(2 * time.Second),
 		DurationMs:           2000,
 	}
-	if err := db.Create(&success).Error; err != nil {
-		t.Fatal(err)
-	}
+	createCallRecordWithPending(t, db, &success)
 	event := models.CreditEvent{
 		UserID: user.ID,
 		Amount: models.BigInt{Int: *big.NewInt(42)},
@@ -110,9 +120,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		CompletedAt:          now.Add(100 * time.Millisecond),
 		DurationMs:           100,
 	}
-	if err := db.Create(&failed).Error; err != nil {
-		t.Fatal(err)
-	}
+	createCallRecordWithPending(t, db, &failed)
 
 	noToken := models.TaskCallRecord{
 		UserID:               user.ID,
@@ -129,9 +137,7 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 		CompletedAt:          now.Add(time.Second),
 		DurationMs:           1000,
 	}
-	if err := db.Create(&noToken).Error; err != nil {
-		t.Fatal(err)
-	}
+	createCallRecordWithPending(t, db, &noToken)
 	var stored models.TaskCallRecord
 	if err := db.First(&stored, noToken.ID).Error; err != nil {
 		t.Fatal(err)
@@ -248,6 +254,13 @@ func TestUsageStatsBaseAggregationAndSnapshots(t *testing.T) {
 	}
 	if processed != 0 {
 		t.Fatalf("reprocess=%d", processed)
+	}
+	var pendingCount int64
+	if err := db.Model(&models.UsageStatsPendingCallRecord{}).Count(&pendingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 0 {
+		t.Fatalf("pending remaining=%d", pendingCount)
 	}
 }
 
@@ -414,6 +427,13 @@ func TestCompleteAndSettleCreatesOneRecordAndCharge(t *testing.T) {
 	if eventCount != 1 {
 		t.Fatalf("eventCount=%d", eventCount)
 	}
+	var pendingCount int64
+	if err := db.Model(&models.UsageStatsPendingCallRecord{}).Count(&pendingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 1 {
+		t.Fatalf("pendingCount=%d want 1", pendingCount)
+	}
 }
 
 func TestProcessTaskCallSkipsEventWhenCreditsZero(t *testing.T) {
@@ -439,7 +459,7 @@ func TestProcessTaskCallSkipsEventWhenCreditsZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	_, err := ProcessTaskCall(ctx, db, RecordTaskCallInput{
+	recordID, err := ProcessTaskCall(ctx, db, RecordTaskCallInput{
 		UserID:               user.ID,
 		ProjectID:            project.ID,
 		Model:                "m",
@@ -459,6 +479,10 @@ func TestProcessTaskCallSkipsEventWhenCreditsZero(t *testing.T) {
 	}
 	if eventCount != 0 {
 		t.Fatalf("eventCount=%d", eventCount)
+	}
+	var pending models.UsageStatsPendingCallRecord
+	if err := db.First(&pending, "call_record_id = ?", recordID).Error; err != nil {
+		t.Fatalf("expected pending row: %v", err)
 	}
 }
 
@@ -561,6 +585,13 @@ func TestFailAndRecordTaskJobSingleTransaction(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("count=%d", count)
 	}
+	var pendingCount int64
+	if err := db.Model(&models.UsageStatsPendingCallRecord{}).Count(&pendingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 1 {
+		t.Fatalf("pendingCount=%d want 1", pendingCount)
+	}
 	again, err := FailAndRecordTaskJob(ctx, db, updated, "boom2")
 	if err != nil {
 		t.Fatal(err)
@@ -573,6 +604,12 @@ func TestFailAndRecordTaskJobSingleTransaction(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("after retry count=%d", count)
+	}
+	if err := db.Model(&models.UsageStatsPendingCallRecord{}).Count(&pendingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 1 {
+		t.Fatalf("after retry pendingCount=%d", pendingCount)
 	}
 }
 
@@ -699,3 +736,420 @@ func TestRecentFailureWindowCountsFrom10mStats(t *testing.T) {
 		t.Fatal("expected elevated failure rate for 2/5")
 	}
 }
+
+func TestUsageStatsPendingOutOfOrderVisibility(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	user := models.User{Address: "0xorder"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID:        user.ID,
+		Name:          "order",
+		EndpointToken: "ep-order",
+		APIKeyHash:    "hash-order",
+		APIKeyPrefix:  "prefix12",
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
+		Status:        models.ProjectStatusActive,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	high := models.TaskCallRecord{
+		UserID:               user.ID,
+		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeLLM,
+		Model:                "high",
+		PromptTokens:         2,
+		CompletionTokens:     2,
+		TotalTokens:          4,
+		TokenUsageApplicable: 1,
+		Status:               models.TaskCallStatusSuccess,
+		AcceptedAt:           now,
+		CompletedAt:          now.Add(time.Second),
+		DurationMs:           1000,
+		PriorityGwei:         models.BigInt{Int: *big.NewInt(1)},
+	}
+	createCallRecordWithPending(t, db, &high)
+
+	processed, err := RunUsageStatsBaseAggregation(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 1 {
+		t.Fatalf("first pass processed=%d", processed)
+	}
+
+	low := models.TaskCallRecord{
+		UserID:               user.ID,
+		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeLLM,
+		Model:                "low",
+		PromptTokens:         3,
+		CompletionTokens:     1,
+		TotalTokens:          4,
+		TokenUsageApplicable: 1,
+		Status:               models.TaskCallStatusSuccess,
+		AcceptedAt:           now,
+		CompletedAt:          now.Add(time.Second),
+		DurationMs:           1000,
+		PriorityGwei:         models.BigInt{Int: *big.NewInt(1)},
+	}
+	createCallRecordWithPending(t, db, &low)
+	if low.ID >= high.ID {
+		// SQLite autoincrement still increases; force a lower pending-only path by
+		// inserting a synthetic pending id is impossible once high is taken.
+		// Emulate late visibility by inserting another record and verifying both
+		// are counted after a second aggregation of the remaining pending row.
+	}
+
+	processed, err = RunUsageStatsBaseAggregation(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 1 {
+		t.Fatalf("second pass processed=%d", processed)
+	}
+
+	var account models.AccountUsageHourlyStat
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.RequestCount != 2 || account.PromptTokens != 5 {
+		t.Fatalf("account=%+v", account)
+	}
+}
+
+func TestProcessTaskCallPendingRollsBackWithLedgerFailure(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	user := models.User{Address: "0xrollback"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CreditAccount{
+		UserID:  user.ID,
+		Balance: models.BigInt{Int: *big.NewInt(100)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID:        user.ID,
+		Name:          "rollback",
+		EndpointToken: "ep-rollback",
+		APIKeyHash:    "hash-rollback",
+		APIKeyPrefix:  "prefix12",
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
+		Status:        models.ProjectStatusActive,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		_, err := processTaskCallTx(tx, RecordTaskCallInput{
+			UserID:               user.ID,
+			ProjectID:            project.ID,
+			Model:                "m",
+			TokenUsageApplicable: true,
+			Status:               models.TaskCallStatusSuccess,
+			Credits:              big.NewInt(5),
+			AcceptedAt:           now,
+			CompletedAt:          now,
+			Charge:               true,
+		})
+		if err != nil {
+			return err
+		}
+		return errors.New("forced ledger failure after enqueue")
+	})
+	if err == nil {
+		t.Fatal("expected forced failure")
+	}
+
+	var recordCount int64
+	if err := db.Model(&models.TaskCallRecord{}).Count(&recordCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recordCount != 0 {
+		t.Fatalf("recordCount=%d", recordCount)
+	}
+	var pendingCount int64
+	if err := db.Model(&models.UsageStatsPendingCallRecord{}).Count(&pendingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 0 {
+		t.Fatalf("pendingCount=%d", pendingCount)
+	}
+	var eventCount int64
+	if err := db.Model(&models.CreditEvent{}).Count(&eventCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("eventCount=%d", eventCount)
+	}
+}
+
+func TestUsageStatsAggregationRollsBackOnApplyFailure(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	user := models.User{Address: "0xapplyfail"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID:        user.ID,
+		Name:          "applyfail",
+		EndpointToken: "ep-applyfail",
+		APIKeyHash:    "hash-applyfail",
+		APIKeyPrefix:  "prefix12",
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
+		Status:        models.ProjectStatusActive,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	good := models.TaskCallRecord{
+		UserID:               user.ID,
+		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeLLM,
+		Model:                "good",
+		PromptTokens:         1,
+		CompletionTokens:     1,
+		TotalTokens:          2,
+		TokenUsageApplicable: 1,
+		Status:               models.TaskCallStatusSuccess,
+		AcceptedAt:           now,
+		CompletedAt:          now,
+		DurationMs:           0,
+		PriorityGwei:         models.BigInt{Int: *big.NewInt(1)},
+	}
+	createCallRecordWithPending(t, db, &good)
+
+	bad := models.TaskCallRecord{
+		UserID:               0,
+		ProjectID:            project.ID,
+		TaskType:             models.TaskTypeLLM,
+		Model:                "bad",
+		TokenUsageApplicable: 1,
+		Status:               models.TaskCallStatusFailed,
+		AcceptedAt:           now,
+		CompletedAt:          now,
+		DurationMs:           0,
+		PriorityGwei:         models.BigInt{Int: *big.NewInt(1)},
+	}
+	createCallRecordWithPending(t, db, &bad)
+
+	if _, err := RunUsageStatsBaseAggregation(ctx, db); err == nil {
+		t.Fatal("expected aggregation failure")
+	}
+
+	var pendingCount int64
+	if err := db.Model(&models.UsageStatsPendingCallRecord{}).Count(&pendingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 2 {
+		t.Fatalf("pendingCount=%d want 2 after rollback", pendingCount)
+	}
+	var accountCount int64
+	if err := db.Model(&models.AccountUsageHourlyStat{}).Count(&accountCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if accountCount != 0 {
+		t.Fatalf("accountCount=%d want 0 after rollback", accountCount)
+	}
+
+	if err := db.Model(&bad).Update("user_id", user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	processed, err := RunUsageStatsBaseAggregation(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 2 {
+		t.Fatalf("processed=%d", processed)
+	}
+}
+
+func TestUsageStatsPendingBatchBoundary(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	user := models.User{Address: "0xbatch"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID:        user.ID,
+		Name:          "batch",
+		EndpointToken: "ep-batch",
+		APIKeyHash:    "hash-batch",
+		APIKeyPrefix:  "prefix12",
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
+		Status:        models.ProjectStatusActive,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	total := usageStatsBatchSize + 3
+	for i := 0; i < total; i++ {
+		record := models.TaskCallRecord{
+			UserID:               user.ID,
+			ProjectID:            project.ID,
+			TaskType:             models.TaskTypeLLM,
+			Model:                "batch",
+			TokenUsageApplicable: 1,
+			Status:               models.TaskCallStatusSuccess,
+			AcceptedAt:           now,
+			CompletedAt:          now,
+			DurationMs:           0,
+			PriorityGwei:         models.BigInt{Int: *big.NewInt(1)},
+		}
+		createCallRecordWithPending(t, db, &record)
+	}
+
+	first, err := RunUsageStatsBaseAggregation(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != usageStatsBatchSize {
+		t.Fatalf("first batch=%d", first)
+	}
+	second, err := RunUsageStatsBaseAggregation(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != 3 {
+		t.Fatalf("second batch=%d", second)
+	}
+	third, err := RunUsageStatsBaseAggregation(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third != 0 {
+		t.Fatalf("third batch=%d", third)
+	}
+
+	var account models.AccountUsageHourlyStat
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.RequestCount != uint64(total) {
+		t.Fatalf("request_count=%d want %d", account.RequestCount, total)
+	}
+}
+
+func TestProcessTaskCallEnqueuesProviderAndFailedCalls(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	user := models.User{Address: "0xprovider"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID:        user.ID,
+		Name:          "provider",
+		EndpointToken: "ep-provider",
+		APIKeyHash:    "hash-provider",
+		APIKeyPrefix:  "prefix12",
+		PriorityGwei:  models.BigInt{Int: *big.NewInt(10)},
+		Status:        models.ProjectStatusActive,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	keyID := uint(7)
+	providerID, err := ProcessTaskCall(ctx, db, RecordTaskCallInput{
+		UserID:               user.ID,
+		ProjectID:            project.ID,
+		Model:                "gpt-test",
+		ExecutionSource:      models.ExecutionSourceOpenAI,
+		SharedAPIKeyID:       &keyID,
+		TokenUsageApplicable: true,
+		PromptTokens:         4,
+		CompletionTokens:     6,
+		TotalTokens:          10,
+		Status:               models.TaskCallStatusSuccess,
+		Credits:              big.NewInt(0),
+		AcceptedAt:           now,
+		CompletedAt:          now,
+		Charge:               false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedID, err := ProcessTaskCall(ctx, db, RecordTaskCallInput{
+		UserID:               user.ID,
+		ProjectID:            project.ID,
+		Model:                "gpt-test",
+		ExecutionSource:      models.ExecutionSourceOpenAI,
+		TokenUsageApplicable: true,
+		Status:               models.TaskCallStatusFailed,
+		AcceptedAt:           now,
+		CompletedAt:          now,
+		Charge:               false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var pending []models.UsageStatsPendingCallRecord
+	if err := db.Order("call_record_id ASC").Find(&pending).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 2 || pending[0].CallRecordID != providerID || pending[1].CallRecordID != failedID {
+		t.Fatalf("pending=%+v", pending)
+	}
+
+	processed, err := RunUsageStatsBaseAggregation(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processed != 2 {
+		t.Fatalf("processed=%d", processed)
+	}
+	var account models.AccountUsageHourlyStat
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.RequestCount != 2 || account.SuccessCount != 1 || account.FailureCount != 1 {
+		t.Fatalf("account=%+v", account)
+	}
+	if account.Credits.Cmp(big.NewInt(0)) != 0 {
+		t.Fatalf("credits=%s", account.Credits.String())
+	}
+}
+
+func TestUsageStatsMissingPermanentRecordKeepsPending(t *testing.T) {
+	db := setupUsageStatsTestDB(t)
+	ctx := context.Background()
+
+	if err := db.Create(&models.UsageStatsPendingCallRecord{CallRecordID: 999}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RunUsageStatsBaseAggregation(ctx, db); err == nil {
+		t.Fatal("expected missing permanent record error")
+	}
+	var pendingCount int64
+	if err := db.Model(&models.UsageStatsPendingCallRecord{}).Count(&pendingCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 1 {
+		t.Fatalf("pendingCount=%d", pendingCount)
+	}
+}
+

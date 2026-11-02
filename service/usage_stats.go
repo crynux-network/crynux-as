@@ -18,7 +18,7 @@ import (
 
 const usageStatsBatchSize = 200
 
-// RunUsageStatsBaseAggregation processes unaggregated terminal call records into base stats tables.
+// RunUsageStatsBaseAggregation processes pending terminal call records into base stats tables.
 // It returns the number of call records processed in this batch.
 func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error) {
 	dbCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -31,15 +31,8 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 			Where("project_id = ?", models.UsageStatsBaseProjectID).
 			First(&progress).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			var maxID uint
-			if err := tx.Model(&models.TaskCallRecord{}).
-				Select("COALESCE(MAX(id), 0)").
-				Scan(&maxID).Error; err != nil {
-				return err
-			}
 			progress = models.UsageStatsProgress{
-				ProjectID:        models.UsageStatsBaseProjectID,
-				LastCallRecordID: maxID,
+				ProjectID: models.UsageStatsBaseProjectID,
 			}
 			if err := tx.Create(&progress).Error; err != nil {
 				return err
@@ -53,21 +46,33 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 			return err
 		}
 
-		var records []models.TaskCallRecord
-		if err := tx.Where("id > ?", progress.LastCallRecordID).
-			Order("id ASC").
+		var pendingIDs []uint
+		if err := tx.Model(&models.UsageStatsPendingCallRecord{}).
+			Select("call_record_id").
+			Order("call_record_id ASC").
 			Limit(usageStatsBatchSize).
-			Find(&records).Error; err != nil {
+			Pluck("call_record_id", &pendingIDs).Error; err != nil {
 			return err
 		}
-		if len(records) == 0 {
+		if len(pendingIDs) == 0 {
 			return nil
 		}
 
+		var records []models.TaskCallRecord
+		if err := tx.Where("id IN ?", pendingIDs).
+			Order("id ASC").
+			Find(&records).Error; err != nil {
+			return err
+		}
+		if len(records) != len(pendingIDs) {
+			return fmt.Errorf(
+				"usage stats pending call records missing permanent rows: pending=%d found=%d",
+				len(pendingIDs), len(records),
+			)
+		}
+
 		creditAmounts := make(map[uint]*big.Int, len(records))
-		recordIDs := make([]uint, 0, len(records))
 		for _, record := range records {
-			recordIDs = append(recordIDs, record.ID)
 			creditAmounts[record.ID] = big.NewInt(0)
 		}
 
@@ -76,7 +81,7 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 			"type = ? AND status = ? AND ref_id IN ?",
 			models.CreditEventTypeTaskCharge,
 			models.CreditEventStatusProcessed,
-			recordIDs,
+			pendingIDs,
 		).Find(&events).Error; err != nil {
 			return err
 		}
@@ -94,7 +99,6 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 				return err
 			}
 			dirtyProjects[record.ProjectID] = struct{}{}
-			progress.LastCallRecordID = record.ID
 		}
 
 		for projectID := range dirtyProjects {
@@ -103,11 +107,8 @@ func RunUsageStatsBaseAggregation(ctx context.Context, db *gorm.DB) (int, error)
 			}
 		}
 
-		if err := tx.Model(&models.UsageStatsProgress{}).
-			Where("project_id = ?", models.UsageStatsBaseProjectID).
-			Updates(map[string]interface{}{
-				"last_call_record_id": progress.LastCallRecordID,
-			}).Error; err != nil {
+		if err := tx.Where("call_record_id IN ?", pendingIDs).
+			Delete(&models.UsageStatsPendingCallRecord{}).Error; err != nil {
 			return err
 		}
 		processed = len(records)

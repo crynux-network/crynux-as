@@ -221,6 +221,7 @@ Daily-limit indexes MUST support bounded counts by `(user_id, network, created_a
 
 * `task_jobs` owns temporary execution and Credits hold state.
 * `task_call_records` owns permanent consumer-facing call outcome.
+* `usage_stats_pending_call_records` owns temporary unfinished base usage-stats work for finished call records.
 * `credit_events` owns API Consumer Credits changes.
 * `earning_events` owns Key Owner CNX balance changes and Wallet event publication.
 * `earning_withdrawals` owns payout authorization and callback state.
@@ -252,11 +253,13 @@ The following are permanent:
 * `earning_events`;
 * `earning_withdrawals`.
 
+`usage_stats_pending_call_records` is temporary. Creating a call record MUST insert one pending row in the same transaction. Base usage-stats aggregation MUST delete that pending row in the same transaction that applies the call to the stats tables.
+
 Deleting a Shared API Key MUST retain its soft-deleted row and historical references while clearing its encrypted secret fields in the delete transaction.
 
 ## Query Requirements
 
-Task call records, earning events, and withdrawals are high-volume tables.
+Task call records, earning events, and withdrawals are high-volume tables. The pending usage-stats queue MUST stay bounded to unfinished aggregation work and MUST be selected with primary-key order and `LIMIT` before joining permanent tables.
 
 List APIs MUST use keyset pagination by monotonically ordered ID. Large `OFFSET` MUST NOT be used.
 
