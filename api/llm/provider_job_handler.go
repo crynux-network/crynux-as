@@ -17,19 +17,16 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiType models.TaskAPIType, body []byte, parsed parsedTaskJobRequest, route service.ProviderModelRoute, acceptedAt time.Time) {
+func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiType models.TaskAPIType, body []byte, parsed parsedTaskJobRequest, route service.ProviderModelRoute) {
 	if apiType == models.TaskAPITypeCompletions {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "Provider models do not support the Completions API")
 		return
 	}
 	if parsed.vramLimit != nil || parsed.dtype != "" || parsed.quantizationConfig != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "Crynux execution fields are not supported for Provider models")
 		return
 	}
 	if c.Param("vram_limit") != "" {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "vram_limit is not supported for Provider models")
 		return
 	}
@@ -38,21 +35,18 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 	appCfg := config.GetConfig()
 	inputEstimate, err := service.EstimateProviderInputTokens(route, apiType, body, appCfg.Provider.MaxInputImageBytes)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	priorityGwei, err := service.ResolveProviderEffectivePriority(project)
 	if err != nil {
 		log.Errorf("resolve provider priority failed: %v", err)
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	}
 	maxCompletion := service.ResolveMaxCompletionTokens(parsed.maxTokens, parsed.maxCompletionTokens, appCfg.LLM.DefaultMaxTokens)
 	snapshot, credits, err := service.BuildProviderBillingData(project, route, priorityGwei, inputEstimate, maxCompletion, nil)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), priorityGwei, nil)
 		if errors.Is(err, service.ErrTaskFeeBelowMinimum) ||
 			errors.Is(err, service.ErrAutoMaxCreditsInsufficient) ||
 			errors.Is(err, service.ErrMaxCreditsExceeded) {
@@ -66,7 +60,6 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 	adjustedPriority, ok := new(big.Int).SetString(snapshot.EffectivePriorityGwei, 10)
 	if !ok || adjustedPriority.Sign() <= 0 {
 		log.Errorf("provider billing snapshot has invalid effective priority for project %d", project.ID)
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), priorityGwei, nil)
 		writeServerError(c)
 		return
 	}

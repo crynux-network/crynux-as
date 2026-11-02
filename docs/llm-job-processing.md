@@ -93,11 +93,11 @@ A reconciler MUST periodically correct `credit_accounts.locked` to the sum of `t
 
 ```mermaid
 flowchart TD
-  A[Validate request] -->|invalid before job| F[Write failed call record]
+  A[Validate request] -->|invalid before job| R[Return error without call record]
   A -->|valid| B[Estimate task fee]
-  B -->|estimate failure| F
+  B -->|estimate failure| R
   B -->|ok| C[Reserve available Credits and create task_jobs]
-  C -->|insufficient available| F
+  C -->|insufficient available| R
   C -->|ok| D[Bridge submit and poll]
   D -->|success raw result| E[Format result]
   E --> G[Success settle transaction]
@@ -107,9 +107,9 @@ flowchart TD
   I --> J[Retention cleanup after job_retention_days]
 ```
 
-### Validation failure before job creation
+### Failure before job creation
 
-When authentication succeeds but request validation, VRAM resolution, task-fee estimation, or Credits reserve fails before an `task_jobs` row is created, the API MUST write one failed `task_call_records` row and one matching `usage_stats_pending_call_records` row, and MUST NOT create a job, MUST NOT create a Credits event, and MUST NOT change the account balance or `locked`.
+When authentication succeeds but request validation, VRAM resolution, task-fee estimation, or Credits reserve fails before an `task_jobs` row is created, the API MUST return the corresponding HTTP error and MUST NOT write a `task_call_records` row, MUST NOT write a `usage_stats_pending_call_records` row, MUST NOT create a job, MUST NOT create a Credits event, and MUST NOT change the account balance or `locked`.
 
 ### Job creation
 

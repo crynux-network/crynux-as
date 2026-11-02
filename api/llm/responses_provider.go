@@ -11,7 +11,6 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,28 +23,24 @@ func CreateResponse(c *gin.Context) {
 		writeAuthError(c, "unauthorized")
 		return
 	}
-	acceptedAt := time.Now()
-
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, "", 0, acceptedAt, time.Now(), nil, nil)
 		writeRequestBodyReadError(c, err)
 		return
 	}
 
 	model := strings.TrimSpace(extractModelFromBody(body))
 	if route, ok := service.LookupProviderModel(model); ok {
-		expandedBody, err := expandProviderResponsesBody(c, project, body, route.ModelName, acceptedAt)
+		expandedBody, err := expandProviderResponsesBody(c, project, body, route.ModelName)
 		if err != nil {
 			return
 		}
 		parsed, err := parseProviderResponsesRequest(expandedBody, route.ModelName)
 		if err != nil {
-			_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, route.ModelName, 0, acceptedAt, time.Now(), nil, nil)
 			writeLLMAdapterError(c, err)
 			return
 		}
-		handleProviderTaskJobRequest(c, project, models.TaskAPITypeResponses, expandedBody, parsed, route, acceptedAt)
+		handleProviderTaskJobRequest(c, project, models.TaskAPITypeResponses, expandedBody, parsed, route)
 		return
 	}
 
@@ -53,12 +48,11 @@ func CreateResponse(c *gin.Context) {
 	responses.CreateResponse(c)
 }
 
-func expandProviderResponsesBody(c *gin.Context, project *models.Project, body []byte, modelName string, acceptedAt time.Time) ([]byte, error) {
+func expandProviderResponsesBody(c *gin.Context, project *models.Project, body []byte, modelName string) ([]byte, error) {
 	var probe struct {
 		PreviousResponseID string `json:"previous_response_id"`
 	}
 	if err := json.Unmarshal(body, &probe); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, &llmadapter.ValidationError{Message: "invalid JSON body"})
 		return nil, err
 	}
@@ -75,7 +69,6 @@ func expandProviderResponsesBody(c *gin.Context, project *models.Project, body [
 		appCfg.LLM.JobRetentionDays,
 	)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
 		if errors.Is(err, service.ErrPreviousResponsesInvalid) {
 			writeLLMAdapterError(c, llmadapter.NewValidationError("previous_response_id", "previous response is invalid"))
 			return nil, err
@@ -84,20 +77,17 @@ func expandProviderResponsesBody(c *gin.Context, project *models.Project, body [
 		return nil, err
 	}
 	if prevJob.RawResultJSON == nil {
-		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
 		err := llmadapter.NewValidationError("previous_response_id", "previous response is invalid")
 		writeLLMAdapterError(c, err)
 		return nil, err
 	}
 	history, err := llmadapter.BuildResponsesHistoryFromPreviousJob(prevJob.PublicID, prevJob.TaskArgsJSON, *prevJob.RawResultJSON)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, err)
 		return nil, err
 	}
 	expanded, err := llmadapter.ExpandProviderResponsesRequest(body, history)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, models.TaskAPITypeResponses, modelName, 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, err)
 		return nil, err
 	}

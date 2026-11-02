@@ -13,7 +13,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -39,11 +38,8 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		writeAuthError(c, "unauthorized")
 		return
 	}
-	acceptedAt := time.Now()
-
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, "", 0, acceptedAt, time.Now(), nil, nil)
 		writeRequestBodyReadError(c, err)
 		return
 	}
@@ -51,34 +47,29 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	appCfg := config.GetConfig()
 	parsed, err := parseTaskJobRequest(body, apiType, int(appCfg.LLM.DefaultMaxTokens))
 	if err != nil {
-		model := extractModelFromBody(body)
-		_ = recordFailedCall(c.Request.Context(), project, apiType, model, 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
 
 	if route, ok := service.LookupProviderModel(parsed.model); ok {
-		handleProviderTaskJobRequest(c, project, apiType, body, parsed, route, acceptedAt)
+		handleProviderTaskJobRequest(c, project, apiType, body, parsed, route)
 		return
 	}
 
 	execution := service.ResolveLLMModelExecution(parsed.model, parsed.dtype, parsed.quantizationConfig)
 	taskArgsJSON, err := service.ApplyLLMExecutionToTaskArgsJSON(parsed.taskArgsJSON, execution)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
 		return
 	}
 	parsed.taskArgsJSON = taskArgsJSON
 	if err := models.ValidateCrynuxTaskArgsSize(parsed.taskArgsJSON, appCfg.LLM.MaxCrynuxTaskArgsBytes); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	userVram, err := vramlimit.ResolveUserVramLimit(parsed.vramLimit, c.Param("vram_limit"))
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -89,7 +80,6 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		huggingface.ModelKindLLM,
 		parsed.model,
 	); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), nil, nil)
 		writeTaskModelValidationError(c, err)
 		return
 	}
@@ -101,7 +91,6 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	priorityGwei, err := service.ResolveEffectivePriorityGwei(project)
 	if err != nil {
 		log.Errorf("Resolve effective priority failed for project %d: %v", project.ID, err)
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	}
@@ -121,7 +110,6 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		maxCompletion,
 	)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
 		if errors.Is(err, service.ErrTaskFeeBelowMinimum) ||
 			errors.Is(err, service.ErrAutoMaxCreditsInsufficient) ||
 			errors.Is(err, service.ErrMaxCreditsExceeded) {
@@ -135,7 +123,6 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	priorityGwei = taskFee.PriorityGwei
 
 	if err := service.ValidateOptionalQueueTimeout(parsed.queueTimeout); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -164,7 +151,6 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 	job, err := service.ReserveCreditsAndCreateTaskJob(c.Request.Context(), db, jobInput)
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientBalance) {
-			_ = recordFailedCall(c.Request.Context(), project, apiType, parsed.model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
 			writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
 			return
 		}

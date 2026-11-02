@@ -502,7 +502,8 @@ A settled success call record MUST also contain the Credits recalculation snapsh
 
 The call record MUST NOT store the charged Credits amount. The call record MUST NOT store `reference_priority_gwei`. Actual Credits changes MUST exist only on processed `credit_events` rows.
 
-When Task Fee Estimation fails and the request is aborted before Bridge forwarding, the failure `task_call_records` row MUST leave the four fee fields empty. Management query APIs MUST NOT expose the fee fields or recalculation snapshot fields.
+Management query APIs MUST NOT expose the fee fields or recalculation snapshot fields.
+
 
 ## Task Fee Estimation
 
@@ -567,9 +568,9 @@ After project `priority_gwei`, validated coefficients, and `vram_weight` are ava
 When Task Fee Estimation fails, the service MUST:
 
 1. Log the concrete error cause.
-2. Create one failure `task_call_records` row without the four fee fields.
-3. Return HTTP 500 to the client.
-4. MUST NOT forward the request to the Bridge.
+2. Return HTTP 500 to the client.
+3. MUST NOT forward the request to the Bridge.
+4. MUST NOT write a `task_call_records` row or a `usage_stats_pending_call_records` row.
 
 ## Billing Config Query API
 

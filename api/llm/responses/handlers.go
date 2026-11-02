@@ -12,10 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math/big"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -23,19 +21,14 @@ import (
 
 const projectContextKey = "llm_project"
 
-var estimateTaskFeeFn = service.EstimateTaskFee
-
 func CreateResponse(c *gin.Context) {
 	project := getProject(c)
 	if project == nil {
 		writeAuthError(c, "unauthorized")
 		return
 	}
-	acceptedAt := time.Now()
-
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, "", 0, acceptedAt, time.Now(), nil, nil)
 		writeRequestBodyReadError(c, err)
 		return
 	}
@@ -43,8 +36,6 @@ func CreateResponse(c *gin.Context) {
 	appCfg := config.GetConfig()
 	req, err := llmadapter.ParseResponsesRequest(body)
 	if err != nil {
-		model := extractModelFromBody(body)
-		_ = recordFailedCall(c.Request.Context(), project, model, 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
@@ -60,7 +51,6 @@ func CreateResponse(c *gin.Context) {
 			appCfg.LLM.JobRetentionDays,
 		)
 		if err != nil {
-			_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 			if errors.Is(err, service.ErrPreviousResponsesInvalid) {
 				writeLLMAdapterError(c, llmadapter.NewValidationError("previous_response_id", "previous response is invalid"))
 				return
@@ -69,13 +59,11 @@ func CreateResponse(c *gin.Context) {
 			return
 		}
 		if prevJob.RawResultJSON == nil {
-			_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 			writeClientError(c, http.StatusBadRequest, "previous_response_id: previous response is invalid")
 			return
 		}
 		history, err = llmadapter.BuildResponsesHistoryFromPreviousJob(prevJob.PublicID, prevJob.TaskArgsJSON, *prevJob.RawResultJSON)
 		if err != nil {
-			_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 			writeLLMAdapterError(c, err)
 			return
 		}
@@ -83,26 +71,22 @@ func CreateResponse(c *gin.Context) {
 
 	taskArgsJSON, err := llmadapter.BuildResponsesTaskArgsWithHistory(req, history, int(appCfg.LLM.DefaultMaxTokens))
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
 	execution := service.ResolveLLMModelExecution(req.Model, req.Dtype, req.QuantizationConfig)
 	taskArgsJSON, err = service.ApplyLLMExecutionToTaskArgsJSON(taskArgsJSON, execution)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
 		return
 	}
 	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, appCfg.LLM.MaxCrynuxTaskArgsBytes); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	userVram, err := vramlimit.ResolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -113,7 +97,6 @@ func CreateResponse(c *gin.Context) {
 		huggingface.ModelKindLLM,
 		req.Model,
 	); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), nil, nil)
 		if errors.Is(err, service.ErrBaseModelCheckUnavailable) {
 			writeServerError(c)
 			return
@@ -131,7 +114,6 @@ func CreateResponse(c *gin.Context) {
 	priorityGwei, err := service.ResolveEffectivePriorityGwei(project)
 	if err != nil {
 		log.Errorf("Resolve effective priority failed for project %d: %v", project.ID, err)
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	}
@@ -151,7 +133,6 @@ func CreateResponse(c *gin.Context) {
 		maxCompletion,
 	)
 	if err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, nil)
 		if errors.Is(err, service.ErrTaskFeeBelowMinimum) ||
 			errors.Is(err, service.ErrAutoMaxCreditsInsufficient) ||
 			errors.Is(err, service.ErrMaxCreditsExceeded) {
@@ -165,7 +146,6 @@ func CreateResponse(c *gin.Context) {
 	priorityGwei = taskFee.PriorityGwei
 
 	if err := service.ValidateOptionalQueueTimeout(req.QueueTimeout); err != nil {
-		_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -193,7 +173,6 @@ func CreateResponse(c *gin.Context) {
 	job, err := service.ReserveCreditsAndCreateTaskJob(c.Request.Context(), db, jobInput)
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientBalance) {
-			_ = recordFailedCall(c.Request.Context(), project, req.Model, effectiveVram, acceptedAt, time.Now(), priorityGwei, taskFee)
 			writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
 			return
 		}
@@ -397,46 +376,6 @@ func responsesObjectParamsFromJob(job *models.TaskJob) llmadapter.ResponsesObjec
 func float64Ptr(v float64) *float64 {
 	copied := v
 	return &copied
-}
-
-func recordFailedCall(ctx context.Context, project *models.Project, model string, billedVram uint64, acceptedAt, completedAt time.Time, priorityGwei *big.Int, taskFee *service.CalcTaskFeeResult) error {
-	if acceptedAt.IsZero() {
-		acceptedAt = completedAt
-	}
-	if completedAt.IsZero() {
-		completedAt = time.Now()
-		if acceptedAt.IsZero() {
-			acceptedAt = completedAt
-		}
-	}
-	if priorityGwei == nil {
-		priorityGwei = &project.PriorityGwei.Int
-	}
-	in := service.RecordTaskCallInput{
-		UserID:               project.UserID,
-		ProjectID:            project.ID,
-		TaskType:             models.TaskTypeLLM,
-		APIType:              models.TaskAPITypeResponses,
-		Model:                model,
-		PriorityGwei:         priorityGwei,
-		TokenUsageApplicable: true,
-		Status:               models.TaskCallStatusFailed,
-		Credits:              big.NewInt(0),
-		AcceptedAt:           acceptedAt,
-		CompletedAt:          completedAt,
-		BilledVram:           billedVram,
-		Charge:               false,
-	}
-	if taskFee != nil {
-		in.TaskFeeGwei = taskFee.TaskFeeGwei
-		in.MedianPriorityGwei = taskFee.MedianPriorityGwei
-		estimated := taskFee.EstimatedNodeSeconds
-		weight := taskFee.VramWeight
-		in.EstimatedNodeSeconds = &estimated
-		in.VramWeight = &weight
-	}
-	_, err := service.ProcessTaskCall(ctx, config.GetDB(), in)
-	return err
 }
 
 func extractModelFromBody(body []byte) string {

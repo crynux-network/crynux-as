@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -52,14 +51,12 @@ func CreateTask(c *gin.Context) {
 	}
 	prepared, err := prepareTask(c.Request.Context(), project, request)
 	if err != nil {
-		recordFailure(c.Request.Context(), project, "", 0)
 		writePrepareTaskError(c, err)
 		return
 	}
 	job, err := createPreparedTask(c.Request.Context(), project, prepared)
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientBalance) {
-			recordFailure(c.Request.Context(), project, prepared.model, prepared.billedVram)
 			writeError(c, http.StatusPaymentRequired, "insufficient credits balance")
 			return
 		}
@@ -83,14 +80,12 @@ func BatchCreate(c *gin.Context) {
 	for index, item := range request.Tasks {
 		prepared, err := prepareTask(c.Request.Context(), project, item)
 		if err != nil {
-			recordFailure(c.Request.Context(), project, "", 0)
 			results = append(results, BatchCreateItem{Index: index, Error: err.Error()})
 			continue
 		}
 		job, err := createPreparedTask(c.Request.Context(), project, prepared)
 		if err != nil {
 			if errors.Is(err, service.ErrInsufficientBalance) {
-				recordFailure(c.Request.Context(), project, prepared.model, prepared.billedVram)
 				results = append(results, BatchCreateItem{Index: index, Error: "insufficient credits balance"})
 				continue
 			}
@@ -465,26 +460,6 @@ func taskView(job *models.TaskJob) TaskView {
 		view.EstimatedCompletionAt = nil
 	}
 	return view
-}
-
-func recordFailure(ctx context.Context, project *models.Project, model string, billedVram uint64) {
-	if project == nil {
-		return
-	}
-	priority, err := service.ResolveEffectivePriorityGwei(project)
-	if err != nil {
-		priority = &project.PriorityGwei.Int
-	}
-	now := time.Now()
-	if _, err := service.ProcessTaskCall(ctx, config.GetDB(), service.RecordTaskCallInput{
-		UserID: project.UserID, ProjectID: project.ID, TaskType: models.TaskTypeLLM,
-		APIType: models.TaskAPITypeRaw, Model: model, PriorityGwei: priority,
-		TokenUsageApplicable: false, Status: models.TaskCallStatusFailed,
-		Credits: big.NewInt(0), AcceptedAt: now, CompletedAt: now,
-		BilledVram: billedVram, Charge: false,
-	}); err != nil {
-		log.Errorf("Record raw task failure for project %d failed: %v", project.ID, err)
-	}
 }
 
 func writeError(c *gin.Context, status int, message string) {

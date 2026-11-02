@@ -29,32 +29,27 @@ func ImagesGenerations(c *gin.Context) {
 		writeAuthError(c, "unauthorized")
 		return
 	}
-	acceptedAt := time.Now()
 	apiType := models.TaskAPITypeImagesGenerations
 
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, "", 0, acceptedAt, time.Now(), nil, nil)
 		writeRequestBodyReadError(c, err)
 		return
 	}
 
 	req, err := llmadapter.ParseImagesGenerationsRequest(body)
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, extractModelFromBody(body), 0, acceptedAt, time.Now(), nil, nil)
 		writeLLMAdapterError(c, err)
 		return
 	}
 
 	taskArgsJSON, err := llmadapter.BuildImagesGenerationsTaskArgs(req)
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	}
 	taskArgsJSON, billedVram, err := service.ApplyImageExecutionToTaskArgsJSON(taskArgsJSON, req.Model)
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		if errors.Is(err, service.ErrImageExecutionUnresolved) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
@@ -64,7 +59,6 @@ func ImagesGenerations(c *gin.Context) {
 	}
 	userVram, err := vramlimit.ResolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -72,23 +66,19 @@ func ImagesGenerations(c *gin.Context) {
 		billedVram = *userVram
 	}
 	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	if validationErr, err := models.ValidateTaskArgsJsonStr(taskArgsJSON, models.TaskTypeImage); err != nil {
 		log.Errorf("Validate image task args for project %d failed: %v", project.ID, err)
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	} else if validationErr != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "invalid task_args: "+validationErr.Error())
 		return
 	}
 
 	if err := service.ValidateTaskModel(c.Request.Context(), huggingface.ModelKindSD, req.Model); err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeTaskModelValidationError(c, err)
 		return
 	}
@@ -97,7 +87,6 @@ func ImagesGenerations(c *gin.Context) {
 	priorityGwei, err := service.ResolveEffectivePriorityGwei(project)
 	if err != nil {
 		log.Errorf("Resolve effective priority failed for project %d: %v", project.ID, err)
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	}
@@ -115,7 +104,6 @@ func ImagesGenerations(c *gin.Context) {
 		EffectiveVram: billedVram,
 	})
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), priorityGwei, nil)
 		if errors.Is(err, service.ErrTaskFeeBelowMinimum) ||
 			errors.Is(err, service.ErrAutoMaxCreditsInsufficient) ||
 			errors.Is(err, service.ErrMaxCreditsExceeded) {
@@ -146,7 +134,6 @@ func ImagesGenerations(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientBalance) {
-			_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), priorityGwei, estimate)
 			writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
 			return
 		}
@@ -203,12 +190,10 @@ func ImagesEdits(c *gin.Context) {
 		writeAuthError(c, "unauthorized")
 		return
 	}
-	acceptedAt := time.Now()
 	apiType := models.TaskAPITypeImagesEdits
 
-	req, modelHint, err := parseImagesEditsRequest(c)
+	req, _, err := parseImagesEditsRequest(c)
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, modelHint, 0, acceptedAt, time.Now(), nil, nil)
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			writeRequestBodyReadError(c, err)
@@ -220,13 +205,11 @@ func ImagesEdits(c *gin.Context) {
 
 	taskArgsJSON, err := llmadapter.BuildImagesEditsTaskArgs(req)
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	}
 	taskArgsJSON, billedVram, err := service.ApplyImageExecutionToTaskArgsJSON(taskArgsJSON, req.Model)
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		if errors.Is(err, service.ErrImageExecutionUnresolved) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
@@ -236,7 +219,6 @@ func ImagesEdits(c *gin.Context) {
 	}
 	userVram, err := vramlimit.ResolveUserVramLimit(req.VramLimit, c.Param("vram_limit"))
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, 0, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -244,23 +226,19 @@ func ImagesEdits(c *gin.Context) {
 		billedVram = *userVram
 	}
 	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	if validationErr, err := models.ValidateTaskArgsJsonStr(taskArgsJSON, models.TaskTypeImage); err != nil {
 		log.Errorf("Validate image edit task args for project %d failed: %v", project.ID, err)
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	} else if validationErr != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeClientError(c, http.StatusBadRequest, "invalid task_args: "+validationErr.Error())
 		return
 	}
 
 	if err := service.ValidateTaskModel(c.Request.Context(), huggingface.ModelKindSD, req.Model); err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeTaskModelValidationError(c, err)
 		return
 	}
@@ -269,7 +247,6 @@ func ImagesEdits(c *gin.Context) {
 	priorityGwei, err := service.ResolveEffectivePriorityGwei(project)
 	if err != nil {
 		log.Errorf("Resolve effective priority failed for project %d: %v", project.ID, err)
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), nil, nil)
 		writeServerError(c)
 		return
 	}
@@ -287,7 +264,6 @@ func ImagesEdits(c *gin.Context) {
 		EffectiveVram: billedVram,
 	})
 	if err != nil {
-		_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), priorityGwei, nil)
 		if errors.Is(err, service.ErrTaskFeeBelowMinimum) ||
 			errors.Is(err, service.ErrAutoMaxCreditsInsufficient) ||
 			errors.Is(err, service.ErrMaxCreditsExceeded) {
@@ -318,7 +294,6 @@ func ImagesEdits(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrInsufficientBalance) {
-			_ = recordFailedImageCall(c.Request.Context(), project, apiType, req.Model, billedVram, acceptedAt, time.Now(), priorityGwei, estimate)
 			writeClientError(c, http.StatusPaymentRequired, "insufficient credits balance")
 			return
 		}
@@ -419,53 +394,4 @@ func imageExecutionFromTaskArgs(taskArgsJSON string) (dtype string, quantConfig 
 		return "", nil
 	}
 	return strings.ToLower(strings.TrimSpace(payload.Dtype)), payload.QuantizationConfig
-}
-
-func recordFailedImageCall(
-	ctx context.Context,
-	project *models.Project,
-	apiType models.TaskAPIType,
-	model string,
-	billedVram uint64,
-	acceptedAt, completedAt time.Time,
-	priorityGwei *big.Int,
-	taskFee *service.CalcTaskFeeResult,
-) error {
-	if acceptedAt.IsZero() {
-		acceptedAt = completedAt
-	}
-	if completedAt.IsZero() {
-		completedAt = time.Now()
-		if acceptedAt.IsZero() {
-			acceptedAt = completedAt
-		}
-	}
-	if priorityGwei == nil {
-		priorityGwei = &project.PriorityGwei.Int
-	}
-	in := service.RecordTaskCallInput{
-		UserID:               project.UserID,
-		ProjectID:            project.ID,
-		TaskType:             models.TaskTypeImage,
-		APIType:              apiType,
-		Model:                model,
-		PriorityGwei:         priorityGwei,
-		TokenUsageApplicable: false,
-		Status:               models.TaskCallStatusFailed,
-		Credits:              big.NewInt(0),
-		AcceptedAt:           acceptedAt,
-		CompletedAt:          completedAt,
-		BilledVram:           billedVram,
-		Charge:               false,
-	}
-	if taskFee != nil {
-		in.TaskFeeGwei = taskFee.TaskFeeGwei
-		in.MedianPriorityGwei = taskFee.MedianPriorityGwei
-		estimated := taskFee.EstimatedNodeSeconds
-		weight := taskFee.VramWeight
-		in.EstimatedNodeSeconds = &estimated
-		in.VramWeight = &weight
-	}
-	_, err := service.ProcessTaskCall(ctx, config.GetDB(), in)
-	return err
 }
