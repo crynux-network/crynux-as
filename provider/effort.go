@@ -2,15 +2,12 @@ package provider
 
 // MapAnthropicEffort converts a validated OpenAI-compatible effort value into
 // Anthropic thinking and output_config.effort fields. omitted is true when the
-// client did not provide effort and neither Anthropic field should be injected.
-// When effort is "none", thinkingType is "disabled" and effortOut is empty.
+// client did not provide effort or requested "none", so neither Anthropic field
+// should be injected.
 // Other values use thinkingType "adaptive" and a mapped effortOut.
 func MapAnthropicEffort(effort string) (thinkingType string, effortOut string, omitted bool) {
-	if effort == "" {
+	if effort == "" || effort == "none" {
 		return "", "", true
-	}
-	if effort == "none" {
-		return "disabled", "", false
 	}
 	switch effort {
 	case "minimal", "low":

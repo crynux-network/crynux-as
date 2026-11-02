@@ -134,7 +134,7 @@ Adapters MUST map a present value as follows:
 
 * OpenAI: send the validated value unchanged as Chat Completions `reasoning_effort`.
 * Anthropic:
-  * `none` MUST set `thinking.type` to `disabled` and MUST NOT set `output_config.effort`;
+  * `none` MUST omit both `thinking` and `output_config.effort`;
   * every other value MUST set `thinking.type` to `adaptive`;
   * `minimal` and `low` MUST set `output_config.effort` to `low`;
   * `medium`, `high`, `xhigh`, and `max` MUST set `output_config.effort` to the same value;

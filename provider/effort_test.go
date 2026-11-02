@@ -83,9 +83,8 @@ func TestAnthropicConversionMapsReasoningEffort(t *testing.T) {
 	if err := json.Unmarshal(noneBody, &noneOut); err != nil {
 		t.Fatal(err)
 	}
-	thinking, _ := noneOut["thinking"].(map[string]any)
-	if thinking["type"] != "disabled" {
-		t.Fatalf("none thinking=%v", noneOut["thinking"])
+	if _, ok := noneOut["thinking"]; ok {
+		t.Fatalf("none should omit thinking: %s", noneBody)
 	}
 	if _, ok := noneOut["output_config"]; ok {
 		t.Fatalf("none should omit output_config: %s", noneBody)
