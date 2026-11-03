@@ -545,4 +545,6 @@ The image pricing-examples API MUST NOT return queue wait estimates.
 
 ## Failed Calls
 
-Every failed LLM call MUST be recorded as one `llm_call_records` row with failure status. A failed call MUST NOT create a Credits ledger event.
+When a terminal failure occurs after a `task_jobs` row exists, the service MUST record one `task_call_records` row with failure status. A failed call MUST NOT create a Credits ledger event.
+
+When request validation, VRAM resolution, task-fee estimation, or Credits reserve fails before a `task_jobs` row is created, the service MUST return the corresponding HTTP error and MUST NOT write a `task_call_records` row or a `usage_stats_pending_call_records` row.
