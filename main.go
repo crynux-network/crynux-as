@@ -105,10 +105,14 @@ func main() {
 	if err := service.RefreshLoadedModels(context.Background()); err != nil {
 		log.Errorf("initial loaded models refresh failed: %v", err)
 	}
+	if err := service.RefreshModelsCatalog(context.Background(), config.GetDB()); err != nil {
+		log.Errorf("initial models catalog refresh failed: %v", err)
+	}
 	if err := service.RefreshQueuedPriority(context.Background()); err != nil {
 		log.Errorf("initial queued priority refresh failed: %v", err)
 	}
 	tasks.StartLoadedModelsRefresh(intakeCtx, &workerWG)
+	tasks.StartModelsCatalogRefresh(intakeCtx, &workerWG)
 	tasks.StartQueuedPriorityRefresh(intakeCtx, &workerWG)
 	tasks.StartTaskJobWorker(intakeCtx, providerJobCtx, &workerWG)
 	tasks.StartTaskJobRetentionCleanup(intakeCtx, &workerWG)

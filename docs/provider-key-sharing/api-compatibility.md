@@ -91,7 +91,7 @@ Provider rows MUST omit Crynux-only fields such as `min_vram`, `on_disk_node_cou
 
 Catalog order MUST be model ID ascending, then execution-source order with Provider rows after Crynux rows for deterministic output. Configuration validation and loaded-model refresh MUST prevent a cross-source name collision.
 
-Temporary key saturation and cooldown MUST NOT remove a Provider model. The model disappears only when no enabled, non-deleted key remains for its Service Provider.
+Temporary key saturation and cooldown MUST NOT remove a Provider model. The model disappears from the public catalog only after a successful models-catalog refresh finds no enabled, non-deleted key for its Service Provider. Catalog list and retrieve handlers MUST read that refreshed snapshot and MUST NOT query Shared API Key visibility on each request.
 
 `GET /models/<model>` MUST return the existing list envelope for every matching catalog row. A visible Provider chat or image model returns one row when its Service Provider has at least one enabled, non-deleted Shared API Key. Missing models return the existing OpenAI `model_not_found` error.
 

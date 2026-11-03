@@ -269,7 +269,7 @@ The project MUST have status active. A request failing any of these checks MUST 
 
 Provider rows MUST come only from YAML declarations. A Provider row MUST appear only when its Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Busy slots and temporary cooldown MUST NOT hide a model. Provider model IDs MUST be exact official names without prefixes or aliases. Provider rows MUST use the field shapes in [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md). List and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT expose key availability counts, Shared API Key identity, `model_cache_hash`, or `model_cache_config` on any catalog row.
 
-The Crynux catalog snapshot MUST include only rows whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. The full loaded-models cache MUST retain every Relay LLM row for default `min_vram` and exact-configuration lookup. Catalog list and retrieve MUST read the catalog snapshot and MUST NOT re-filter the full cache on each request. The merged list MUST sort by `id` ascending, then execution source with Crynux before Provider, then Crynux `execution_dtype`, canonical `quantization_config`, and `model_cache_hash` ascending. Provider rows have no Crynux tie-breaker fields.
+The Crynux catalog snapshot MUST include only rows whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. The full loaded-models cache MUST retain every Relay LLM row for default `min_vram` and exact-configuration lookup. Catalog list and retrieve MUST read the public models catalog cache rebuilt on `llm.models_catalog_refresh_interval` and MUST NOT re-filter the full loaded-models cache or query Shared API Key visibility on each request. The merged list MUST sort by `id` ascending, then execution source with Crynux before Provider, then Crynux `execution_dtype`, canonical `quantization_config`, and `model_cache_hash` ascending. Provider rows have no Crynux tie-breaker fields.
 
 ### `GET /api/<endpoint_token>/v1/models`
 
@@ -439,6 +439,7 @@ llm:
   default_max_tokens: 2048
   default_vram_limit: 24
   loaded_models_refresh_interval: 1800
+  models_catalog_refresh_interval: 1800
   queued_priority_refresh_interval: 300
   execution_time_cache_ttl: 300
   min_catalog_on_disk_node_count: 3
@@ -465,6 +466,7 @@ llm:
 * `default_max_tokens` is used in the pre-forward balance estimate and Task Fee Estimation when the request omits both `max_tokens` and `max_completion_tokens`.
 * `default_vram_limit` is the effective VRAM in GB for an unknown model when the user did not specify a `vram_limit`.
 * `loaded_models_refresh_interval` is the loaded-models cache refresh interval in seconds. Every YAML configuration template MUST set it to `1800`.
+* `models_catalog_refresh_interval` is the public models API catalog refresh interval in seconds. Every YAML configuration template MUST set it to `1800`. Configuration loading MUST fail when the value is zero or missing. A successful refresh MUST rebuild the in-memory chat, image, and merged catalogs from the current Crynux catalog snapshots plus currently visible Provider models. `GET /models`, `GET /models/chat`, `GET /models/image`, and `GET /models/<model>` MUST read that snapshot and MUST NOT query Shared API Key visibility on each request. A failed refresh MUST retain the last successful snapshot.
 * `queued_priority_refresh_interval` is the queued-task priority snapshot refresh interval in seconds. Every YAML configuration template MUST set it to `300`.
 * `execution_time_cache_ttl` is the per-key TTL in seconds for LLM execution-time coefficients cached from Relay. Every YAML configuration template MUST set it to `300`.
 * `min_catalog_on_disk_node_count` is the minimum Relay `on_disk_node_count` required for a model to enter the public LLM and Image catalog snapshots used by `GET /models`, `GET /models/chat`, `GET /models/image`, and `GET /models/<model>`. Every YAML configuration template MUST set it to `3`. Configuration loading MUST fail when the value is zero or missing. A changed value MUST take effect on the next successful loaded-models refresh.

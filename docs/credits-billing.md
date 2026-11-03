@@ -43,6 +43,7 @@ llm:
   default_max_tokens: 2048
   default_vram_limit: 24
   loaded_models_refresh_interval: 1800
+  models_catalog_refresh_interval: 1800
   queued_priority_refresh_interval: 300
   execution_time_cache_ttl: 300
   min_catalog_on_disk_node_count: 3

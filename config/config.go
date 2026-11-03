@@ -243,6 +243,9 @@ func checkLLMConfig() error {
 	if appConfig.LLM.LoadedModelsRefreshInterval == 0 {
 		return errors.New("llm.loaded_models_refresh_interval is not set")
 	}
+	if appConfig.LLM.ModelsCatalogRefreshInterval == 0 {
+		return errors.New("llm.models_catalog_refresh_interval is not set")
+	}
 	if appConfig.LLM.QueuedPriorityRefreshInterval == 0 {
 		return errors.New("llm.queued_priority_refresh_interval is not set")
 	}

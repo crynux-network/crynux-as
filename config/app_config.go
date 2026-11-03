@@ -90,6 +90,7 @@ type AppConfig struct {
 		DefaultMaxTokens              uint64            `mapstructure:"default_max_tokens"`
 		DefaultVramLimit              uint64            `mapstructure:"default_vram_limit"`
 		LoadedModelsRefreshInterval   uint64            `mapstructure:"loaded_models_refresh_interval"`
+		ModelsCatalogRefreshInterval  uint64            `mapstructure:"models_catalog_refresh_interval"`
 		QueuedPriorityRefreshInterval uint64            `mapstructure:"queued_priority_refresh_interval"`
 		ExecutionTimeCacheTTL         uint64            `mapstructure:"execution_time_cache_ttl"`
 		MinCatalogOnDiskNodeCount     uint64            `mapstructure:"min_catalog_on_disk_node_count"`
