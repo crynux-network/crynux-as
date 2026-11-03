@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	log "github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
 
@@ -32,12 +33,17 @@ type ModelsCatalogImageItem struct {
 type modelsCatalogSnapshot struct {
 	chat  []any
 	image []any
+	all   []any
 }
 
 var modelsCatalogCache struct {
 	mu       sync.RWMutex
 	snapshot modelsCatalogSnapshot
 }
+
+// listVisibleProviderModels is the Provider visibility lookup used by catalog refresh.
+// Tests may replace it to simulate query failures.
+var listVisibleProviderModels = ListVisibleProviderModels
 
 func newCrynuxChatCatalogItem(model LoadedLLMModel) ModelsCatalogChatItem {
 	return ModelsCatalogChatItem{
@@ -127,37 +133,75 @@ func appendProviderCatalogItems(items []any, routes []ProviderModelRoute, apiKin
 	return items
 }
 
+func filterProviderCatalogItems(items []any) []any {
+	out := make([]any, 0)
+	for _, item := range items {
+		ownedBy := catalogItemOwnedBy(item)
+		if ownedBy == "crynux" || ownedBy == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 // RefreshModelsCatalog rebuilds the public models API snapshot from the current
-// Crynux catalog caches and visible Provider models. A failed refresh leaves the
-// previous snapshot unchanged.
+// Crynux catalog caches and visible Provider models. Crynux rows are always
+// rebuilt. When the Provider visibility query fails, previous Provider rows are
+// reused when present; otherwise the snapshot contains Crynux rows only.
 func RefreshModelsCatalog(ctx context.Context, db *gorm.DB) error {
-	providerRoutes, err := ListVisibleProviderModels(ctx, db, "")
+	providerRoutes, err := listVisibleProviderModels(ctx, db, "")
+	var providerChat []any
+	var providerImage []any
 	if err != nil {
-		return err
+		modelsCatalogCache.mu.RLock()
+		providerChat = filterProviderCatalogItems(modelsCatalogCache.snapshot.chat)
+		providerImage = filterProviderCatalogItems(modelsCatalogCache.snapshot.image)
+		modelsCatalogCache.mu.RUnlock()
+		if len(providerChat) > 0 || len(providerImage) > 0 {
+			log.Errorf("provider visibility query failed; reusing previous provider rows: %v", err)
+		} else {
+			log.Errorf("provider visibility query failed; refreshing Crynux catalog rows only: %v", err)
+		}
+	} else {
+		providerChat = appendProviderCatalogItems(nil, providerRoutes, config.ProviderAPIKindChat)
+		providerImage = appendProviderCatalogItems(nil, providerRoutes, config.ProviderAPIKindImage)
 	}
 
 	loadedChat := ListLoadedLLMModels()
-	chat := make([]any, 0, len(loadedChat)+len(providerRoutes))
+	chat := make([]any, 0, len(loadedChat)+len(providerChat))
 	for _, model := range loadedChat {
 		chat = append(chat, newCrynuxChatCatalogItem(model))
 	}
-	chat = appendProviderCatalogItems(chat, providerRoutes, config.ProviderAPIKindChat)
+	chat = append(chat, providerChat...)
 	sortModelsCatalogItems(chat)
 
 	loadedImage := ListLoadedSDModels()
-	image := make([]any, 0, len(loadedImage)+len(providerRoutes))
+	image := make([]any, 0, len(loadedImage)+len(providerImage))
 	for _, model := range loadedImage {
 		image = append(image, newCrynuxImageCatalogItem(model))
 	}
-	image = appendProviderCatalogItems(image, providerRoutes, config.ProviderAPIKindImage)
+	image = append(image, providerImage...)
 	sortModelsCatalogItems(image)
+
+	all := make([]any, 0, len(chat)+len(image))
+	all = append(all, chat...)
+	all = append(all, image...)
+	sortModelsCatalogItems(all)
 
 	modelsCatalogCache.mu.Lock()
 	modelsCatalogCache.snapshot = modelsCatalogSnapshot{
 		chat:  chat,
 		image: image,
+		all:   all,
 	}
 	modelsCatalogCache.mu.Unlock()
+	log.Infof(
+		"models catalog cache refreshed: %d chat, %d image, %d total",
+		len(chat),
+		len(image),
+		len(all),
+	)
 	return nil
 }
 
@@ -185,11 +229,7 @@ func ListModelsCatalogImage() []any {
 func ListModelsCatalogAll() []any {
 	modelsCatalogCache.mu.RLock()
 	defer modelsCatalogCache.mu.RUnlock()
-	out := make([]any, 0, len(modelsCatalogCache.snapshot.chat)+len(modelsCatalogCache.snapshot.image))
-	out = append(out, modelsCatalogCache.snapshot.chat...)
-	out = append(out, modelsCatalogCache.snapshot.image...)
-	sortModelsCatalogItems(out)
-	return out
+	return copyCatalogItems(modelsCatalogCache.snapshot.all)
 }
 
 // ListModelsCatalogByID returns every cached catalog row whose id matches modelID.

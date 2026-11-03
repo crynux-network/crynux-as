@@ -2,8 +2,29 @@ package config
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 )
+
+func TestCheckLLMConfigRejectsZeroModelsCatalogRefreshInterval(t *testing.T) {
+	prev := GetConfig()
+	t.Cleanup(func() { SetConfigForTest(prev) })
+
+	cfg := &AppConfig{}
+	cfg.LLM.DefaultMaxTokens = 1
+	cfg.LLM.DefaultVramLimit = 1
+	cfg.LLM.LoadedModelsRefreshInterval = 1
+	cfg.LLM.ModelsCatalogRefreshInterval = 0
+	SetConfigForTest(cfg)
+
+	err := checkLLMConfig()
+	if err == nil {
+		t.Fatal("zero models_catalog_refresh_interval was accepted")
+	}
+	if !strings.Contains(err.Error(), "models_catalog_refresh_interval") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
 
 func TestCheckProviderRequiredUsageWeightsImage(t *testing.T) {
 	err := checkProviderRequiredUsageWeights("openai", "gpt-image-2", ProviderAPIKindImage, ProviderUsageWeightsConfig{
