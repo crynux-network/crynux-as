@@ -191,7 +191,7 @@ func (j TaskJob) DecodeBillingData() (*TaskBillingData, error) {
 	if j.TaskType == TaskTypeLLM && data.LLM == nil && data.Provider == nil {
 		return nil, errors.New("missing llm billing data")
 	}
-	if j.TaskType == TaskTypeImage && data.Image == nil {
+	if j.TaskType == TaskTypeImage && data.Image == nil && data.Provider == nil {
 		return nil, errors.New("missing image billing data")
 	}
 	if data.Provider != nil {

@@ -4,6 +4,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/provider"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,8 @@ type ProviderUsageComponents struct {
 	CacheWriteInputTokens     uint64
 	ReasoningTokens           uint64
 	ToolUsePromptTokens       uint64
+	ImageInputTokens          uint64
+	ImageOutputTokens         uint64
 	TotalTokens               uint64
 	ReasoningIncludedInOutput bool
 }
@@ -133,6 +136,10 @@ func isImageContentPart(obj map[string]json.RawMessage) bool {
 // maxImageBytes in total, or images sent to a model without a known image token
 // rule.
 func EstimateProviderInputTokens(route ProviderModelRoute, apiType models.TaskAPIType, requestJSON []byte, maxImageBytes uint64) (ProviderInputTokenEstimate, error) {
+	switch apiType {
+	case models.TaskAPITypeImagesGenerations, models.TaskAPITypeImagesEdits:
+		return estimateProviderImagesInputTokens(route, apiType, requestJSON, maxImageBytes)
+	}
 	canonical, err := provider.ParseCanonicalRequest(requestJSON, route.ModelName, apiType, 0)
 	if err != nil {
 		return ProviderInputTokenEstimate{}, err
@@ -147,6 +154,53 @@ func EstimateProviderInputTokens(route ProviderModelRoute, apiType models.TaskAP
 	}
 	return ProviderInputTokenEstimate{
 		TextTokens:  EstimateProviderTextInputTokens(requestJSON),
+		ImageTokens: imageTokens,
+	}, nil
+}
+
+func estimateProviderImagesInputTokens(route ProviderModelRoute, apiType models.TaskAPIType, requestJSON []byte, maxImageBytes uint64) (ProviderInputTokenEstimate, error) {
+	req, err := provider.ParseCanonicalImagesJSON(requestJSON, apiType)
+	if err != nil {
+		return ProviderInputTokenEstimate{}, err
+	}
+	req.Model = route.ModelName
+	var totalBytes uint64
+	infos := make([]provider.CanonicalImageInfo, 0, len(req.Images))
+	for _, img := range req.Images {
+		decoded, err := base64.StdEncoding.DecodeString(img.Base64)
+		if err != nil {
+			return ProviderInputTokenEstimate{}, fmt.Errorf("image base64 is invalid")
+		}
+		totalBytes += uint64(len(decoded))
+		if maxImageBytes > 0 && totalBytes > maxImageBytes {
+			return ProviderInputTokenEstimate{}, fmt.Errorf("total image size exceeds the %d-byte limit", maxImageBytes)
+		}
+		infos = append(infos, provider.CanonicalImageInfo{
+			MIMEType:     img.MIMEType,
+			Width:        img.Width,
+			Height:       img.Height,
+			DecodedBytes: len(decoded),
+		})
+	}
+	imageTokens, err := provider.EstimateImageInputTokens(route.ServiceProvider, route.ModelName, infos)
+	if err != nil {
+		// Image-only models may not share chat vision rules; count pixels as a
+		// conservative upper bound when edits include source images.
+		if len(infos) == 0 {
+			imageTokens = 0
+		} else {
+			var sum uint64
+			for _, info := range infos {
+				sum += uint64(info.Width*info.Height) / 32
+				if sum == 0 {
+					sum = 1
+				}
+			}
+			imageTokens = sum
+		}
+	}
+	return ProviderInputTokenEstimate{
+		TextTokens:  uint64(len(req.Prompt)),
 		ImageTokens: imageTokens,
 	}, nil
 }
@@ -202,15 +256,21 @@ func CalculateProviderUnits(usage ProviderUsageComponents, weights map[string]st
 	if err := add(usage.ToolUsePromptTokens, "tool_use_prompt_tokens"); err != nil {
 		return nil, err
 	}
+	if err := add(usage.ImageInputTokens, "image_input_tokens"); err != nil {
+		return nil, err
+	}
+	if err := add(usage.ImageOutputTokens, "image_output_tokens"); err != nil {
+		return nil, err
+	}
 	return units, nil
 }
 
 func EstimateProviderUnits(weights map[string]string, inputTokens, maxOutputTokens uint64) (*big.Rat, error) {
-	inputWeight, err := maxWeight(weights, "input_tokens", "cached_input_tokens", "cache_write_input_tokens", "tool_use_prompt_tokens")
+	inputWeight, err := maxWeight(weights, "input_tokens", "cached_input_tokens", "cache_write_input_tokens", "tool_use_prompt_tokens", "image_input_tokens")
 	if err != nil {
 		return nil, err
 	}
-	outputWeight, err := maxWeight(weights, "output_tokens", "reasoning_tokens")
+	outputWeight, err := maxWeight(weights, "output_tokens", "reasoning_tokens", "image_output_tokens")
 	if err != nil {
 		return nil, err
 	}
@@ -320,12 +380,15 @@ func ceilPriorityFromFeeAndUnits(minFeeGwei *big.Int, units *big.Rat) (*big.Int,
 	return priority, nil
 }
 
-// CheapestProviderUnits returns the smallest estimated Provider units across all
-// configured Provider models for the same input and maximum-output estimates.
-func CheapestProviderUnits(inputTokens, maxOutputTokens uint64) (*big.Rat, error) {
+// CheapestProviderUnits returns the smallest estimated Provider units across
+// configured Provider models with the given api_kind for the same estimates.
+func CheapestProviderUnits(inputTokens, maxOutputTokens uint64, apiKind string) (*big.Rat, error) {
 	routes := ListConfiguredProviderModels()
 	var cheapest *big.Rat
 	for _, route := range routes {
+		if apiKind != "" && route.APIKind != "" && route.APIKind != apiKind {
+			continue
+		}
 		units, err := EstimateProviderUnits(route.UsageWeights, inputTokens, maxOutputTokens)
 		if err != nil {
 			return nil, fmt.Errorf("estimate units for %s: %w", route.ModelName, err)
@@ -346,7 +409,7 @@ func CheapestProviderUnits(inputTokens, maxOutputTokens uint64) (*big.Rat, error
 // ResolveProviderSharedMinPriority converts llm.min_task_price_cnx.providers into
 // the shared Cost Level lower bound for one request workload. When the configured
 // providers minimum is 0 or no Provider models are configured, it returns nil.
-func ResolveProviderSharedMinPriority(inputTokens, maxOutputTokens uint64) (*big.Int, error) {
+func ResolveProviderSharedMinPriority(inputTokens, maxOutputTokens uint64, apiKind string) (*big.Int, error) {
 	cfg := config.GetConfig()
 	if cfg == nil {
 		return nil, errors.New("config is not initialized")
@@ -358,7 +421,7 @@ func ResolveProviderSharedMinPriority(inputTokens, maxOutputTokens uint64) (*big
 	if minFeeGwei.Sign() <= 0 {
 		return nil, nil
 	}
-	cheapestUnits, err := CheapestProviderUnits(inputTokens, maxOutputTokens)
+	cheapestUnits, err := CheapestProviderUnits(inputTokens, maxOutputTokens, apiKind)
 	if err != nil {
 		return nil, err
 	}
@@ -469,7 +532,11 @@ func BuildProviderBillingData(
 	feeAtPriority := func(priority *big.Int) (*big.Rat, error) {
 		return ProviderBillableGwei(priority, units, maxTaskPriceCNX)
 	}
-	sharedMinPriority, err := ResolveProviderSharedMinPriority(inputTokens, maxOutputTokens)
+	apiKind := route.APIKind
+	if apiKind == "" {
+		apiKind = config.ProviderAPIKindChat
+	}
+	sharedMinPriority, err := ResolveProviderSharedMinPriority(inputTokens, maxOutputTokens, apiKind)
 	if err != nil {
 		return models.ProviderTaskBillingData{}, nil, err
 	}

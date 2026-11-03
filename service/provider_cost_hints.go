@@ -46,6 +46,7 @@ func ResolveProviderCostHints() (*ProviderCostHints, error) {
 	sharedMinPriority, err := ResolveProviderSharedMinPriority(
 		ProviderMinReferenceInputTokens,
 		ProviderMinReferenceOutputTokens,
+		config.ProviderAPIKindChat,
 	)
 	if err != nil {
 		return nil, err

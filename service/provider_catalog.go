@@ -22,6 +22,7 @@ var ErrLoadedModelsFetchFailed = errors.New("loaded models fetch failed")
 type ProviderModelRoute struct {
 	ServiceProvider models.ServiceProvider
 	ModelName       string
+	APIKind         string
 	UsageWeights    map[string]string
 	DisplayName     string
 }
@@ -53,9 +54,12 @@ func InitProviderCatalog(cfg *config.AppConfig) error {
 			addWeight("cache_write_input_tokens", model.UsageWeights.CacheWriteInputTokens)
 			addWeight("reasoning_tokens", model.UsageWeights.ReasoningTokens)
 			addWeight("tool_use_prompt_tokens", model.UsageWeights.ToolUsePromptTokens)
+			addWeight("image_input_tokens", model.UsageWeights.ImageInputTokens)
+			addWeight("image_output_tokens", model.UsageWeights.ImageOutputTokens)
 			catalog[name] = ProviderModelRoute{
 				ServiceProvider: provider,
 				ModelName:       name,
+				APIKind:         model.APIKind,
 				UsageWeights:    weights,
 				DisplayName:     svc.DisplayName,
 			}

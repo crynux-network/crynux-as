@@ -5,6 +5,34 @@ import (
 	"testing"
 )
 
+func TestCheckProviderRequiredUsageWeightsImage(t *testing.T) {
+	err := checkProviderRequiredUsageWeights("openai", "gpt-image-2", ProviderAPIKindImage, ProviderUsageWeightsConfig{
+		InputTokens: "1",
+	})
+	if err == nil {
+		t.Fatal("image model missing image token weights was accepted")
+	}
+	err = checkProviderRequiredUsageWeights("openai", "gpt-image-2", ProviderAPIKindImage, ProviderUsageWeightsConfig{
+		InputTokens:       "0.625",
+		ImageInputTokens:  "1",
+		ImageOutputTokens: "3.75",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckProviderRequiredUsageWeightsChatDoesNotRequireImage(t *testing.T) {
+	err := checkProviderRequiredUsageWeights("openai", "gpt-6-astra", ProviderAPIKindChat, ProviderUsageWeightsConfig{
+		InputTokens:     "1",
+		OutputTokens:    "5",
+		ReasoningTokens: "5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestParseEmptyQueueMedianPriorityGweiPreservesLargeInteger(t *testing.T) {
 	cfg := &AppConfig{}
 	cfg.LLM.EmptyQueueMedianPriorityGwei = "20000000000"

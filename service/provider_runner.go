@@ -77,6 +77,17 @@ func RunProviderJob(ctx context.Context, db *gorm.DB, jobID, sharedAPIKeyID uint
 				_ = FailProviderTaskJob(settleCtx, db, jobID, &currentKeyID, "key owner unavailable after successful upstream")
 				return
 			}
+			if len(result.ImageOutputs) > 0 {
+				files := make(map[uint64]ImageResultFile, len(result.ImageOutputs))
+				for i, img := range result.ImageOutputs {
+					files[uint64(i)] = ImageResultFile{Format: img.Format, Data: img.Data}
+				}
+				if err := SaveImageResultFiles(jobID, files); err != nil {
+					log.Errorf("provider job %d save image results failed: %v", jobID, err)
+					_ = FailProviderTaskJob(settleCtx, db, jobID, &currentKeyID, "failed to store image results")
+					return
+				}
+			}
 			publicID := provider.PublicStreamResponseID(job.APIType, job.ID, job.PublicID)
 			resultJSON, err := provider.RewritePublicResultID(result.FinalResultJSON, publicID)
 			if err != nil {

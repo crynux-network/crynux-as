@@ -18,7 +18,7 @@ func TestInitProviderCatalogLowercasesModelNames(t *testing.T) {
 		"openai": {
 			DisplayName: "OpenAI",
 			Models: []config.ProviderModelConfig{
-				{Name: "  GPT-4o  ", UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", OutputTokens: "1"}},
+				{Name: "  GPT-4o  ", APIKind: config.ProviderAPIKindChat, UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", OutputTokens: "1"}},
 			},
 		},
 	}
@@ -51,7 +51,7 @@ func TestValidateProviderCrynuxCollisions(t *testing.T) {
 				"openai": {
 					DisplayName: "OpenAI",
 					Models: []config.ProviderModelConfig{
-						{Name: "gpt-4o", UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", OutputTokens: "1"}},
+						{Name: "gpt-4o", APIKind: config.ProviderAPIKindChat, UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", OutputTokens: "1"}},
 					},
 				},
 			},

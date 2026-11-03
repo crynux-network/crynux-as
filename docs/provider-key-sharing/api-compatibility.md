@@ -20,23 +20,23 @@ The official OpenAI SDK MUST be usable by setting its base URL to the project en
 
 ## Supported Provider Endpoints
 
-The first release supports:
+Provider execution is available through:
 
 * `GET /models`
 * `GET /models/<model>`
-* `POST /chat/completions`
-* `POST /responses`
-* `GET /responses/<response_id>`
+* `POST /chat/completions` and `POST /responses` for models with `api_kind = chat`
+* `GET /responses/<response_id>` for Responses jobs
+* `POST /images/generations` and `POST /images/edits` for models with `api_kind = image`
 
 Provider execution MUST NOT be available through:
 
 * `POST /completions`;
 * Raw Task endpoints;
-* Images generations;
-* Images edits;
 * Provider-specific native endpoints.
 
 A Provider model name on `POST /completions` MUST return HTTP 400 with the existing OpenAI invalid-request shape. Crynux Completions behavior MUST remain unchanged.
+
+A chat Provider model on Images endpoints MUST return HTTP 400. An image Provider model on Chat Completions or Responses MUST return HTTP 400. Anthropic MUST NOT configure `api_kind = image`.
 
 ## Model Names
 
@@ -86,7 +86,12 @@ Temporary key saturation and cooldown MUST NOT remove a Provider model. The mode
 
 `GET /models/<model>` MUST return the existing list envelope. A Provider model returns one row. Missing models return the existing OpenAI `model_not_found` error.
 
-Every configured Provider model MUST be callable through Chat Completions and Responses. Provider adapters MUST translate each supported public request into the Provider's native API contract. Model configuration MUST NOT declare an API capability list.
+Each configured Provider model MUST declare exactly one `api_kind`:
+
+* `chat`: callable through Chat Completions and Responses only;
+* `image`: callable through Images generations and Images edits only.
+
+Provider adapters MUST translate each supported public request into the Provider's native API contract for that `api_kind`.
 
 ## Request Fields
 
@@ -103,7 +108,45 @@ The following Crynux execution extensions MUST be rejected for Provider models:
 
 `queue_timeout` MUST remain accepted. It controls only how long the job may wait for a Shared API Key slot. When omitted, AS MUST use `provider.default_queue_timeout_seconds`. The resolved timeout seconds MUST be stored in the existing `task_jobs.queue_timeout` column. AS MUST calculate expiration from `task_jobs.created_at + task_jobs.queue_timeout` and MUST NOT store a separate Provider queue deadline.
 
-Provider-specific request fields that are not part of the AS public contract MUST be rejected as unknown fields. AS MUST NOT forward arbitrary extra JSON.
+Provider-specific request fields that are not part of the AS public contract for the selected execution source MUST be rejected as unknown fields. AS MUST NOT forward arbitrary extra JSON.
+
+## Images Generations and Edits
+
+Crynux Images request validation in [OpenAI-Compatible LLM API](../llm-api.md) MUST remain unchanged for Crynux Stable Diffusion models.
+
+When the request `model` resolves to a Provider image model, AS MUST parse an OpenAI-shaped Images body into a shared canonical Images request, then run the selected Service Provider Images converter. The allowed field set MUST depend on that Service Provider. AS MUST NOT apply Crynux Hugging Face model-id rules, Image TaskArgs construction, or Bridge fee estimation on that path.
+
+### Shared Provider Images constraints
+
+* `response_format` MUST be `b64_json` or omitted. `url` MUST return HTTP 400.
+* `stream` and `partial_images` MUST return HTTP 400.
+* OpenAI Files `file_id` input references MUST return HTTP 400. Clients MUST send data URLs or multipart file bytes.
+* Crynux execution fields (`vram_limit`, path VRAM, `dtype`, `quantization_config`, `components`) MUST return HTTP 400.
+* `queue_timeout` MUST remain an AS-local field and MUST NOT be forwarded upstream.
+
+### OpenAI Images converter
+
+The OpenAI Images converter MUST validate and pass through official Images generations and edits fields that the selected GPT Image model supports, including `prompt`, `model`, `n`, `size`, `quality`, `background`, `moderation`, `output_format`, `output_compression`, edit input images, `mask`, `input_fidelity`, and `markup` when present and valid. Combination rules MUST match OpenAI (for example `background=transparent` requires `output_format` `png` or `webp`). Unknown fields MUST return HTTP 400.
+
+### Google Images converter
+
+The Google Images converter MUST map:
+
+* `prompt` and edit input images to `generateContent` `contents.parts`;
+* `size` to `imageConfig.aspectRatio` and `imageConfig.imageSize`;
+* `n` to a bounded sequence of upstream calls with admission scaled by `n`.
+
+It MUST set `responseModalities` to `IMAGE` only. It MUST NOT send `outputMimeType`, `outputCompressionQuality`, or `imageOutputOptions` to the Gemini Developer API.
+
+Google field handling:
+
+* omitted `output_format`: return upstream bytes; detect format by magic; echo the detected format; unknown magic MUST fail the job;
+* `output_format` `png`, `jpeg`, or `webp`: re-encode locally to that format after the upstream response and echo it;
+* `output_compression` with `jpeg` or `webp`: apply locally during re-encode;
+* `output_compression` with omitted or `png` format: HTTP 400;
+* `quality`, any `background`, `moderation`, `mask`, `input_fidelity`, `markup`, and unknown fields: HTTP 400.
+
+Public responses MUST remain `b64_json` without a public `usage` object. Settlement MUST use adapter-normalized token usage.
 
 ## Image Input
 

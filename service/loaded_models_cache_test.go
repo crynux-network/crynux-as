@@ -216,7 +216,7 @@ func TestRefreshLoadedModelsSkipsProviderNameCollisions(t *testing.T) {
 				"openai": {
 					DisplayName: "OpenAI",
 					Models: []config.ProviderModelConfig{
-						{Name: "reserved/llm", UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", OutputTokens: "1"}},
+						{Name: "reserved/llm", APIKind: config.ProviderAPIKindChat, UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", OutputTokens: "1"}},
 					},
 				},
 			},

@@ -386,7 +386,7 @@ func TestResolveProviderSharedMinPriorityUsesCheapestModel(t *testing.T) {
 		},
 	)
 
-	got, err := ResolveProviderSharedMinPriority(10, 50)
+	got, err := ResolveProviderSharedMinPriority(10, 50, config.ProviderAPIKindChat)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -794,6 +794,63 @@ func TestEstimateProviderInputTokensRejectsInvalidReasoningEffort(t *testing.T) 
 	_, err := EstimateProviderInputTokens(route, models.TaskAPITypeChatCompletions, body, 1<<20)
 	if err == nil {
 		t.Fatal("expected invalid reasoning_effort rejection before credits reservation")
+	}
+}
+
+func TestCheapestProviderUnitsFiltersByAPIKind(t *testing.T) {
+	setProviderBillingTestCatalog(t,
+		ProviderModelRoute{
+			ServiceProvider: models.ServiceProviderOpenAI,
+			ModelName:       "chat-cheap",
+			APIKind:         config.ProviderAPIKindChat,
+			UsageWeights:    map[string]string{"input_tokens": "1", "output_tokens": "1"},
+		},
+		ProviderModelRoute{
+			ServiceProvider: models.ServiceProviderOpenAI,
+			ModelName:       "image-expensive",
+			APIKind:         config.ProviderAPIKindImage,
+			UsageWeights: map[string]string{
+				"input_tokens":        "1",
+				"image_input_tokens":  "1",
+				"image_output_tokens": "100",
+			},
+		},
+	)
+	chatUnits, err := CheapestProviderUnits(10, 50, config.ProviderAPIKindChat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chatUnits.Cmp(big.NewRat(60, 1)) != 0 {
+		t.Fatalf("chat cheapest=%s, want 60", chatUnits.FloatString(18))
+	}
+	imageUnits, err := CheapestProviderUnits(10, 50, config.ProviderAPIKindImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// max(input, image_input)*10 + max(output, image_output)*50 = 1*10 + 100*50
+	if imageUnits.Cmp(big.NewRat(5010, 1)) != 0 {
+		t.Fatalf("image cheapest=%s, want 5010", imageUnits.FloatString(18))
+	}
+}
+
+func TestCalculateProviderUnitsImageComponents(t *testing.T) {
+	units, err := CalculateProviderUnits(ProviderUsageComponents{
+		InputTokens:       100,
+		ImageInputTokens:  200,
+		ImageOutputTokens: 1120,
+	}, map[string]string{
+		"input_tokens":        "0.625",
+		"image_input_tokens":  "1",
+		"image_output_tokens": "3.75",
+		"output_tokens":       "1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 100*0.625 + 200*1 + 1120*3.75 = 62.5 + 200 + 4200 = 4462.5
+	want := big.NewRat(8925, 2)
+	if units.Cmp(want) != 0 {
+		t.Fatalf("units=%s, want %s", units.FloatString(18), want.FloatString(18))
 	}
 }
 

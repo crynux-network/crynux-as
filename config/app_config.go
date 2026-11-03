@@ -138,10 +138,19 @@ type ProviderUsageWeightsConfig struct {
 	CacheWriteInputTokens string `mapstructure:"cache_write_input_tokens" json:"cache_write_input_tokens,omitempty"`
 	ReasoningTokens       string `mapstructure:"reasoning_tokens" json:"reasoning_tokens,omitempty"`
 	ToolUsePromptTokens   string `mapstructure:"tool_use_prompt_tokens" json:"tool_use_prompt_tokens,omitempty"`
+	ImageInputTokens      string `mapstructure:"image_input_tokens" json:"image_input_tokens,omitempty"`
+	ImageOutputTokens     string `mapstructure:"image_output_tokens" json:"image_output_tokens,omitempty"`
 }
+
+// Provider API kinds select which public endpoints a configured model may serve.
+const (
+	ProviderAPIKindChat  = "chat"
+	ProviderAPIKindImage = "image"
+)
 
 type ProviderModelConfig struct {
 	Name         string                     `mapstructure:"name" json:"name"`
+	APIKind      string                     `mapstructure:"api_kind" json:"api_kind"`
 	UsageWeights ProviderUsageWeightsConfig `mapstructure:"usage_weights" json:"usage_weights"`
 }
 

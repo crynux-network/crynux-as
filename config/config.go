@@ -576,6 +576,17 @@ func checkProviderConfig(v *viper.Viper) error {
 				return fmt.Errorf("provider.services.%s.models[%d].name is not set", serviceID, i)
 			}
 			svc.Models[i].Name = name
+			apiKind := strings.TrimSpace(strings.ToLower(model.APIKind))
+			if apiKind == "" {
+				return fmt.Errorf("provider.services.%s.models[%s].api_kind is not set", serviceID, name)
+			}
+			if apiKind != ProviderAPIKindChat && apiKind != ProviderAPIKindImage {
+				return fmt.Errorf("provider.services.%s.models[%s].api_kind must be %q or %q", serviceID, name, ProviderAPIKindChat, ProviderAPIKindImage)
+			}
+			if serviceID == "anthropic" && apiKind == ProviderAPIKindImage {
+				return fmt.Errorf("provider.services.anthropic.models[%s].api_kind must not be %q", name, ProviderAPIKindImage)
+			}
+			svc.Models[i].APIKind = apiKind
 			if other, exists := modelNames[name]; exists {
 				return fmt.Errorf("provider model name %q is duplicated between %s and %s", name, other, serviceID)
 			}
@@ -583,7 +594,7 @@ func checkProviderConfig(v *viper.Viper) error {
 			if err := checkProviderUsageWeights(serviceID, name, model.UsageWeights); err != nil {
 				return err
 			}
-			if err := checkProviderRequiredUsageWeights(serviceID, name, model.UsageWeights); err != nil {
+			if err := checkProviderRequiredUsageWeights(serviceID, name, apiKind, model.UsageWeights); err != nil {
 				return err
 			}
 		}
@@ -629,6 +640,8 @@ func checkProviderUsageWeights(serviceID, modelName string, weights ProviderUsag
 		"cache_write_input_tokens": weights.CacheWriteInputTokens,
 		"reasoning_tokens":         weights.ReasoningTokens,
 		"tool_use_prompt_tokens":   weights.ToolUsePromptTokens,
+		"image_input_tokens":       weights.ImageInputTokens,
+		"image_output_tokens":      weights.ImageOutputTokens,
 	}
 	hasPositive := false
 	for field, value := range fields {
@@ -650,12 +663,22 @@ func checkProviderUsageWeights(serviceID, modelName string, weights ProviderUsag
 }
 
 // checkProviderRequiredUsageWeights requires usage weights for components that
-// the OpenAI and Google adapters can return as positive reasoning counts.
-func checkProviderRequiredUsageWeights(serviceID, modelName string, weights ProviderUsageWeightsConfig) error {
-	switch serviceID {
-	case "openai", "google":
-		if strings.TrimSpace(weights.ReasoningTokens) == "" {
-			return fmt.Errorf("provider.services.%s.models[%s].usage_weights.reasoning_tokens is required", serviceID, modelName)
+// the selected api_kind adapters can return as positive counts.
+func checkProviderRequiredUsageWeights(serviceID, modelName, apiKind string, weights ProviderUsageWeightsConfig) error {
+	switch apiKind {
+	case ProviderAPIKindChat:
+		switch serviceID {
+		case "openai", "google":
+			if strings.TrimSpace(weights.ReasoningTokens) == "" {
+				return fmt.Errorf("provider.services.%s.models[%s].usage_weights.reasoning_tokens is required", serviceID, modelName)
+			}
+		}
+	case ProviderAPIKindImage:
+		if strings.TrimSpace(weights.ImageInputTokens) == "" {
+			return fmt.Errorf("provider.services.%s.models[%s].usage_weights.image_input_tokens is required", serviceID, modelName)
+		}
+		if strings.TrimSpace(weights.ImageOutputTokens) == "" {
+			return fmt.Errorf("provider.services.%s.models[%s].usage_weights.image_output_tokens is required", serviceID, modelName)
 		}
 	}
 	return nil

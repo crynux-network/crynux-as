@@ -18,6 +18,10 @@ import (
 )
 
 func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiType models.TaskAPIType, body []byte, parsed parsedTaskJobRequest, route service.ProviderModelRoute) {
+	if route.APIKind == config.ProviderAPIKindImage {
+		writeClientError(c, http.StatusBadRequest, "image models do not support Chat Completions or Responses")
+		return
+	}
 	if apiType == models.TaskAPITypeCompletions {
 		writeClientError(c, http.StatusBadRequest, "Provider models do not support the Completions API")
 		return

@@ -58,9 +58,13 @@ Common usage components are:
 * cached input tokens;
 * cache-write input tokens;
 * reasoning or thinking tokens;
-* tool-use prompt tokens.
+* tool-use prompt tokens;
+* image input tokens;
+* image output tokens.
 
-OpenAI and Google model configuration MUST include a `reasoning_tokens` weight because those adapters can return positive reasoning or thoughts counts. Anthropic configuration MUST NOT require a separate `reasoning_tokens` weight; Anthropic thinking tokens are already counted in output tokens.
+OpenAI and Google `api_kind = chat` model configuration MUST include a `reasoning_tokens` weight because those adapters can return positive reasoning or thoughts counts. Anthropic configuration MUST NOT require a separate `reasoning_tokens` weight; Anthropic thinking tokens are already counted in output tokens.
+
+OpenAI and Google `api_kind = image` model configuration MUST include `image_input_tokens` and `image_output_tokens` weights. Image models MUST NOT require `reasoning_tokens`. Anthropic MUST NOT configure `api_kind = image`.
 
 Weights are normalized Provider work units per usage item. They MUST be parsed as exact rational numbers. Floating-point arithmetic MUST NOT be used for ledger amounts.
 
@@ -139,6 +143,12 @@ The estimated Provider units MUST be:
 estimated_input_tokens * maximum_input_weight
 + maximum_generated_tokens * maximum_generated_weight
 ```
+
+For `api_kind = chat`, maximum input weight MUST be the greatest configured weight among ordinary input, cached input, cache write, tool-use prompt, and image input. Maximum generated weight MUST be the greatest among output and reasoning.
+
+For `api_kind = image`, estimated input tokens MUST be prompt text bytes plus estimated image input tokens for edit source images. Maximum generated tokens MUST be the estimated image output tokens for the requested size, quality, and `n` using Service Provider image-output rules in `provider/`. Maximum input weight MUST include `image_input_tokens`. Maximum generated weight MUST include `image_output_tokens`.
+
+When computing the shared `min_task_price_cnx.providers` Cost Level lower bound, AS MUST estimate units only across configured models whose `api_kind` matches the current request (`chat` or `image`).
 
 The job billing snapshot MUST store `estimated_input_tokens`, `estimated_text_input_tokens`, and `estimated_image_input_tokens`.
 

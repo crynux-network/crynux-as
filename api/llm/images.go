@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"crynux_as/api/llm/vramlimit"
 	"crynux_as/config"
@@ -35,6 +36,12 @@ func ImagesGenerations(c *gin.Context) {
 	if err != nil {
 		writeRequestBodyReadError(c, err)
 		return
+	}
+	if model := extractImagesModel(body); model != "" {
+		if route, ok := service.LookupProviderModel(model); ok {
+			handleProviderImagesRequest(c, project, apiType, body, route)
+			return
+		}
 	}
 
 	req, err := llmadapter.ParseImagesGenerationsRequest(body)
@@ -191,6 +198,37 @@ func ImagesEdits(c *gin.Context) {
 		return
 	}
 	apiType := models.TaskAPITypeImagesEdits
+
+	if strings.HasPrefix(c.ContentType(), "multipart/form-data") {
+		model, body, err := peekImagesModelFromRequest(c)
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				writeRequestBodyReadError(c, err)
+				return
+			}
+			writeClientError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if route, ok := service.LookupProviderModel(model); ok {
+			handleProviderImagesRequest(c, project, apiType, body, route)
+			return
+		}
+		// Multipart already parsed; Crynux path below re-parses from MultipartForm.
+	} else {
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			writeRequestBodyReadError(c, err)
+			return
+		}
+		if model := extractImagesModel(body); model != "" {
+			if route, ok := service.LookupProviderModel(model); ok {
+				handleProviderImagesRequest(c, project, apiType, body, route)
+				return
+			}
+		}
+		c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	}
 
 	req, _, err := parseImagesEditsRequest(c)
 	if err != nil {

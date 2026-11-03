@@ -47,12 +47,20 @@ type NormalizedUsage struct {
 	CacheWriteInputTokens uint64 `json:"cache_write_input_tokens"`
 	ReasoningTokens       uint64 `json:"reasoning_tokens"`
 	ToolUsePromptTokens   uint64 `json:"tool_use_prompt_tokens"`
+	ImageInputTokens      uint64 `json:"image_input_tokens"`
+	ImageOutputTokens     uint64 `json:"image_output_tokens"`
 	TotalTokens           uint64 `json:"total_tokens"`
 	// ReasoningIncludedInOutput is true when ReasoningTokens are already counted
 	// inside OutputTokens and must be subtracted before separate billing.
 	// OpenAI completion_tokens include reasoning_tokens. Google
 	// candidatesTokenCount does not include thoughtsTokenCount.
 	ReasoningIncludedInOutput bool `json:"reasoning_included_in_output,omitempty"`
+}
+
+// ImageOutputBytes is one final encoded image returned by an Images adapter.
+type ImageOutputBytes struct {
+	Format string
+	Data   []byte
 }
 
 type StreamEventKind string
@@ -83,6 +91,7 @@ type ExecuteResult struct {
 	FinalResultJSON   []byte
 	FinalUsage        *NormalizedUsage
 	PartialUsage      *NormalizedUsage
+	ImageOutputs      []ImageOutputBytes
 	ErrorClass        ErrorClass
 	ErrorMessage      string
 	KeySpecific       bool

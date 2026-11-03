@@ -62,13 +62,18 @@ func ReserveCreditsAndCreateProviderTaskJob(ctx context.Context, db *gorm.DB, in
 		// Streaming jobs stay invisible to the scheduler until the handler registers a subscriber.
 		phase = "admitting"
 	}
+	taskType := models.TaskTypeLLM
+	switch in.APIType {
+	case models.TaskAPITypeImagesGenerations, models.TaskAPITypeImagesEdits:
+		taskType = models.TaskTypeImage
+	}
 	job := models.TaskJob{
 		ProjectID:         in.Project.ID,
 		UserID:            in.Project.UserID,
 		PriorityGwei:      models.BigInt{Int: *new(big.Int).Set(in.PriorityGwei)},
 		SortablePriority:  models.FormatSortablePriority(in.PriorityGwei),
 		ExecutionSource:   in.Route.ServiceProvider.ExecutionSource(),
-		TaskType:          models.TaskTypeLLM,
+		TaskType:          taskType,
 		APIType:           in.APIType,
 		Model:             in.Route.ModelName,
 		BilledVram:        0,
@@ -123,6 +128,8 @@ func SettleProviderTaskJob(
 		CacheWriteInputTokens:     usage.CacheWriteInputTokens,
 		ReasoningTokens:           usage.ReasoningTokens,
 		ToolUsePromptTokens:       usage.ToolUsePromptTokens,
+		ImageInputTokens:          usage.ImageInputTokens,
+		ImageOutputTokens:         usage.ImageOutputTokens,
 		TotalTokens:               usage.TotalTokens,
 		ReasoningIncludedInOutput: usage.ReasoningIncludedInOutput,
 	}

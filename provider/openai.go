@@ -57,6 +57,8 @@ func (a *OpenAIAdapter) ValidateCredential(ctx context.Context, secret []byte) (
 func (a *OpenAIAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, jobID uint, tryIndex int, sink EventSink) (ExecuteResult, error) {
 	switch apiType {
 	case models.TaskAPITypeChatCompletions, models.TaskAPITypeResponses:
+	case models.TaskAPITypeImagesGenerations, models.TaskAPITypeImagesEdits:
+		return a.executeImages(ctx, secret, apiType, model, requestJSON, jobID, tryIndex)
 	default:
 		return ExecuteResult{
 			AcceptanceKnown: true,

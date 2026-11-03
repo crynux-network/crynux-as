@@ -157,6 +157,22 @@ Adapters MUST convert those parts as follows:
 
 Image input-token estimation MUST use the same validated image metadata and MUST live beside the adapters in `provider/`. Estimation MUST follow each Service Provider's current official model-family rules and MUST NOT be configured in YAML. Settlement MUST use the adapter's normalized actual input tokens, which already include visual tokens when the upstream reports them.
 
+## Images Adapters
+
+Images generations and edits MUST use a shared OpenAI-shaped canonical Images parse, then a per-Service-Provider converter that validates fields and builds the upstream body. Chat Completions and Responses converters MUST NOT handle Images API types.
+
+OpenAI Images MUST call `POST /v1/images/generations` or `POST /v1/images/edits` with the converter body, parse `data[].b64_json` and `usage`, and normalize usage as:
+
+* text input tokens to `input_tokens`;
+* image input tokens from usage details to `image_input_tokens`;
+* image output tokens to `image_output_tokens`.
+
+Google Images MUST call `generateContent` with `responseModalities` containing `IMAGE`, extract inline image bytes, detect format by magic, apply local `output_format` / `output_compression` rules from [API Compatibility](api-compatibility.md), and normalize usage with prompt tokens as `input_tokens` and image output tokens as `image_output_tokens`.
+
+Anthropic MUST reject Images API types.
+
+Successful Images adapters MUST return image bytes for AS to store under `llm.task_result_dir` using the final encoded format. Public HTTP handlers MUST encode those files as `b64_json`.
+
 ## OpenAI Adapter
 
 The OpenAI adapter MUST call OpenAI Chat Completions for both public Chat Completions and public Responses requests. It MUST NOT call OpenAI Responses.

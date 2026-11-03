@@ -56,6 +56,18 @@ func (a *GoogleAdapter) ValidateCredential(ctx context.Context, secret []byte) (
 }
 
 func (a *GoogleAdapter) Execute(ctx context.Context, secret []byte, apiType models.TaskAPIType, model string, requestJSON []byte, jobID uint, tryIndex int, sink EventSink) (ExecuteResult, error) {
+	switch apiType {
+	case models.TaskAPITypeChatCompletions, models.TaskAPITypeResponses:
+	case models.TaskAPITypeImagesGenerations, models.TaskAPITypeImagesEdits:
+		return a.executeImages(ctx, secret, apiType, model, requestJSON, jobID, tryIndex)
+	default:
+		return ExecuteResult{
+			AcceptanceKnown: true,
+			Acceptance:      AcceptanceDefinitelyUnaccepted,
+			ErrorClass:      ErrorRequestInvalid,
+			ErrorMessage:    "unsupported api type for google adapter",
+		}, nil
+	}
 	canonical, err := ParseCanonicalRequest(requestJSON, model, apiType, a.defaultMaxTokens)
 	if err != nil {
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil

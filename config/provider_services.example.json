@@ -10,6 +10,7 @@
     "models": [
       {
         "name": "gpt-6-astra",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -19,6 +20,7 @@
       },
       {
         "name": "gpt-6.1-sol",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -28,6 +30,7 @@
       },
       {
         "name": "gpt-6.1-terra",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -37,11 +40,30 @@
       },
       {
         "name": "gpt-6-luna",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
           "cached_input_tokens": "0.1",
           "reasoning_tokens": "5"
+        }
+      },
+      {
+        "name": "gpt-image-2.5-sunburst",
+        "api_kind": "image",
+        "usage_weights": {
+          "input_tokens": "0.625",
+          "image_input_tokens": "1",
+          "image_output_tokens": "3.75"
+        }
+      },
+      {
+        "name": "gpt-image-2.5-flare",
+        "api_kind": "image",
+        "usage_weights": {
+          "input_tokens": "0.625",
+          "image_input_tokens": "1",
+          "image_output_tokens": "3.75"
         }
       }
     ]
@@ -57,6 +79,7 @@
     "models": [
       {
         "name": "claude-fable-5-1",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -66,6 +89,7 @@
       },
       {
         "name": "claude-opus-5-5",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -75,6 +99,7 @@
       },
       {
         "name": "claude-sonnet-5-5",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -84,6 +109,7 @@
       },
       {
         "name": "claude-haiku-5-5",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -104,6 +130,7 @@
     "models": [
       {
         "name": "gemini-4-argon",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -113,6 +140,7 @@
       },
       {
         "name": "gemini-3.8-flash",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "5",
@@ -122,11 +150,30 @@
       },
       {
         "name": "gemini-3.5-flash-lite",
+        "api_kind": "chat",
         "usage_weights": {
           "input_tokens": "1",
           "output_tokens": "25/3",
           "cached_input_tokens": "0.1",
           "reasoning_tokens": "25/3"
+        }
+      },
+      {
+        "name": "gemini-nano-banana-2.1",
+        "api_kind": "image",
+        "usage_weights": {
+          "input_tokens": "1",
+          "image_input_tokens": "1",
+          "image_output_tokens": "20"
+        }
+      },
+      {
+        "name": "gemini-3.1-flash-image",
+        "api_kind": "image",
+        "usage_weights": {
+          "input_tokens": "1",
+          "image_input_tokens": "1",
+          "image_output_tokens": "120"
         }
       }
     ]
