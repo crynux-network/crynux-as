@@ -128,6 +128,9 @@ func checkHttpConfig() error {
 	if appConfig.Environment != EnvTest && appConfig.Http.JWT.SecretKey == "" {
 		return errors.New("http.jwt secret key is not set")
 	}
+	if appConfig.Environment != EnvTest && appConfig.Http.Turnstile.SecretKey == "" {
+		return errors.New("http.turnstile.secret_key is not set")
+	}
 	return nil
 }
 

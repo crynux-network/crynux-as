@@ -62,6 +62,10 @@ type AppConfig struct {
 			SecretKeyFile string `mapstructure:"secret_key_file"`
 			ExpiresIn     uint64 `mapstructure:"expires_in"`
 		} `mapstructure:"jwt"`
+
+		Turnstile struct {
+			SecretKey string `mapstructure:"secret_key"`
+		} `mapstructure:"turnstile"`
 	} `mapstructure:"http"`
 
 	Blockchains map[string]BlockchainNetworkConfig `mapstructure:"blockchains"`

@@ -22,6 +22,8 @@ http:
   jwt:
     secret_key_file: "config/secrets/jwt_secret_key.txt"
     expires_in: 604800
+  turnstile:
+    secret_key: ""
 blockchains:
   ethereum:
     chain_id: 1

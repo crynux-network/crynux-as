@@ -193,6 +193,7 @@ func TestCheckHttpConfigRejectsEmptyJWTSecretOutsideTest(t *testing.T) {
 	cfg.Http.MaxBodyBytes = 1024
 	cfg.Http.JWT.ExpiresIn = 3600
 	cfg.Http.JWT.SecretKey = ""
+	cfg.Http.Turnstile.SecretKey = "turnstile-secret"
 	SetConfigForTest(cfg)
 	if err := checkHttpConfig(); err == nil {
 		t.Fatal("empty JWT secret was accepted outside test environment")
@@ -206,8 +207,37 @@ func TestCheckHttpConfigRejectsEmptyJWTSecretOutsideTest(t *testing.T) {
 
 	cfg.Environment = EnvTest
 	cfg.Http.JWT.SecretKey = ""
+	cfg.Http.Turnstile.SecretKey = ""
 	SetConfigForTest(cfg)
 	if err := checkHttpConfig(); err != nil {
 		t.Fatalf("empty JWT secret rejected in test environment: %v", err)
+	}
+}
+
+func TestCheckHttpConfigRejectsEmptyTurnstileSecretOutsideTest(t *testing.T) {
+	prev := GetConfig()
+	t.Cleanup(func() { SetConfigForTest(prev) })
+
+	cfg := &AppConfig{Environment: EnvDebug}
+	cfg.Http.MaxBodyBytes = 1024
+	cfg.Http.JWT.ExpiresIn = 3600
+	cfg.Http.JWT.SecretKey = "jwt-secret"
+	cfg.Http.Turnstile.SecretKey = ""
+	SetConfigForTest(cfg)
+	if err := checkHttpConfig(); err == nil {
+		t.Fatal("empty Turnstile secret was accepted outside test environment")
+	}
+
+	cfg.Http.Turnstile.SecretKey = "turnstile-secret"
+	SetConfigForTest(cfg)
+	if err := checkHttpConfig(); err != nil {
+		t.Fatalf("non-empty Turnstile secret rejected: %v", err)
+	}
+
+	cfg.Environment = EnvTest
+	cfg.Http.Turnstile.SecretKey = ""
+	SetConfigForTest(cfg)
+	if err := checkHttpConfig(); err != nil {
+		t.Fatalf("empty Turnstile secret rejected in test environment: %v", err)
 	}
 }

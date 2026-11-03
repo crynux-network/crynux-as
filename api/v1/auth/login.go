@@ -14,10 +14,11 @@ import (
 )
 
 type LoginInput struct {
-	Address    string `json:"address" validate:"required" description:"The wallet address of the user"`
-	Timestamp  int64  `json:"timestamp" validate:"required" description:"The unix timestamp when the message is signed"`
-	Signature  string `json:"signature" validate:"required" description:"The wallet signature of the login message"`
-	InviteCode string `json:"invite_code" description:"Optional invite code applied only when the account is created"`
+	Address        string `json:"address" validate:"required" description:"The wallet address of the user"`
+	Timestamp      int64  `json:"timestamp" validate:"required" description:"The unix timestamp when the message is signed"`
+	Signature      string `json:"signature" validate:"required" description:"The wallet signature of the login message"`
+	InviteCode     string `json:"invite_code" description:"Optional invite code applied only when the account is created"`
+	TurnstileToken string `json:"turnstile_token" validate:"required" description:"Cloudflare Turnstile response token"`
 }
 
 type LoginData struct {
@@ -31,6 +32,14 @@ type LoginResponse struct {
 }
 
 func Login(c *gin.Context, in *LoginInput) (*LoginResponse, error) {
+	cfg := config.GetConfig()
+	if cfg.Environment != config.EnvTest {
+		if err := tools.VerifyTurnstile(c.Request.Context(), cfg.Http.Turnstile.SecretKey, in.TurnstileToken, c.ClientIP()); err != nil {
+			log.Warnf("Turnstile verification failed for login from %s: %v", c.ClientIP(), err)
+			return nil, response.NewValidationErrorResponse("turnstile_token", "Invalid turnstile token")
+		}
+	}
+
 	verifier := blockchain.NewSignatureVerifier()
 	if err := verifier.ValidateAddress(in.Address); err != nil {
 		return nil, response.NewValidationErrorResponse("address", "Invalid address")
