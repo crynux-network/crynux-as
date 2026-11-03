@@ -45,20 +45,18 @@ func newProviderModelObject(route service.ProviderModelRoute) modelObject {
 	}
 }
 
-// imageModelObject extends the model object with the Image cache identity fields.
+// imageModelObject extends the model object with executable Image TaskArgs fields.
 type imageModelObject struct {
 	modelObject
-	ModelCacheHash string         `json:"model_cache_hash"`
-	Components     map[string]any `json:"components"`
-	Lora           map[string]any `json:"lora"`
+	Components map[string]any `json:"components"`
+	Lora       map[string]any `json:"lora"`
 }
 
 func newImageModelObject(model service.LoadedLLMModel) imageModelObject {
 	return imageModelObject{
-		modelObject:    newModelObject(model),
-		ModelCacheHash: model.ModelCacheHash,
-		Components:     model.Components,
-		Lora:           model.Lora,
+		modelObject: newModelObject(model),
+		Components:  model.Components,
+		Lora:        model.Lora,
 	}
 }
 
