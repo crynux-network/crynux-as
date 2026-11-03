@@ -6,7 +6,10 @@ import (
 	"crynux_as/models"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -364,5 +367,117 @@ func TestRefreshModelsCatalogRequiresEnabledProviderKey(t *testing.T) {
 	image := ListModelsCatalogImage()
 	if len(chat) != 1 || len(image) != 1 {
 		t.Fatalf("chat=%v image=%v", chat, image)
+	}
+}
+
+func TestRefreshModelsCatalogSerializesConcurrentRefreshes(t *testing.T) {
+	db := setupModelsCatalogTest(t)
+	initOpenAICatalogProviders(t)
+	setCatalogLLMModels(map[string]LoadedLLMModel{})
+	setCatalogSDModels(map[string]LoadedLLMModel{})
+
+	var inFlight atomic.Int32
+	var maxInFlight atomic.Int32
+	listVisibleProviderModels = func(context.Context, *gorm.DB, string) ([]ProviderModelRoute, error) {
+		cur := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			old := maxInFlight.Load()
+			if cur <= old || maxInFlight.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		return nil, nil
+	}
+
+	const workers = 8
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- RefreshModelsCatalog(context.Background(), db)
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := maxInFlight.Load(); got != 1 {
+		t.Fatalf("expected serialized provider lookups, maxInFlight=%d", got)
+	}
+}
+
+func TestRefreshModelsCatalogFailedRefreshDoesNotRestoreStaleProviders(t *testing.T) {
+	db := setupModelsCatalogTest(t)
+	user := models.User{Address: "0xcatalogcache5"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	_ = createTestSharedAPIKey(t, db, user.ID, "key_openai_catalog_race")
+	initOpenAICatalogProviders(t)
+	setCatalogLLMModels(map[string]LoadedLLMModel{
+		"race|bf16": {
+			ModelID:         "race-org/race-model",
+			MinVRAM:         8,
+			OnDiskNodeCount: 3,
+			ExecutionDType:  "bfloat16",
+		},
+	})
+	setCatalogSDModels(map[string]LoadedLLMModel{})
+	if err := RefreshModelsCatalog(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	if len(filterProviderCatalogItems(ListModelsCatalogChat())) == 0 {
+		t.Fatal("expected seeded provider rows")
+	}
+
+	entered := make(chan struct{})
+	releaseFail := make(chan struct{})
+	var calls atomic.Int32
+	listVisibleProviderModels = func(context.Context, *gorm.DB, string) ([]ProviderModelRoute, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			close(entered)
+			<-releaseFail
+			return nil, errors.New("db down")
+		}
+		return nil, nil
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if err := RefreshModelsCatalog(context.Background(), db); err != nil {
+			t.Errorf("first refresh: %v", err)
+		}
+	}()
+	<-entered
+	go func() {
+		defer wg.Done()
+		if err := RefreshModelsCatalog(context.Background(), db); err != nil {
+			t.Errorf("second refresh: %v", err)
+		}
+	}()
+	time.Sleep(30 * time.Millisecond)
+	close(releaseFail)
+	wg.Wait()
+
+	if got := filterProviderCatalogItems(ListModelsCatalogChat()); len(got) != 0 {
+		t.Fatalf("stale provider rows restored after successful empty visibility refresh: %v", got)
+	}
+	chat := ListModelsCatalogChat()
+	if len(chat) != 1 {
+		t.Fatalf("chat=%v", chat)
+	}
+	row, ok := chat[0].(ModelsCatalogChatItem)
+	if !ok || row.ID != "race-org/race-model" || row.OwnedBy != "crynux" {
+		t.Fatalf("chat[0]=%v", chat[0])
 	}
 }

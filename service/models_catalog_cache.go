@@ -37,8 +37,9 @@ type modelsCatalogSnapshot struct {
 }
 
 var modelsCatalogCache struct {
-	mu       sync.RWMutex
-	snapshot modelsCatalogSnapshot
+	refreshMu sync.Mutex
+	mu        sync.RWMutex
+	snapshot  modelsCatalogSnapshot
 }
 
 // listVisibleProviderModels is the Provider visibility lookup used by catalog refresh.
@@ -149,7 +150,12 @@ func filterProviderCatalogItems(items []any) []any {
 // Crynux catalog caches and visible Provider models. Crynux rows are always
 // rebuilt. When the Provider visibility query fails, previous Provider rows are
 // reused when present; otherwise the snapshot contains Crynux rows only.
+// Concurrent refreshes are serialized so a failed Provider lookup cannot
+// overwrite a newer successful snapshot with stale Provider rows.
 func RefreshModelsCatalog(ctx context.Context, db *gorm.DB) error {
+	modelsCatalogCache.refreshMu.Lock()
+	defer modelsCatalogCache.refreshMu.Unlock()
+
 	providerRoutes, err := listVisibleProviderModels(ctx, db, "")
 	var providerChat []any
 	var providerImage []any
@@ -256,6 +262,8 @@ func ListModelsCatalogByID(modelID string) []any {
 
 // ResetModelsCatalogCacheForTest clears the public models catalog snapshot.
 func ResetModelsCatalogCacheForTest() {
+	modelsCatalogCache.refreshMu.Lock()
+	defer modelsCatalogCache.refreshMu.Unlock()
 	modelsCatalogCache.mu.Lock()
 	modelsCatalogCache.snapshot = modelsCatalogSnapshot{}
 	modelsCatalogCache.mu.Unlock()
