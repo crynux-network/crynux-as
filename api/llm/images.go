@@ -7,6 +7,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
+	"crynux_as/provider"
 	"crynux_as/relay"
 	"crynux_as/service"
 	"crynux_as/service/huggingface"
@@ -200,18 +201,23 @@ func ImagesEdits(c *gin.Context) {
 	apiType := models.TaskAPITypeImagesEdits
 
 	if strings.HasPrefix(c.ContentType(), "multipart/form-data") {
-		model, body, err := peekImagesModelFromRequest(c)
-		if err != nil {
+		if err := c.Request.ParseMultipartForm(8 << 20); err != nil {
 			var maxErr *http.MaxBytesError
 			if errors.As(err, &maxErr) {
 				writeRequestBodyReadError(c, err)
 				return
 			}
-			writeClientError(c, http.StatusBadRequest, err.Error())
+			writeClientError(c, http.StatusBadRequest, "invalid multipart form")
 			return
 		}
+		model := strings.ToLower(strings.TrimSpace(c.Request.FormValue("model")))
 		if route, ok := service.LookupProviderModel(model); ok {
-			handleProviderImagesRequest(c, project, apiType, body, route)
+			canonical, err := provider.ParseCanonicalImagesMultipart(c.Request.MultipartForm, apiType)
+			if err != nil {
+				writeClientError(c, http.StatusBadRequest, err.Error())
+				return
+			}
+			handleProviderImagesCanonical(c, project, apiType, canonical, route)
 			return
 		}
 		// Multipart already parsed; Crynux path below re-parses from MultipartForm.

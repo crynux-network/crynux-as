@@ -680,6 +680,9 @@ func checkProviderRequiredUsageWeights(serviceID, modelName, apiKind string, wei
 		if strings.TrimSpace(weights.ImageOutputTokens) == "" {
 			return fmt.Errorf("provider.services.%s.models[%s].usage_weights.image_output_tokens is required", serviceID, modelName)
 		}
+		if serviceID == "google" && strings.TrimSpace(weights.ReasoningTokens) == "" {
+			return fmt.Errorf("provider.services.%s.models[%s].usage_weights.reasoning_tokens is required", serviceID, modelName)
+		}
 	}
 	return nil
 }

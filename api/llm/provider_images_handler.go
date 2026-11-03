@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
@@ -9,7 +10,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -28,6 +28,15 @@ func extractImagesModel(body []byte) string {
 }
 
 func handleProviderImagesRequest(c *gin.Context, project *models.Project, apiType models.TaskAPIType, body []byte, route service.ProviderModelRoute) {
+	canonical, err := provider.ParseCanonicalImagesJSON(body, apiType)
+	if err != nil {
+		writeClientError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	handleProviderImagesCanonical(c, project, apiType, canonical, route)
+}
+
+func handleProviderImagesCanonical(c *gin.Context, project *models.Project, apiType models.TaskAPIType, canonical provider.CanonicalImagesRequest, route service.ProviderModelRoute) {
 	if route.APIKind != "" && route.APIKind != config.ProviderAPIKindImage {
 		writeClientError(c, http.StatusBadRequest, "model does not support the Images API")
 		return
@@ -37,11 +46,7 @@ func handleProviderImagesRequest(c *gin.Context, project *models.Project, apiTyp
 		return
 	}
 
-	canonical, err := provider.ParseCanonicalImagesJSON(body, apiType)
-	if err != nil {
-		writeClientError(c, http.StatusBadRequest, err.Error())
-		return
-	}
+	canonical.APIType = apiType
 	canonical.Model = route.ModelName
 
 	switch route.ServiceProvider {
@@ -128,6 +133,13 @@ func handleProviderImagesRequest(c *gin.Context, project *models.Project, apiTyp
 
 	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, service.ResolveTaskJobWaitTimeout(c.Request.Header))
 	if err != nil {
+		if errors.Is(err, service.ErrTaskJobWaitTimeout) {
+			writeTimeoutError(c)
+			return
+		}
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		log.Errorf("wait provider image job %d failed: %v", job.ID, err)
 		writeServerError(c)
 		return
@@ -239,27 +251,4 @@ func formatProviderImagesResponse(created int64, size, quality, outputFormat str
 		OutputFormat: outputFormat,
 	}
 	return json.Marshal(resp)
-}
-
-// peekImagesModelFromRequest reads model without consuming unsupported Crynux validation.
-func peekImagesModelFromRequest(c *gin.Context) (model string, body []byte, err error) {
-	ct := c.ContentType()
-	if strings.HasPrefix(ct, "multipart/form-data") {
-		if err := c.Request.ParseMultipartForm(8 << 20); err != nil {
-			return "", nil, err
-		}
-		model = strings.ToLower(strings.TrimSpace(c.Request.FormValue("model")))
-		// Rebuild a JSON body from multipart for the Provider path.
-		canonical, err := provider.ParseCanonicalImagesMultipart(c.Request.MultipartForm, models.TaskAPITypeImagesEdits)
-		if err != nil {
-			return model, nil, err
-		}
-		body, err = rebuildProviderImagesBody(canonical)
-		return model, body, err
-	}
-	body, err = io.ReadAll(c.Request.Body)
-	if err != nil {
-		return "", nil, err
-	}
-	return extractImagesModel(body), body, nil
 }

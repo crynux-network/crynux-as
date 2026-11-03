@@ -165,9 +165,15 @@ OpenAI Images MUST call `POST /v1/images/generations` or `POST /v1/images/edits`
 
 * text input tokens to `input_tokens`;
 * image input tokens from usage details to `image_input_tokens`;
-* image output tokens to `image_output_tokens`.
+* `output_tokens_details.image_tokens` to `image_output_tokens` when present;
+* aggregate `output_tokens` to `image_output_tokens` when output details are absent;
+* Images text output tokens MUST NOT be billed through `output_tokens`.
 
-Google Images MUST call `generateContent` with `responseModalities` containing `IMAGE`, extract inline image bytes, detect format by magic, apply local `output_format` / `output_compression` rules from [API Compatibility](api-compatibility.md), and normalize usage with prompt tokens as `input_tokens` and image output tokens as `image_output_tokens`.
+Google Images MUST call `generateContent` with `responseModalities` containing `IMAGE`, extract the final non-thought inline image bytes, detect format by magic, apply local `output_format` / `output_compression` rules from [API Compatibility](api-compatibility.md), and normalize usage as:
+
+* prompt tokens to `input_tokens`;
+* IMAGE modality candidate tokens to `image_output_tokens`, or `candidatesTokenCount` when modality details are absent;
+* `thoughtsTokenCount` to `reasoning_tokens`.
 
 Anthropic MUST reject Images API types.
 

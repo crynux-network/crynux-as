@@ -38,6 +38,9 @@ func ValidateAndBuildGoogleImagesRequest(req CanonicalImagesRequest) (GoogleImag
 	if req.Mask != nil || req.Markup != nil || req.InputFidelity != "" {
 		return GoogleImagesUpstreamRequest{}, fmt.Errorf("mask, markup, and input_fidelity are not supported for Google image models")
 	}
+	if req.N != 1 {
+		return GoogleImagesUpstreamRequest{}, fmt.Errorf("n must be 1 for Google image models")
+	}
 
 	outputFormat := strings.TrimSpace(req.OutputFormat)
 	switch outputFormat {

@@ -182,22 +182,9 @@ func estimateProviderImagesInputTokens(route ProviderModelRoute, apiType models.
 			DecodedBytes: len(decoded),
 		})
 	}
-	imageTokens, err := provider.EstimateImageInputTokens(route.ServiceProvider, route.ModelName, infos)
+	imageTokens, err := provider.EstimateProviderImagesEditInputTokens(route.ServiceProvider, route.ModelName, infos, req.InputFidelity)
 	if err != nil {
-		// Image-only models may not share chat vision rules; count pixels as a
-		// conservative upper bound when edits include source images.
-		if len(infos) == 0 {
-			imageTokens = 0
-		} else {
-			var sum uint64
-			for _, info := range infos {
-				sum += uint64(info.Width*info.Height) / 32
-				if sum == 0 {
-					sum = 1
-				}
-			}
-			imageTokens = sum
-		}
+		return ProviderInputTokenEstimate{}, err
 	}
 	return ProviderInputTokenEstimate{
 		TextTokens:  uint64(len(req.Prompt)),

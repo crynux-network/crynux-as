@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -26,44 +27,31 @@ func (a *GoogleAdapter) executeImages(ctx context.Context, secret []byte, apiTyp
 		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceDefinitelyUnaccepted, ErrorClass: ErrorRequestInvalid, ErrorMessage: err.Error()}, nil
 	}
 
-	outputs := make([]ImageOutputBytes, 0, built.N)
-	var usage NormalizedUsage
-	var upstreamID string
-	for i := 0; i < built.N; i++ {
-		one, id, errResult, err := a.callGoogleImageOnce(ctx, secret, model, built.Body)
-		if err != nil {
-			return ExecuteResult{}, err
-		}
-		if errResult != nil {
-			return *errResult, nil
-		}
-		upstreamID = id
-		encoded, format, err := ApplyGoogleOutputFormat(one.Data, built.OutputFormat, built.OutputCompress)
-		if err != nil {
-			return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorResponseInvalid, ErrorMessage: err.Error(), UpstreamRequestID: upstreamID}, nil
-		}
-		outputs = append(outputs, ImageOutputBytes{Format: format, Data: encoded})
-		usage.InputTokens += one.Usage.InputTokens
-		usage.OutputTokens += one.Usage.OutputTokens
-		usage.ImageInputTokens += one.Usage.ImageInputTokens
-		usage.ImageOutputTokens += one.Usage.ImageOutputTokens
-		usage.ReasoningTokens += one.Usage.ReasoningTokens
-		usage.TotalTokens += one.Usage.TotalTokens
+	one, upstreamID, errResult, err := a.callGoogleImageOnce(ctx, secret, model, built.Body)
+	if err != nil {
+		return ExecuteResult{}, err
+	}
+	if errResult != nil {
+		return *errResult, nil
+	}
+	encoded, format, err := ApplyGoogleOutputFormat(one.Data, built.OutputFormat, built.OutputCompress)
+	if err != nil {
+		return ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorResponseInvalid, ErrorMessage: err.Error(), UpstreamRequestID: upstreamID}, nil
 	}
 	meta, _ := json.Marshal(map[string]any{
 		"created":       time.Now().Unix(),
 		"size":          canonical.EchoSize,
 		"quality":       canonical.Quality,
-		"output_format": outputs[0].Format,
-		"n":             len(outputs),
+		"output_format": format,
+		"n":             1,
 	})
 	return ExecuteResult{
 		AcceptanceKnown:   true,
 		Acceptance:        AcceptanceAcceptedBillable,
 		UpstreamRequestID: upstreamID,
 		FinalResultJSON:   meta,
-		FinalUsage:        &usage,
-		ImageOutputs:      outputs,
+		FinalUsage:        &one.Usage,
+		ImageOutputs:      []ImageOutputBytes{{Format: format, Data: encoded}},
 	}, nil
 }
 
@@ -107,6 +95,7 @@ func (a *GoogleAdapter) callGoogleImageOnce(ctx context.Context, secret []byte, 
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
+					Thought    bool `json:"thought"`
 					InlineData *struct {
 						MimeType string `json:"mimeType"`
 						Data     string `json:"data"`
@@ -116,10 +105,14 @@ func (a *GoogleAdapter) callGoogleImageOnce(ctx context.Context, secret []byte, 
 			} `json:"content"`
 		} `json:"candidates"`
 		UsageMetadata *struct {
-			PromptTokenCount     uint64 `json:"promptTokenCount"`
-			CandidatesTokenCount uint64 `json:"candidatesTokenCount"`
-			TotalTokenCount      uint64 `json:"totalTokenCount"`
-			ThoughtsTokenCount   uint64 `json:"thoughtsTokenCount"`
+			PromptTokenCount        uint64 `json:"promptTokenCount"`
+			CandidatesTokenCount    uint64 `json:"candidatesTokenCount"`
+			TotalTokenCount         uint64 `json:"totalTokenCount"`
+			ThoughtsTokenCount      uint64 `json:"thoughtsTokenCount"`
+			CandidatesTokensDetails []struct {
+				Modality   string `json:"modality"`
+				TokenCount uint64 `json:"tokenCount"`
+			} `json:"candidatesTokensDetails"`
 		} `json:"usageMetadata"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
@@ -131,16 +124,21 @@ func (a *GoogleAdapter) callGoogleImageOnce(ctx context.Context, secret []byte, 
 		return googleImageOnceResult{}, upstreamID, &res, nil
 	}
 	var imageB64 string
+	var thoughtImageB64 string
 	for _, cand := range parsed.Candidates {
 		for _, part := range cand.Content.Parts {
-			if part.InlineData != nil && part.InlineData.Data != "" {
-				imageB64 = part.InlineData.Data
-				break
+			if part.InlineData == nil || part.InlineData.Data == "" {
+				continue
 			}
+			if part.Thought {
+				thoughtImageB64 = part.InlineData.Data
+				continue
+			}
+			imageB64 = part.InlineData.Data
 		}
-		if imageB64 != "" {
-			break
-		}
+	}
+	if imageB64 == "" {
+		imageB64 = thoughtImageB64
 	}
 	if imageB64 == "" {
 		res := ExecuteResult{AcceptanceKnown: true, Acceptance: AcceptanceUncertain, ErrorClass: ErrorResponseInvalid, ErrorMessage: "google images response has no image", UpstreamRequestID: upstreamID}
@@ -154,10 +152,24 @@ func (a *GoogleAdapter) callGoogleImageOnce(ctx context.Context, secret []byte, 
 			return googleImageOnceResult{}, upstreamID, &res, nil
 		}
 	}
+	imageOutputTokens := parsed.UsageMetadata.CandidatesTokenCount
+	if len(parsed.UsageMetadata.CandidatesTokensDetails) > 0 {
+		var imageTokens uint64
+		var foundImage bool
+		for _, detail := range parsed.UsageMetadata.CandidatesTokensDetails {
+			if strings.EqualFold(detail.Modality, "IMAGE") {
+				imageTokens += detail.TokenCount
+				foundImage = true
+			}
+		}
+		if foundImage {
+			imageOutputTokens = imageTokens
+		}
+	}
 	usage := NormalizedUsage{
 		InputTokens:       parsed.UsageMetadata.PromptTokenCount,
 		OutputTokens:      0,
-		ImageOutputTokens: parsed.UsageMetadata.CandidatesTokenCount,
+		ImageOutputTokens: imageOutputTokens,
 		ReasoningTokens:   parsed.UsageMetadata.ThoughtsTokenCount,
 		TotalTokens:       parsed.UsageMetadata.TotalTokenCount,
 	}

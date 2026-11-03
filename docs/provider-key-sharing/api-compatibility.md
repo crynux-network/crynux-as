@@ -134,7 +134,7 @@ The Google Images converter MUST map:
 
 * `prompt` and edit input images to `generateContent` `contents.parts`;
 * `size` to `imageConfig.aspectRatio` and `imageConfig.imageSize`;
-* `n` to a bounded sequence of upstream calls with admission scaled by `n`.
+* `n` MUST be `1`. Any other value MUST return HTTP 400.
 
 It MUST set `responseModalities` to `IMAGE` only. It MUST NOT send `outputMimeType`, `outputCompressionQuality`, or `imageOutputOptions` to the Gemini Developer API.
 

@@ -96,9 +96,13 @@ func (a *OpenAIAdapter) executeImages(ctx context.Context, secret []byte, apiTyp
 		}
 		outputs = append(outputs, ImageOutputBytes{Format: format, Data: raw})
 	}
+	// Images API bills image output tokens. Aggregate output_tokens is the
+	// image count when output_tokens_details is absent. Text output tokens are
+	// not billed separately because OpenAI does not publish an Images text
+	// output price.
 	usage := NormalizedUsage{
 		InputTokens:       parsed.Usage.InputTokens,
-		OutputTokens:      parsed.Usage.OutputTokens,
+		OutputTokens:      0,
 		ImageOutputTokens: parsed.Usage.OutputTokens,
 		TotalTokens:       parsed.Usage.TotalTokens,
 	}
@@ -109,9 +113,8 @@ func (a *OpenAIAdapter) executeImages(ctx context.Context, secret []byte, apiTyp
 			usage.InputTokens = parsed.Usage.InputTokens
 		}
 	}
-	if parsed.Usage.OutputTokensDetails != nil && parsed.Usage.OutputTokensDetails.ImageTokens > 0 {
+	if parsed.Usage.OutputTokensDetails != nil {
 		usage.ImageOutputTokens = parsed.Usage.OutputTokensDetails.ImageTokens
-		usage.OutputTokens = parsed.Usage.OutputTokensDetails.TextTokens
 	}
 	meta, _ := json.Marshal(map[string]any{
 		"created":       parsed.Created,

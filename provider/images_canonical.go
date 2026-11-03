@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -24,29 +25,29 @@ const (
 // CanonicalImagesRequest is the shared OpenAI-shaped Images request after parse.
 // Provider converters validate which fields they accept.
 type CanonicalImagesRequest struct {
-	APIType              models.TaskAPIType
-	Prompt               string
-	Model                string
-	N                    int
-	Size                 string
-	Quality              string
-	ResponseFormat       string
-	OutputFormat         string
-	OutputCompression    *int
-	Background           string
-	Moderation           string
-	InputFidelity        string
-	SafetyIdentifier     string
-	User                 string
-	QueueTimeout         *uint64
-	Width                int
-	Height               int
-	EchoSize             string
-	Images               []CanonicalImageDataURL
-	Mask                 *CanonicalImageDataURL
-	Markup               *CanonicalImageDataURL
-	RawFields            map[string]json.RawMessage
-	UnknownFields        []string
+	APIType               models.TaskAPIType
+	Prompt                string
+	Model                 string
+	N                     int
+	Size                  string
+	Quality               string
+	ResponseFormat        string
+	OutputFormat          string
+	OutputCompression     *int
+	Background            string
+	Moderation            string
+	InputFidelity         string
+	SafetyIdentifier      string
+	User                  string
+	QueueTimeout          *uint64
+	Width                 int
+	Height                int
+	EchoSize              string
+	Images                []CanonicalImageDataURL
+	Mask                  *CanonicalImageDataURL
+	Markup                *CanonicalImageDataURL
+	RawFields             map[string]json.RawMessage
+	UnknownFields         []string
 	CrynuxExtensionFields []string
 }
 
@@ -92,7 +93,17 @@ func ParseCanonicalImagesMultipart(form *multipart.Form, apiType models.TaskAPIT
 		if len(values) == 0 {
 			continue
 		}
-		raw[key] = mustJSONString(values[0])
+		value := values[len(values)-1]
+		switch key {
+		case "n", "output_compression", "queue_timeout":
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			raw[key] = json.RawMessage(trimmed)
+		default:
+			raw[key] = mustJSONString(value)
+		}
 	}
 	req, err := parseCanonicalImagesMap(raw, apiType)
 	if err != nil {
@@ -127,6 +138,13 @@ func ParseCanonicalImagesMultipart(form *multipart.Form, apiType models.TaskAPIT
 			return CanonicalImagesRequest{}, err
 		}
 		req.Mask = &mask
+	}
+	if files := form.File["markup"]; len(files) > 0 {
+		markup, err := multipartFileToDataURL(files[0])
+		if err != nil {
+			return CanonicalImagesRequest{}, err
+		}
+		req.Markup = &markup
 	}
 	return req, nil
 }
@@ -457,12 +475,10 @@ func multipartFileToDataURL(fh *multipart.FileHeader) (CanonicalImageDataURL, er
 		return CanonicalImageDataURL{}, fmt.Errorf("failed to read uploaded image")
 	}
 	defer f.Close()
-	buf := make([]byte, fh.Size)
-	n, err := f.Read(buf)
-	if err != nil && n == 0 {
+	buf, err := io.ReadAll(f)
+	if err != nil {
 		return CanonicalImageDataURL{}, fmt.Errorf("failed to read uploaded image")
 	}
-	buf = buf[:n]
 	mimeType := fh.Header.Get("Content-Type")
 	if mimeType == "" || !strings.HasPrefix(mimeType, "image/") {
 		mimeType = http.DetectContentType(buf)

@@ -20,6 +20,23 @@ func TestCheckProviderRequiredUsageWeightsImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	err = checkProviderRequiredUsageWeights("google", "gemini-3.1-flash-image", ProviderAPIKindImage, ProviderUsageWeightsConfig{
+		InputTokens:       "1",
+		ImageInputTokens:  "1",
+		ImageOutputTokens: "120",
+	})
+	if err == nil {
+		t.Fatal("google image model missing reasoning_tokens was accepted")
+	}
+	err = checkProviderRequiredUsageWeights("google", "gemini-3.1-flash-image", ProviderAPIKindImage, ProviderUsageWeightsConfig{
+		InputTokens:       "1",
+		ImageInputTokens:  "1",
+		ImageOutputTokens: "120",
+		ReasoningTokens:   "6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestCheckProviderRequiredUsageWeightsChatDoesNotRequireImage(t *testing.T) {

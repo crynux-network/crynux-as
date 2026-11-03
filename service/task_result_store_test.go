@@ -62,4 +62,11 @@ func TestImageCountFromTaskArgs(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("default count = %d", count)
 	}
+	count, err = ImageCountFromTaskArgs(`{"model":"gpt-image-2.5-sunburst","prompt":"a cat","n":3,"size":"1024x1024"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Fatalf("provider n count = %d", count)
+	}
 }

@@ -49,8 +49,15 @@ func TaskResultImagePathWithExt(jobID uint, index uint64, ext string) (string, e
 }
 
 func ImageCountFromTaskArgs(taskArgsJSON string) (uint64, error) {
-	var args imageTaskArgs
-	if err := json.Unmarshal([]byte(taskArgsJSON), &args); err == nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(taskArgsJSON), &raw); err != nil {
+		return 0, fmt.Errorf("parse image task args: %w", err)
+	}
+	if _, hasTaskConfig := raw["task_config"]; hasTaskConfig {
+		var args imageTaskArgs
+		if err := json.Unmarshal([]byte(taskArgsJSON), &args); err != nil {
+			return 0, fmt.Errorf("parse image task args: %w", err)
+		}
 		numImages := uint64(1)
 		if args.TaskConfig.NumImagesPerPrompt != nil {
 			numImages = *args.TaskConfig.NumImagesPerPrompt

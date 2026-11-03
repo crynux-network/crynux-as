@@ -854,15 +854,54 @@ func TestCalculateProviderUnitsImageComponents(t *testing.T) {
 	}
 }
 
+func TestCalculateProviderUnitsOpenAIImagesWithoutOutputWeight(t *testing.T) {
+	units, err := CalculateProviderUnits(ProviderUsageComponents{
+		InputTokens:       50,
+		ImageOutputTokens: 272,
+	}, map[string]string{
+		"input_tokens":        "0.625",
+		"image_input_tokens":  "1",
+		"image_output_tokens": "3.75",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 50*0.625 + 272*3.75 = 31.25 + 1020 = 1051.25
+	want := big.NewRat(4205, 4)
+	if units.Cmp(want) != 0 {
+		t.Fatalf("units=%s, want %s", units.FloatString(18), want.FloatString(18))
+	}
+}
+
+func TestCalculateProviderUnitsGoogleImagesWithReasoning(t *testing.T) {
+	units, err := CalculateProviderUnits(ProviderUsageComponents{
+		InputTokens:       12,
+		ImageOutputTokens: 1120,
+		ReasoningTokens:   40,
+	}, map[string]string{
+		"input_tokens":        "1",
+		"image_input_tokens":  "1",
+		"image_output_tokens": "120",
+		"reasoning_tokens":    "6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 12*1 + 1120*120 + 40*6 = 12 + 134400 + 240 = 134652
+	if units.Cmp(big.NewRat(134652, 1)) != 0 {
+		t.Fatalf("units=%s", units.FloatString(18))
+	}
+}
+
 func TestCalculateProviderUnitsOpenAIReasoningIsSubset(t *testing.T) {
 	units, err := CalculateProviderUnits(ProviderUsageComponents{
 		OutputTokens:              10,
 		ReasoningTokens:           4,
 		ReasoningIncludedInOutput: true,
 	}, map[string]string{
-		"output_tokens":     "1",
-		"reasoning_tokens":  "1",
-		"input_tokens":      "1",
+		"output_tokens":    "1",
+		"reasoning_tokens": "1",
+		"input_tokens":     "1",
 	})
 	if err != nil {
 		t.Fatal(err)

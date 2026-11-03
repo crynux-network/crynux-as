@@ -64,7 +64,7 @@ Common usage components are:
 
 OpenAI and Google `api_kind = chat` model configuration MUST include a `reasoning_tokens` weight because those adapters can return positive reasoning or thoughts counts. Anthropic configuration MUST NOT require a separate `reasoning_tokens` weight; Anthropic thinking tokens are already counted in output tokens.
 
-OpenAI and Google `api_kind = image` model configuration MUST include `image_input_tokens` and `image_output_tokens` weights. Image models MUST NOT require `reasoning_tokens`. Anthropic MUST NOT configure `api_kind = image`.
+OpenAI and Google `api_kind = image` model configuration MUST include `image_input_tokens` and `image_output_tokens` weights. Google `api_kind = image` model configuration MUST also include a `reasoning_tokens` weight because Gemini image models can return positive `thoughtsTokenCount`. OpenAI image models MUST NOT require `reasoning_tokens`. Anthropic MUST NOT configure `api_kind = image`.
 
 Weights are normalized Provider work units per usage item. They MUST be parsed as exact rational numbers. Floating-point arithmetic MUST NOT be used for ledger amounts.
 
