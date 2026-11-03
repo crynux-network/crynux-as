@@ -433,7 +433,7 @@ Response shape:
 }
 ```
 
-Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public LLM catalog visibility of `GET /models`. It MUST NOT read the Image loaded-models cache.
+Example selection MUST use the in-memory LLM catalog snapshot only. That snapshot MUST already exclude rows whose Relay `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, so candidates MUST match the public chat catalog visibility of `GET /models/chat`. It MUST NOT read the Image loaded-models cache.
 
 1. Collect rows with a positive `min_vram`.
 2. Group by `(model_id, canonical quantization_config, min_vram)`. Different quantization configs or different `min_vram` values for the same model MUST remain separate candidates.

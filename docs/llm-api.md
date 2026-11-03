@@ -22,6 +22,8 @@ Implemented endpoints:
 * `POST /api/<endpoint_token>/v1/<vram_limit>/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/responses`
 * `GET /api/<endpoint_token>/v1/models`
+* `GET /api/<endpoint_token>/v1/models/chat`
+* `GET /api/<endpoint_token>/v1/models/image`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
 The chat, completions, and responses request and response formats MUST be OpenAI-compatible for the supported first-version fields. Every configured Provider model MUST support Chat Completions and Responses through the Provider adapter behavior in [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md). Provider models MUST reject Completions. The Images generations and Images edits request and response formats MUST be OpenAI-compatible for the supported fields specified in **Images Generations API** and **Images Edits API** when the model is a Crynux Stable Diffusion model. When the model is a configured Provider image model (`api_kind = image`), field acceptance, conversion, and rejection MUST follow [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md) for that Service Provider. Crynux Images validation in this document MUST NOT change for Crynux models.
@@ -263,15 +265,15 @@ The project MUST have status active. A request failing any of these checks MUST 
 
 ## Model Catalog
 
-The public model catalog merges the in-memory Crynux LLM catalog snapshot with currently available configured Provider models. All projects share the same catalog. A Crynux cached row's `min_vram` is the minimum VRAM in GB observed across historical successful executions of that model configuration on the Crynux Network. The Crynux catalog MUST expose one list row per `(model_cache_hash, execution_dtype)` row from the Relay snapshot. The same `id` MAY appear more than once when quantization or dtype differs. SD / Image rows MUST NOT appear in this catalog.
+`GET /models` returns the merged public catalog of all currently visible chat and image models. `GET /models/chat` returns only chat models. `GET /models/image` returns only image models. The chat catalog merges the in-memory Crynux LLM catalog snapshot with currently available configured Provider chat models (`api_kind = chat`). The image catalog merges the in-memory Crynux Image catalog snapshot with currently available configured Provider image models (`api_kind = image`). All projects share these catalogs. A Crynux cached row's `min_vram` is the minimum VRAM in GB observed across historical successful executions of that model configuration on the Crynux Network. The Crynux LLM catalog MUST expose one list row per `(model_cache_hash, execution_dtype)` row from the Relay snapshot. The same `id` MAY appear more than once when quantization or dtype differs. SD / Image rows MUST NOT appear in `GET /models/chat`. Crynux LLM rows and Provider chat models MUST NOT appear in `GET /models/image`.
 
-Provider rows MUST come only from YAML declarations. A Provider row MUST appear only when its Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Busy slots and temporary cooldown MUST NOT hide a model. Provider model IDs MUST be exact official names without prefixes or aliases. Provider rows MUST use the field shapes in [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md). List and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT expose key availability counts, Shared API Key identity, `model_cache_hash`, or `model_cache_config`.
+Provider rows MUST come only from YAML declarations. A Provider row MUST appear only when its Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Busy slots and temporary cooldown MUST NOT hide a model. Provider model IDs MUST be exact official names without prefixes or aliases. Provider rows MUST use the field shapes in [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md). List and retrieve responses MUST remain OpenAI Models API compatible and MUST NOT expose key availability counts, Shared API Key identity, `model_cache_hash`, or `model_cache_config` on Provider rows.
 
 The Crynux catalog snapshot MUST include only rows whose Relay `on_disk_node_count` is greater than or equal to `llm.min_catalog_on_disk_node_count`. The full loaded-models cache MUST retain every Relay LLM row for default `min_vram` and exact-configuration lookup. Catalog list and retrieve MUST read the catalog snapshot and MUST NOT re-filter the full cache on each request. The merged list MUST sort by `id` ascending, then execution source with Crynux before Provider, then Crynux `execution_dtype`, canonical `quantization_config`, and `model_cache_hash` ascending. Provider rows have no Crynux tie-breaker fields.
 
 ### `GET /api/<endpoint_token>/v1/models`
 
-Returns the OpenAI list-models response built from the catalog snapshot:
+Returns the OpenAI list-models response built from the merged chat and image catalogs:
 
 ```json
 {
@@ -304,9 +306,17 @@ Requirements:
 * The response MUST be the OpenAI JSON body directly, without the management-API `{"message": ...}` envelope.
 * The legacy OpenAI fields `permission`, `root`, and `parent` MUST NOT be required.
 
+### `GET /api/<endpoint_token>/v1/models/chat`
+
+Returns the OpenAI list-models response for chat models only: Crynux LLM catalog rows plus visible Provider chat models.
+
+### `GET /api/<endpoint_token>/v1/models/image`
+
+Returns the OpenAI list-models response for image models only: Crynux Image catalog rows plus visible Provider image models. Crynux Image rows MUST include the Crynux Image identity fields specified in [raw-task-api.md](./raw-task-api.md). Provider image rows MUST omit Crynux-only fields.
+
 ### `GET /api/<endpoint_token>/v1/models/<model>`
 
-Returns an OpenAI list envelope whose `data` contains every catalog row for that model ID. The lookup MUST be case-insensitive. When no catalog row matches, including when the model is present only in the full loaded-models cache because every row's `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, the response MUST be HTTP 404 with the OpenAI error shape:
+Returns an OpenAI list envelope whose `data` contains every matching chat or image catalog row for that model ID, including a visible Provider chat or image model row when present. The lookup MUST be case-insensitive. When no catalog row matches, including when the model is present only in the full loaded-models cache because every row's `on_disk_node_count` is below `llm.min_catalog_on_disk_node_count`, the response MUST be HTTP 404 with the OpenAI error shape:
 
 ```json
 {
@@ -457,7 +467,7 @@ llm:
 * `loaded_models_refresh_interval` is the loaded-models cache refresh interval in seconds. Every YAML configuration template MUST set it to `1800`.
 * `queued_priority_refresh_interval` is the queued-task priority snapshot refresh interval in seconds. Every YAML configuration template MUST set it to `300`.
 * `execution_time_cache_ttl` is the per-key TTL in seconds for LLM execution-time coefficients cached from Relay. Every YAML configuration template MUST set it to `300`.
-* `min_catalog_on_disk_node_count` is the minimum Relay `on_disk_node_count` required for a model to enter the public LLM and Image catalog snapshots used by `GET /models`, `GET /models/<model>`, and `GET /models/image`. Every YAML configuration template MUST set it to `3`. Configuration loading MUST fail when the value is zero or missing. A changed value MUST take effect on the next successful loaded-models refresh.
+* `min_catalog_on_disk_node_count` is the minimum Relay `on_disk_node_count` required for a model to enter the public LLM and Image catalog snapshots used by `GET /models`, `GET /models/chat`, `GET /models/image`, and `GET /models/<model>`. Every YAML configuration template MUST set it to `3`. Configuration loading MUST fail when the value is zero or missing. A changed value MUST take effect on the next successful loaded-models refresh.
 * `base_vram` is the VRAM weight base in GB used by Task Fee Estimation and Credits. Operators MUST keep it aligned with Relay `task_pricing.base_vram`. Every YAML configuration template MUST set it to `8`.
 * `empty_queue_median_priority_gwei` is the median priority hint used when the queued-priority cache has never observed a non-empty queue, and when creating a project with no usable live or remembered median. It MUST NOT enter `billable_gwei` except when it becomes the project's stored `priority_gwei` at project creation through the Queue Median Hint rules. Every YAML configuration template MUST set it to a positive decimal integer string. Every Gwei-denominated LLM configuration and response field whose name ends in `_gwei` MUST use a decimal integer string.
 * `min_priority_gwei` and `max_priority_gwei` are the hard bounds for project Cost Level values. They MUST be positive decimal integer strings. Configuration loading MUST fail when `min_priority_gwei` is greater than `max_priority_gwei`.

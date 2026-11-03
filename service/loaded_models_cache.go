@@ -337,6 +337,21 @@ func ListCatalogLLMModelsByID(modelID string) []LoadedLLMModel {
 	return models
 }
 
+// ListCatalogSDModelsByID returns every catalog Image row for modelID.
+func ListCatalogSDModelsByID(modelID string) []LoadedLLMModel {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	sdModelsCache.mu.RLock()
+	models := make([]LoadedLLMModel, 0)
+	for _, model := range sdModelsCache.catalogModels {
+		if model.ModelID == modelID {
+			models = append(models, model)
+		}
+	}
+	sdModelsCache.mu.RUnlock()
+	sortLoadedModels(models)
+	return models
+}
+
 // ListLoadedLLMModels returns the catalog LLM models sorted by model ID,
 // execution dtype, quantization key, and model cache hash.
 func ListLoadedLLMModels() []LoadedLLMModel {

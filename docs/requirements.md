@@ -108,11 +108,13 @@ Each project exposes the following endpoints under its private base URL:
 * `POST /api/<endpoint_token>/v1/<vram_limit>/chat/completions`
 * `POST /api/<endpoint_token>/v1/<vram_limit>/responses`
 * `GET /api/<endpoint_token>/v1/models`
+* `GET /api/<endpoint_token>/v1/models/chat`
+* `GET /api/<endpoint_token>/v1/models/image`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
 The request and response formats are OpenAI-compatible for the supported fields of each endpoint.
 
-The models endpoints return one merged catalog. Crynux rows come from the Relay loaded-model snapshot and MUST include only models whose Relay `on_disk_node_count` is at least `llm.min_catalog_on_disk_node_count`. Provider rows come from explicit YAML model configuration and appear only while the Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Provider model names MUST remain their official API names without a prefix or alias. See [llm-api.md](./llm-api.md) and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
+`GET /models` returns the merged chat and image catalogs. `GET /models/chat` returns chat models only. `GET /models/image` returns image models only. Crynux rows come from the Relay loaded-model snapshot and MUST include only models whose Relay `on_disk_node_count` is at least `llm.min_catalog_on_disk_node_count`. Provider rows come from explicit YAML model configuration and appear only while the Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Provider model names MUST remain their official API names without a prefix or alias. See [llm-api.md](./llm-api.md) and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
 
 A Crynux request MAY specify a VRAM limit in GB through the `<vram_limit>` URL path segment or the `vram_limit` body field; the path value overrides the body value. The resolved effective VRAM selects `vram_weight` for Credits and task fee and is sent to Bridge as raw task `min_vram`. Provider requests MUST reject VRAM fields and path-based VRAM selection. See [llm-api.md](./llm-api.md), [credits-billing.md](./credits-billing.md), and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
 

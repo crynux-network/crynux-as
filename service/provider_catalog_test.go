@@ -99,3 +99,53 @@ func TestValidateProviderCrynuxCollisionsFetchFailure(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestListVisibleProviderModelsFiltersByAPIKindAndEnabledKey(t *testing.T) {
+	db := setupSharedAPIKeyLimitsTestDB(t)
+	user := models.User{Address: "0xcatalog1"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	_ = createTestSharedAPIKey(t, db, user.ID, "key_openai_catalog")
+
+	if err := InitProviderCatalog(&config.AppConfig{
+		Provider: config.ProviderConfig{
+			Services: map[string]config.ProviderServiceConfig{
+				"openai": {
+					DisplayName: "OpenAI",
+					Models: []config.ProviderModelConfig{
+						{Name: "gpt-6-astra", APIKind: config.ProviderAPIKindChat, UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", OutputTokens: "1", ReasoningTokens: "1"}},
+						{Name: "gpt-image-2.5-sunburst", APIKind: config.ProviderAPIKindImage, UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", ImageInputTokens: "1", ImageOutputTokens: "1"}},
+					},
+				},
+				"google": {
+					DisplayName: "Google",
+					Models: []config.ProviderModelConfig{
+						{Name: "gemini-3.1-flash-image", APIKind: config.ProviderAPIKindImage, UsageWeights: config.ProviderUsageWeightsConfig{InputTokens: "1", ImageInputTokens: "1", ImageOutputTokens: "1", ReasoningTokens: "1"}},
+					},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = InitProviderCatalog(&config.AppConfig{})
+	})
+
+	chat, err := ListVisibleProviderModels(context.Background(), db, config.ProviderAPIKindChat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat) != 1 || chat[0].ModelName != "gpt-6-astra" {
+		t.Fatalf("chat=%v", chat)
+	}
+
+	image, err := ListVisibleProviderModels(context.Background(), db, config.ProviderAPIKindImage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(image) != 1 || image[0].ModelName != "gpt-image-2.5-sunburst" {
+		t.Fatalf("image=%v", image)
+	}
+}

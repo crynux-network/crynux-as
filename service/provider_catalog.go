@@ -118,12 +118,18 @@ func ProviderHasEnabledKey(ctx context.Context, db *gorm.DB, provider models.Ser
 	return count > 0, nil
 }
 
-// ListVisibleProviderModels returns configured Provider models whose Service Provider has an enabled key.
-func ListVisibleProviderModels(ctx context.Context, db *gorm.DB) ([]ProviderModelRoute, error) {
+// ListVisibleProviderModels returns configured Provider models whose Service
+// Provider has an enabled key. When apiKind is non-empty, only routes with that
+// api_kind are returned.
+func ListVisibleProviderModels(ctx context.Context, db *gorm.DB, apiKind string) ([]ProviderModelRoute, error) {
 	routes := ListConfiguredProviderModels()
 	visible := make([]ProviderModelRoute, 0, len(routes))
 	checked := make(map[models.ServiceProvider]bool)
+	wantKind := strings.TrimSpace(strings.ToLower(apiKind))
 	for _, route := range routes {
+		if wantKind != "" && strings.TrimSpace(strings.ToLower(route.APIKind)) != wantKind {
+			continue
+		}
 		ok, seen := checked[route.ServiceProvider]
 		if !seen {
 			var err error

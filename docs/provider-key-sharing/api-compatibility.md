@@ -23,6 +23,8 @@ The official OpenAI SDK MUST be usable by setting its base URL to the project en
 Provider execution is available through:
 
 * `GET /models`
+* `GET /models/chat`
+* `GET /models/image`
 * `GET /models/<model>`
 * `POST /chat/completions` and `POST /responses` for models with `api_kind = chat`
 * `GET /responses/<response_id>` for Responses jobs
@@ -60,10 +62,17 @@ Provider lookup uses the canonical lowercase name. Crynux repository names conti
 
 ## Model Catalog Merge
 
-`GET /models` MUST merge:
+`GET /models` MUST merge all currently visible chat and image catalog rows.
 
-* current Crynux catalog rows from the Relay loaded-model snapshot;
-* configured Provider model rows whose Service Provider currently has at least one enabled, non-deleted Shared API Key.
+`GET /models/chat` MUST merge:
+
+* current Crynux LLM catalog rows from the Relay loaded-model snapshot;
+* configured Provider model rows with `api_kind = chat` whose Service Provider currently has at least one enabled, non-deleted Shared API Key.
+
+`GET /models/image` MUST merge:
+
+* current Crynux Image catalog rows from the Relay loaded-model snapshot;
+* configured Provider model rows with `api_kind = image` whose Service Provider currently has at least one enabled, non-deleted Shared API Key.
 
 Provider catalog items MUST contain:
 
@@ -78,18 +87,18 @@ Provider catalog items MUST contain:
 
 `owned_by` MUST be `openai`, `anthropic`, or `google`.
 
-Provider rows MUST omit Crynux-only fields such as `min_vram`, `on_disk_node_count`, `execution_dtype`, and `quantization_config`.
+Provider rows MUST omit Crynux-only fields such as `min_vram`, `on_disk_node_count`, `execution_dtype`, `quantization_config`, `model_cache_hash`, `components`, and `lora`.
 
 Catalog order MUST be model ID ascending, then execution-source order with Provider rows after Crynux rows for deterministic output. Configuration validation and loaded-model refresh MUST prevent a cross-source name collision.
 
 Temporary key saturation and cooldown MUST NOT remove a Provider model. The model disappears only when no enabled, non-deleted key remains for its Service Provider.
 
-`GET /models/<model>` MUST return the existing list envelope. A Provider model returns one row. Missing models return the existing OpenAI `model_not_found` error.
+`GET /models/<model>` MUST return the existing list envelope for every matching catalog row. A visible Provider chat or image model returns one row when its Service Provider has at least one enabled, non-deleted Shared API Key. Missing models return the existing OpenAI `model_not_found` error.
 
 Each configured Provider model MUST declare exactly one `api_kind`:
 
-* `chat`: callable through Chat Completions and Responses only;
-* `image`: callable through Images generations and Images edits only.
+* `chat`: listed on `GET /models` and `GET /models/chat`, and callable through Chat Completions and Responses only;
+* `image`: listed on `GET /models` and `GET /models/image`, and callable through Images generations and Images edits only.
 
 Provider adapters MUST translate each supported public request into the Provider's native API contract for that `api_kind`.
 

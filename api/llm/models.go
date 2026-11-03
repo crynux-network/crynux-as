@@ -62,32 +62,84 @@ func newImageModelObject(model service.LoadedLLMModel) imageModelObject {
 	}
 }
 
-// Models implements the OpenAI-compatible list models endpoint from the
-// in-memory loaded-models cache merged with visible Provider models.
-func Models(c *gin.Context) {
-	loadedModels := service.ListLoadedLLMModels()
-	data := make([]modelObject, 0, len(loadedModels))
-	for _, model := range loadedModels {
-		data = append(data, newModelObject(model))
-	}
-	providerModels, err := service.ListVisibleProviderModels(c.Request.Context(), config.GetDB())
-	if err != nil {
-		log.Errorf("list visible provider models failed: %v", err)
-	} else {
-		for _, route := range providerModels {
-			data = append(data, newProviderModelObject(route))
+type catalogEntry struct {
+	ID      string
+	OwnedBy string
+	Value   any
+}
+
+func sortCatalogEntries(entries []catalogEntry) {
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].ID != entries[j].ID {
+			return entries[i].ID < entries[j].ID
 		}
-	}
-	sort.SliceStable(data, func(i, j int) bool {
-		if data[i].ID != data[j].ID {
-			return data[i].ID < data[j].ID
-		}
-		return providerOwnedByRank(data[i].OwnedBy) < providerOwnedByRank(data[j].OwnedBy)
+		return providerOwnedByRank(entries[i].OwnedBy) < providerOwnedByRank(entries[j].OwnedBy)
 	})
+}
+
+func catalogValues(entries []catalogEntry) []any {
+	out := make([]any, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry.Value)
+	}
+	return out
+}
+
+func appendVisibleProviderModels(c *gin.Context, entries []catalogEntry, apiKind string) []catalogEntry {
+	providerModels, err := service.ListVisibleProviderModels(c.Request.Context(), config.GetDB(), apiKind)
+	if err != nil {
+		log.Errorf("list visible provider %s models failed: %v", apiKind, err)
+		return entries
+	}
+	for _, route := range providerModels {
+		obj := newProviderModelObject(route)
+		entries = append(entries, catalogEntry{ID: obj.ID, OwnedBy: obj.OwnedBy, Value: obj})
+	}
+	return entries
+}
+
+func chatCatalogEntries(c *gin.Context) []catalogEntry {
+	loadedModels := service.ListLoadedLLMModels()
+	entries := make([]catalogEntry, 0, len(loadedModels))
+	for _, model := range loadedModels {
+		obj := newModelObject(model)
+		entries = append(entries, catalogEntry{ID: obj.ID, OwnedBy: obj.OwnedBy, Value: obj})
+	}
+	return appendVisibleProviderModels(c, entries, config.ProviderAPIKindChat)
+}
+
+func imageCatalogEntries(c *gin.Context) []catalogEntry {
+	loadedModels := service.ListLoadedSDModels()
+	entries := make([]catalogEntry, 0, len(loadedModels))
+	for _, model := range loadedModels {
+		obj := newImageModelObject(model)
+		entries = append(entries, catalogEntry{ID: obj.ID, OwnedBy: obj.OwnedBy, Value: obj})
+	}
+	return appendVisibleProviderModels(c, entries, config.ProviderAPIKindImage)
+}
+
+func writeCatalogList(c *gin.Context, entries []catalogEntry) {
+	sortCatalogEntries(entries)
 	c.JSON(http.StatusOK, gin.H{
 		"object": "list",
-		"data":   data,
+		"data":   catalogValues(entries),
 	})
+}
+
+// Models returns the merged catalog of all chat and image models.
+func Models(c *gin.Context) {
+	entries := append(chatCatalogEntries(c), imageCatalogEntries(c)...)
+	writeCatalogList(c, entries)
+}
+
+// ChatModels returns Crynux LLM catalog rows merged with visible Provider chat models.
+func ChatModels(c *gin.Context) {
+	writeCatalogList(c, chatCatalogEntries(c))
+}
+
+// ImageModels returns Crynux SD catalog rows merged with visible Provider image models.
+func ImageModels(c *gin.Context) {
+	writeCatalogList(c, imageCatalogEntries(c))
 }
 
 func providerOwnedByRank(ownedBy string) int {
@@ -105,41 +157,39 @@ func providerOwnedByRank(ownedBy string) int {
 	}
 }
 
-func ImageModels(c *gin.Context) {
-	loadedModels := service.ListLoadedSDModels()
-	data := make([]imageModelObject, 0, len(loadedModels))
-	for _, model := range loadedModels {
-		data = append(data, newImageModelObject(model))
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   data,
-	})
-}
-
 // RetrieveModel implements the OpenAI-compatible retrieve model endpoint.
 // When multiple catalog rows share a model id, the response is a list envelope.
 func RetrieveModel(c *gin.Context) {
 	requested := strings.TrimPrefix(c.Param("model"), "/")
-	if requested == "image" {
+	switch requested {
+	case "chat":
+		ChatModels(c)
+		return
+	case "image":
 		ImageModels(c)
 		return
 	}
+
 	modelID := llmadapter.NormalizeModelID(requested)
-	models := service.ListCatalogLLMModelsByID(modelID)
-	data := make([]modelObject, 0, len(models)+1)
-	for _, model := range models {
-		data = append(data, newModelObject(model))
+	entries := make([]catalogEntry, 0)
+	for _, model := range service.ListCatalogLLMModelsByID(modelID) {
+		obj := newModelObject(model)
+		entries = append(entries, catalogEntry{ID: obj.ID, OwnedBy: obj.OwnedBy, Value: obj})
+	}
+	for _, model := range service.ListCatalogSDModelsByID(modelID) {
+		obj := newImageModelObject(model)
+		entries = append(entries, catalogEntry{ID: obj.ID, OwnedBy: obj.OwnedBy, Value: obj})
 	}
 	if route, ok := service.LookupProviderModel(modelID); ok {
 		visible, err := service.ProviderHasEnabledKey(c.Request.Context(), config.GetDB(), route.ServiceProvider)
 		if err != nil {
 			log.Errorf("provider key visibility check failed: %v", err)
 		} else if visible {
-			data = append(data, newProviderModelObject(route))
+			obj := newProviderModelObject(route)
+			entries = append(entries, catalogEntry{ID: obj.ID, OwnedBy: obj.OwnedBy, Value: obj})
 		}
 	}
-	if len(data) == 0 {
+	if len(entries) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error": gin.H{
 				"message": "The model '" + requested + "' does not exist",
@@ -149,8 +199,5 @@ func RetrieveModel(c *gin.Context) {
 		})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"object": "list",
-		"data":   data,
-	})
+	writeCatalogList(c, entries)
 }
