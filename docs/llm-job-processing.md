@@ -115,6 +115,8 @@ When authentication succeeds but request validation, VRAM resolution, task-fee e
 
 When the request is accepted for execution, the API MUST reserve the estimated Credits and create one `task_jobs` row in the same database transaction: lock `credit_accounts` with `SELECT ... FOR UPDATE`, require `available >= estimate`, increase `locked` by `estimate`, and insert the job with status `pending_submit`, `credits_lock_status = held`, `credits_locked = estimate`, create-time snapshots for user, the resolved effective `priority_gwei`, VRAM, task-fee fields, and execution-time coefficients, and the fully expanded `TaskArgsJSON`. If any step fails, the transaction MUST roll back so no hold remains without a job.
 
+After that create transaction commits for a Crynux Network job, AS MUST evaluate node model inventory from the full loaded-models cache as specified in [llm-api.md](./llm-api.md) and [raw-task-api.md](./raw-task-api.md). When the required model file set has no on-disk node coverage, the API MUST return HTTP 400 with `code` `model_not_ready` and MUST NOT wait for job completion. The persisted job, Credits hold, Bridge submit, settle, and failure paths MUST continue unchanged. Provider jobs MUST NOT use this gate.
+
 For Responses requests with `previous_response_id`, the API MUST resolve the previous job before creating the new job:
 
 * The previous job MUST belong to the same project.

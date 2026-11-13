@@ -63,6 +63,10 @@ func CreateTask(c *gin.Context) {
 		writeInternalError(c, err)
 		return
 	}
+	if !rawTaskModelReady(prepared) {
+		writeModelNotReadyError(c, gin.H{"client_task_id": job.ID})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskView(job)})
 }
 
@@ -77,14 +81,17 @@ func BatchCreate(c *gin.Context) {
 		return
 	}
 	results := make([]BatchCreateItem, 0, len(request.Tasks))
+	hasError := false
 	for index, item := range request.Tasks {
 		prepared, err := prepareTask(c.Request.Context(), project, item)
 		if err != nil {
+			hasError = true
 			results = append(results, BatchCreateItem{Index: index, Error: err.Error()})
 			continue
 		}
 		job, err := createPreparedTask(c.Request.Context(), project, prepared)
 		if err != nil {
+			hasError = true
 			if errors.Is(err, service.ErrInsufficientBalance) {
 				results = append(results, BatchCreateItem{Index: index, Error: "insufficient credits balance"})
 				continue
@@ -93,10 +100,53 @@ func BatchCreate(c *gin.Context) {
 			log.Errorf("Create raw task failed for project %d: %v", project.ID, err)
 			continue
 		}
+		if !rawTaskModelReady(prepared) {
+			hasError = true
+			jobID := job.ID
+			results = append(results, BatchCreateItem{
+				Index:        index,
+				Error:        service.ModelNotReadyMessage(),
+				ClientTaskID: &jobID,
+			})
+			continue
+		}
 		view := taskView(job)
 		results = append(results, BatchCreateItem{Index: index, ClientTask: &view})
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": results})
+	status := http.StatusOK
+	if hasError {
+		status = http.StatusBadRequest
+	}
+	c.JSON(status, gin.H{"message": "success", "data": results})
+}
+
+func rawTaskModelReady(prepared *preparedTask) bool {
+	if prepared.request.TaskType == nil {
+		return false
+	}
+	switch *prepared.request.TaskType {
+	case models.TaskTypeLLM:
+		return service.CrynuxLLMModelReady(prepared.model)
+	case models.TaskTypeImage:
+		return service.CrynuxImageTaskArgsReady(prepared.taskArgs)
+	default:
+		return false
+	}
+}
+
+func writeModelNotReadyError(c *gin.Context, extra gin.H) {
+	body := gin.H{
+		"error": gin.H{
+			"message": service.ModelNotReadyMessage(),
+			"type":    "invalid_request_error",
+			"code":    "model_not_ready",
+			"param":   "model",
+		},
+	}
+	for key, value := range extra {
+		body[key] = value
+	}
+	c.JSON(http.StatusBadRequest, body)
 }
 
 func GetTask(c *gin.Context) {

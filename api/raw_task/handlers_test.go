@@ -72,6 +72,10 @@ func setupRawImagePrepareEnv(t *testing.T, loadedRows []map[string]any) {
 }
 
 func testImageLoadedRow(seed, model, dtype string, quant any, components map[string]any, minVRAM int) map[string]any {
+	return testImageLoadedRowWithOnDisk(seed, model, dtype, quant, components, minVRAM, 2)
+}
+
+func testImageLoadedRowWithOnDisk(seed, model, dtype string, quant any, components map[string]any, minVRAM, onDisk int) map[string]any {
 	if components == nil {
 		components = map[string]any{}
 	}
@@ -92,7 +96,7 @@ func testImageLoadedRow(seed, model, dtype string, quant any, components map[str
 		},
 		"min_vram":             minVRAM,
 		"in_memory_node_count": 1,
-		"on_disk_node_count":   2,
+		"on_disk_node_count":   onDisk,
 	}
 }
 
@@ -345,6 +349,206 @@ func setupRawCreateRejectDB(t *testing.T) *gorm.DB {
 	config.SetDBForTest(db)
 	t.Cleanup(func() { config.SetDBForTest(nil) })
 	return db
+}
+
+func TestCreateTaskModelNotReadyReturns400WithHeldJob(t *testing.T) {
+	db := setupRawCreateRejectDB(t)
+	cfg := &config.AppConfig{}
+	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
+	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
+	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
+	cfg.LLM.DefaultVramLimit = 24
+	cfg.LLM.MinCatalogOnDiskNodeCount = 1
+	cfg.LLM.CreditsPerGwei = "1"
+	cfg.LLM.BaseVRAM = 8
+	cfg.LLM.MinPriorityGwei = "1"
+	cfg.LLM.MaxPriorityGwei = "1000000000"
+	cfg.LLM.DefaultAutoMaxCreditsPerTask = "1000000000"
+	cfg.LLM.MaxTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "1000"}
+	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
+	cfg.LLM.EmptyQueueMedianPriorityGwei = "1"
+	cfg.LLM.MaxCrynuxTaskArgsBytes = 1000000
+	cfg.LLM.LoadedModelsRefreshInterval = 1800
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() {
+		config.SetConfigForTest(nil)
+		models.ResetTaskArgsSchemasForTest()
+	})
+
+	relayServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/v2/loaded-models"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "success",
+				"data": []map[string]any{
+					testImageLoadedRowWithOnDisk("cold", "org/cold-image", "bfloat16", nil, nil, 18, 0),
+				},
+			})
+		case strings.Contains(r.URL.Path, "/v2/models/sd/execution-time"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "success",
+				"data": map[string]any{
+					"overhead_seconds":          1.0,
+					"seconds_per_sd_pixel_step": 0.000001,
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(relayServer.Close)
+	client := relay.NewClient(relayServer.URL)
+	service.InitLoadedModelsCache(client)
+	if err := service.RefreshLoadedModels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	service.InitExecutionTimeCache(client, 60)
+
+	user := models.User{Address: "0xrawnotready1"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CreditAccount{
+		UserID:  user.ID,
+		Balance: models.BigInt{Int: *big.NewInt(1_000_000_000)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	autoMax := models.BigInt{Int: *big.NewInt(1_000_000_000)}
+	project := models.Project{
+		UserID: user.ID, Name: "p", EndpointToken: "ep-raw-not-ready",
+		APIKeyHash: "h", APIKeyPrefix: "pref",
+		PriorityGwei: models.BigInt{Int: *big.NewInt(1)},
+		Status:       models.ProjectStatusActive,
+		CreditsDay:   models.BigInt{Int: *big.NewInt(0)},
+		CostLevelMode: models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMax,
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/inference_tasks", func(c *gin.Context) {
+		c.Set("llm_project", &project)
+		CreateTask(c)
+	})
+
+	body := `{"task_type":0,"task_args":"{\"version\":\"3.7.1\",\"base_model\":{\"name\":\"org/cold-image\"},\"prompt\":\"a cat\",\"task_config\":{\"image_width\":512,\"image_height\":512,\"steps\":20,\"num_images_per_prompt\":1}}"}`
+	req := httptest.NewRequest(http.MethodPost, "/inference_tasks", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["client_task_id"] == nil {
+		t.Fatalf("missing client_task_id: %v", resp)
+	}
+	errObj, _ := resp["error"].(map[string]any)
+	if errObj["code"] != "model_not_ready" {
+		t.Fatalf("error=%v", errObj)
+	}
+
+	var jobs int64
+	if err := db.Model(&models.TaskJob{}).Count(&jobs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 1 {
+		t.Fatalf("jobs=%d, want 1", jobs)
+	}
+	var account models.CreditAccount
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.Locked.Sign() <= 0 {
+		t.Fatalf("locked=%s, want held credits", account.Locked.String())
+	}
+}
+
+func TestBatchCreateReturns400WhenAnyItemHasError(t *testing.T) {
+	db := setupRawCreateRejectDB(t)
+	cfg := &config.AppConfig{}
+	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
+	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
+	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
+	cfg.LLM.LoadedModelsRefreshInterval = 1800
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() {
+		config.SetConfigForTest(nil)
+		models.ResetTaskArgsSchemasForTest()
+	})
+
+	user := models.User{Address: "0xrawbatch400"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	project := models.Project{
+		UserID: user.ID, Name: "p", EndpointToken: "ep-raw-batch-400",
+		APIKeyHash: "h", APIKeyPrefix: "pref",
+		PriorityGwei: models.BigInt{Int: *big.NewInt(1)},
+		Status:       models.ProjectStatusActive,
+		CreditsDay:   models.BigInt{Int: *big.NewInt(0)},
+	}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/inference_tasks/batch", func(c *gin.Context) {
+		c.Set("llm_project", &project)
+		BatchCreate(c)
+	})
+
+	body := `{"tasks":[{"task_type":1,"task_args":"{\"version\":\"3.7.1\",\"model\":\"example/model\",\"messages\":[]}","required_gpu":"GPU"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/inference_tasks/batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Data []BatchCreateItem `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Data) != 1 || payload.Data[0].Error == "" || payload.Data[0].ClientTask != nil {
+		t.Fatalf("data=%#v", payload.Data)
+	}
+}
+
+func TestWriteModelNotReadyErrorIncludesClientTaskID(t *testing.T) {
+	cfg := &config.AppConfig{}
+	cfg.LLM.LoadedModelsRefreshInterval = 1800
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	writeModelNotReadyError(c, gin.H{"client_task_id": uint(42)})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d", w.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["client_task_id"] != float64(42) {
+		t.Fatalf("client_task_id=%v", body["client_task_id"])
+	}
+	errObj, _ := body["error"].(map[string]any)
+	if errObj["code"] != "model_not_ready" {
+		t.Fatalf("error=%v", errObj)
+	}
 }
 
 func TestCreateTaskRejectsRequiredGPUWithoutCallRecord(t *testing.T) {

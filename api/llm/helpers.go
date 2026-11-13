@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"crynux_as/service"
 	"errors"
 	"net/http"
 
@@ -14,6 +15,21 @@ func writeClientError(c *gin.Context, status int, message string) {
 			"type":    "invalid_request_error",
 		},
 	})
+}
+
+func writeModelNotReadyError(c *gin.Context, extra gin.H) {
+	body := gin.H{
+		"error": gin.H{
+			"message": service.ModelNotReadyMessage(),
+			"type":    "invalid_request_error",
+			"code":    "model_not_ready",
+			"param":   "model",
+		},
+	}
+	for key, value := range extra {
+		body[key] = value
+	}
+	c.JSON(http.StatusBadRequest, body)
 }
 
 func writeRequestBodyReadError(c *gin.Context, err error) {

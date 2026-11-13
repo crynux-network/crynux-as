@@ -150,6 +150,11 @@ func ImagesGenerations(c *gin.Context) {
 		return
 	}
 
+	if !service.CrynuxImageTaskArgsReady(taskArgsJSON) {
+		writeModelNotReadyError(c, nil)
+		return
+	}
+
 	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, service.ResolveTaskJobWaitTimeout(c.Request.Header))
 	if err != nil {
 		if errors.Is(err, service.ErrTaskJobWaitTimeout) {
@@ -343,6 +348,11 @@ func ImagesEdits(c *gin.Context) {
 		}
 		log.Errorf("Create images edits job failed for project %d: %v", project.ID, err)
 		writeServerError(c)
+		return
+	}
+
+	if !service.CrynuxImageTaskArgsReady(taskArgsJSON) {
+		writeModelNotReadyError(c, nil)
 		return
 	}
 

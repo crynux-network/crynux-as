@@ -59,7 +59,23 @@ When `min_vram` is omitted, AS MUST resolve the default `min_vram` as follows: f
 
 `task_fee` is owned by Crynux AS. A request containing `task_fee`, including a null value, MUST be rejected. AS MUST resolve the project Cost Level, fetch the applicable Relay execution-time coefficients, calculate the task fee in Wei and the Credits estimate, then in one transaction reserve that estimate against available Credits (`balance - locked`) and create a `task_jobs` row with a `held` Credits lock, without waiting for Bridge. When request validation, fee estimation, or Credits reserve fails before a `task_jobs` row is created, AS MUST return the corresponding HTTP error and MUST NOT write a `task_call_records` row. Insufficient available Credits MUST return HTTP 402.
 
-The response MUST use the local task view:
+After the job row is created, AS MUST evaluate Crynux node model inventory from the full loaded-models cache using the same readiness rules as [llm-api.md](./llm-api.md) (LLM by normalized `model_id` with any `on_disk_node_count >= 1`; Image by normalized base `model_id` plus matching `components` identity with any `on_disk_node_count >= 1`; lora ignored). When the model is not ready, create MUST return HTTP 400 with:
+
+```json
+{
+  "error": {
+    "message": "This model is not yet available on any node in the network. The network has notified nodes to start downloading it. Downloads take some time, so this task cannot complete on time. Please try again in <minutes> minutes.",
+    "type": "invalid_request_error",
+    "code": "model_not_ready",
+    "param": "model"
+  },
+  "client_task_id": 123
+}
+```
+
+`<minutes>` MUST follow `llm.loaded_models_refresh_interval` as in [llm-api.md](./llm-api.md). `client_task_id` MUST be the local `task_jobs.id`. The job MUST remain queued for Bridge submission; AS MUST NOT mark it failed for this response alone. Later GET/status responses MUST reflect the real job state.
+
+When the model is ready, the response MUST use the local task view:
 
 ```json
 {
@@ -81,9 +97,11 @@ The task view MUST include `phase`. Allowed values are `queued`, `running`, `val
 
 ## Batch Operations
 
-`POST /inference_tasks/batch` MUST accept `{"tasks":[...]}` with between 1 and 100 items. AS MUST validate and price items in request order. The response MUST contain one item result per input index in the same order. One invalid item MUST NOT prevent valid items from being accepted. Each item MUST contain `index` and either `client_task` or `error`.
+`POST /inference_tasks/batch` MUST accept `{"tasks":[...]}` with between 1 and 100 items. AS MUST validate and price items in request order. The response MUST contain one item result per input index in the same order. One invalid item MUST NOT prevent valid items from being accepted. Each item MUST contain `index` and either `client_task` or `error`. A model-not-ready item MUST use `error` with the model-not-ready message and MUST include `client_task_id` for the created job; it MUST NOT include `client_task`.
 
 The batch path MUST reserve each accepted item's estimated Credits in request order through the same per-item reserve-and-create transaction used by single create. An item whose estimate exceeds available Credits at its turn MUST return an item error and MUST NOT create a job.
+
+The batch HTTP status MUST be 200 only when every item contains `client_task` and no item contains `error`. When any item contains `error` (validation failure, insufficient Credits, create failure, or model-not-ready), the HTTP status MUST be 400. The response body MUST still list every item result in request order.
 
 `POST /inference_tasks/batch/status` MUST accept `{"client_task_ids":[...]}` with between 1 and 100 IDs. AS MUST deduplicate IDs for the database query and MUST restore the original order and duplicates in the response. A missing or cross-project ID MUST return an item error without revealing whether another project owns it.
 

@@ -301,6 +301,34 @@ func GetLoadedLLMModel(modelID string) (LoadedLLMModel, bool) {
 	return pickMaxMinVRAM(llmModelsCache.models, modelID)
 }
 
+// llmModelHasOnDiskNodes reports whether any full-cache LLM row for modelID has
+// on_disk_node_count greater than zero.
+func llmModelHasOnDiskNodes(modelID string) bool {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	llmModelsCache.mu.RLock()
+	defer llmModelsCache.mu.RUnlock()
+	for _, model := range llmModelsCache.models {
+		if model.ModelID == modelID && model.OnDiskNodeCount > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// sdModelHasOnDiskNodes reports whether any full-cache Image row for modelID and
+// componentsKey has on_disk_node_count greater than zero.
+func sdModelHasOnDiskNodes(modelID, componentsKey string) bool {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	sdModelsCache.mu.RLock()
+	defer sdModelsCache.mu.RUnlock()
+	for _, model := range sdModelsCache.models {
+		if model.ModelID == modelID && model.ComponentsKey == componentsKey && model.OnDiskNodeCount > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func GetLoadedLLMModelExact(modelID string, quantizationConfig any, executionDType string) (LoadedLLMModel, bool) {
 	quantKey, err := models.QuantizationConfigKey(quantizationConfig)
 	if err != nil {

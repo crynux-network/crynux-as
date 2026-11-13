@@ -81,7 +81,7 @@ llm:
   credits_per_gwei: "1"
   default_auto_max_credits_per_task: "100"
   max_task_price_cnx:
-    crynux: "0.001"
+    crynux: "0.003"
     openai: "0.001"
     anthropic: "0.001"
     google: "0.001"

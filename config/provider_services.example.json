@@ -78,6 +78,16 @@
     "credential_validation_timeout_seconds": 10,
     "models": [
       {
+        "name": "claude-fable-5-2",
+        "api_kind": "chat",
+        "usage_weights": {
+          "input_tokens": "1",
+          "output_tokens": "5",
+          "cached_input_tokens": "0.025",
+          "cache_write_input_tokens": "1.25"
+        }
+      },
+      {
         "name": "claude-fable-5-1",
         "api_kind": "chat",
         "usage_weights": {

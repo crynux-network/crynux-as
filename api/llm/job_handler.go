@@ -159,6 +159,11 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 
+	if !service.CrynuxLLMModelReady(parsed.model) {
+		writeModelNotReadyError(c, nil)
+		return
+	}
+
 	finalJob, err := service.WaitForTaskJob(c.Request.Context(), db, job.ID, service.ResolveTaskJobWaitTimeout(c.Request.Header))
 	if err != nil {
 		if errors.Is(err, service.ErrTaskJobWaitTimeout) {

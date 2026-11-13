@@ -35,9 +35,10 @@ type BatchCreateRequest struct {
 }
 
 type BatchCreateItem struct {
-	Index      int       `json:"index"`
-	ClientTask *TaskView `json:"client_task,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	Index        int       `json:"index"`
+	ClientTask   *TaskView `json:"client_task,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	ClientTaskID *uint     `json:"client_task_id,omitempty"`
 }
 
 type BatchStatusRequest struct {
