@@ -73,6 +73,10 @@ func ImagesGenerations(c *gin.Context) {
 	if userVram != nil {
 		billedVram = *userVram
 	}
+	if err := models.ValidateTaskArgsQuantizationCompat(taskArgsJSON, models.TaskTypeImage); err != nil {
+		writeClientError(c, http.StatusBadRequest, "invalid task_args: "+err.Error())
+		return
+	}
 	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
@@ -273,6 +277,10 @@ func ImagesEdits(c *gin.Context) {
 	}
 	if userVram != nil {
 		billedVram = *userVram
+	}
+	if err := models.ValidateTaskArgsQuantizationCompat(taskArgsJSON, models.TaskTypeImage); err != nil {
+		writeClientError(c, http.StatusBadRequest, "invalid task_args: "+err.Error())
+		return
 	}
 	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
 		writeClientError(c, http.StatusBadRequest, err.Error())

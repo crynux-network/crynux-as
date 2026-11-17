@@ -317,11 +317,8 @@ func coerceMultipartScalar(value string) any {
 	if trimmed == "" {
 		return value
 	}
-	if i, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
-		return i
-	}
-	if f, err := strconv.ParseFloat(trimmed, 64); err == nil {
-		return f
+	if _, err := strconv.ParseFloat(trimmed, 64); err == nil {
+		return json.Number(trimmed)
 	}
 	return value
 }

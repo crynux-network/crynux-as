@@ -285,6 +285,50 @@ func TestParseImagesEditsMultipartBracketNestedExtensions(t *testing.T) {
 	}
 }
 
+func TestParseImagesEditsMultipartPreservesInt8ThresholdFloatLiteral(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	_ = writer.WriteField("model", "Qwen/Qwen-Image-2.1")
+	_ = writer.WriteField("prompt", "edit me")
+	_ = writer.WriteField("quantization_config[quant_method]", "bitsandbytes")
+	_ = writer.WriteField("quantization_config[components_to_quantize][]", "transformer")
+	_ = writer.WriteField("quantization_config[components_to_quantize][]", "text_encoder")
+	_ = writer.WriteField("quantization_config[quant_kwargs][load_in_8bit]", "true")
+	_ = writer.WriteField("quantization_config[quant_kwargs][llm_int8_threshold]", "6.0")
+	imagePart, err := writer.CreateFormFile("image", "a.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := imagePart.Write([]byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader := multipart.NewReader(&buf, writer.Boundary())
+	form, err := reader.ReadForm(8 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer form.RemoveAll()
+
+	req, err := ParseImagesEditsMultipartRequest(form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskArgs, err := BuildImagesEditsTaskArgs(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(taskArgs, `"llm_int8_threshold":6.0`) {
+		t.Fatalf("missing 6.0 literal in %s", taskArgs)
+	}
+	if strings.Contains(taskArgs, `"llm_int8_threshold":6,`) ||
+		strings.Contains(taskArgs, `"llm_int8_threshold":6}`) {
+		t.Fatalf("collapsed integer 6 in %s", taskArgs)
+	}
+}
+
 func TestParseImagesEditsMultipartRejectsMixedJSONAndBracketObject(t *testing.T) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)

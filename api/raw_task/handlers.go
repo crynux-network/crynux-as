@@ -357,6 +357,9 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 			return nil, err
 		}
 	}
+	if err := models.ValidateTaskArgsQuantizationCompat(taskArgs, *request.TaskType); err != nil {
+		return nil, fmt.Errorf("invalid task_args: %s", err.Error())
+	}
 	if err := models.ValidateCrynuxTaskArgsSize(taskArgs, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
 		return nil, err
 	}

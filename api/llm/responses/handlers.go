@@ -80,6 +80,10 @@ func CreateResponse(c *gin.Context) {
 		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
 		return
 	}
+	if err := models.ValidateTaskArgsQuantizationCompat(taskArgsJSON, models.TaskTypeLLM); err != nil {
+		writeClientError(c, http.StatusBadRequest, "invalid task_args: "+err.Error())
+		return
+	}
 	if err := models.ValidateCrynuxTaskArgsSize(taskArgsJSON, appCfg.LLM.MaxCrynuxTaskArgsBytes); err != nil {
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return

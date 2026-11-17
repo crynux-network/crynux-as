@@ -63,6 +63,10 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 	parsed.taskArgsJSON = taskArgsJSON
+	if err := models.ValidateTaskArgsQuantizationCompat(parsed.taskArgsJSON, models.TaskTypeLLM); err != nil {
+		writeClientError(c, http.StatusBadRequest, "invalid task_args: "+err.Error())
+		return
+	}
 	if err := models.ValidateCrynuxTaskArgsSize(parsed.taskArgsJSON, appCfg.LLM.MaxCrynuxTaskArgsBytes); err != nil {
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
