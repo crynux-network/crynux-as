@@ -142,6 +142,32 @@ func TestParseAndBuildImagesGenerationsQuantAndComponents(t *testing.T) {
 	}
 }
 
+func TestBuildImagesGenerationsPreservesInt8ThresholdFloatLiteral(t *testing.T) {
+	req, err := ParseImagesGenerationsRequest([]byte(`{
+		"model": "Qwen/Qwen-Image-2.1",
+		"prompt": "a cat",
+		"quantization_config": {
+			"quant_method": "bitsandbytes",
+			"components_to_quantize": ["transformer", "text_encoder"],
+			"quant_kwargs": {"load_in_8bit": true, "llm_int8_threshold": 6.0}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskArgs, err := BuildImagesGenerationsTaskArgs(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(taskArgs, `"llm_int8_threshold":6.0`) {
+		t.Fatalf("missing 6.0 literal in %s", taskArgs)
+	}
+	if strings.Contains(taskArgs, `"llm_int8_threshold":6,`) ||
+		strings.Contains(taskArgs, `"llm_int8_threshold":6}`) {
+		t.Fatalf("collapsed integer 6 in %s", taskArgs)
+	}
+}
+
 func TestParseImagesGenerationsRequestArbitrarySize(t *testing.T) {
 	req, err := ParseImagesGenerationsRequest([]byte(`{
 		"model": "org/model",

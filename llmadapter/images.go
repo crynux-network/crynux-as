@@ -1,6 +1,7 @@
 package llmadapter
 
 import (
+	"bytes"
 	"crynux_as/models"
 	"encoding/base64"
 	"encoding/json"
@@ -66,9 +67,9 @@ type ImagesGenerationsRequest struct {
 	EchoSize              string
 	EchoQuality           string
 	EchoOutputFormat      string
-	QuantizationConfig    any
+	QuantizationConfig    json.RawMessage
 	HasQuantizationConfig bool
-	Components            any
+	Components            json.RawMessage
 	HasComponents         bool
 	VramLimit             *uint64
 	QueueTimeout          *uint64
@@ -276,7 +277,7 @@ func ParseImagesGenerationsRequest(body []byte) (ImagesGenerationsRequest, error
 	}, nil
 }
 
-func getObjectOrNull(field string, raw map[string]json.RawMessage) (any, bool, error) {
+func getObjectOrNull(field string, raw map[string]json.RawMessage) (json.RawMessage, bool, error) {
 	value, ok := raw[field]
 	if !ok {
 		return nil, false, nil
@@ -284,14 +285,17 @@ func getObjectOrNull(field string, raw map[string]json.RawMessage) (any, bool, e
 	if isJSONNull(value) {
 		return nil, true, nil
 	}
-	var parsed any
-	if err := json.Unmarshal(value, &parsed); err != nil {
+	trimmed := bytes.TrimSpace(value)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
 		return nil, false, newValidationError(field, "must be an object or null")
 	}
-	if _, isObject := parsed.(map[string]any); !isObject {
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &parsed); err != nil {
 		return nil, false, newValidationError(field, "must be an object or null")
 	}
-	return parsed, true, nil
+	out := make(json.RawMessage, len(trimmed))
+	copy(out, trimmed)
+	return out, true, nil
 }
 
 func parseImagesSize(size string) (width, height int, echo string, err error) {

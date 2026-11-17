@@ -441,11 +441,15 @@ func parseImagesEditsRequest(c *gin.Context) (llmadapter.ImagesEditsRequest, str
 
 func imageExecutionFromTaskArgs(taskArgsJSON string) (dtype string, quantConfig any) {
 	var payload struct {
-		Dtype              string `json:"dtype"`
-		QuantizationConfig any    `json:"quantization_config"`
+		Dtype              string          `json:"dtype"`
+		QuantizationConfig json.RawMessage `json:"quantization_config"`
 	}
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
 		return "", nil
+	}
+	if len(bytes.TrimSpace(payload.QuantizationConfig)) == 0 ||
+		bytes.Equal(bytes.TrimSpace(payload.QuantizationConfig), []byte("null")) {
+		return strings.ToLower(strings.TrimSpace(payload.Dtype)), nil
 	}
 	return strings.ToLower(strings.TrimSpace(payload.Dtype)), payload.QuantizationConfig
 }

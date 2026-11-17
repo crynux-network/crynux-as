@@ -43,7 +43,7 @@ type ResponsesRequest struct {
 	VramLimit          *uint64                  `json:"vram_limit"`
 	QueueTimeout       *uint64                  `json:"queue_timeout"`
 	Dtype              string                   `json:"dtype"`
-	QuantizationConfig any                      `json:"quantization_config"`
+	QuantizationConfig json.RawMessage          `json:"quantization_config"`
 }
 
 type ResponsesReasoning struct {

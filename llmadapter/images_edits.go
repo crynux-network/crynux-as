@@ -62,9 +62,9 @@ type ImagesEditsRequest struct {
 	EchoSize              string
 	EchoQuality           string
 	EchoOutputFormat      string
-	QuantizationConfig    any
+	QuantizationConfig    json.RawMessage
 	HasQuantizationConfig bool
-	Components            any
+	Components            json.RawMessage
 	HasComponents         bool
 	VramLimit             *uint64
 	QueueTimeout          *uint64

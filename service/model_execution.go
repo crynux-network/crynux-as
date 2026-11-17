@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"crynux_as/config"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
@@ -9,6 +10,20 @@ import (
 	"fmt"
 	"strings"
 )
+
+// isPresentQuantizationConfig reports whether userQuant carries a non-null
+// quantization_config value. Empty or null json.RawMessage counts as absent.
+func isPresentQuantizationConfig(userQuant any) bool {
+	if userQuant == nil {
+		return false
+	}
+	raw, ok := userQuant.(json.RawMessage)
+	if !ok {
+		return true
+	}
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
+}
 
 type ModelExecutionSelection struct {
 	Dtype              models.DType
@@ -27,7 +42,7 @@ func ResolveLLMModelExecution(modelID string, userDtype string, userQuant any) M
 	modelID = llmadapter.NormalizeModelID(modelID)
 	userDtype = strings.ToLower(strings.TrimSpace(userDtype))
 	hasUserDtype := userDtype != ""
-	hasUserQuant := userQuant != nil
+	hasUserQuant := isPresentQuantizationConfig(userQuant)
 
 	if hasUserDtype || hasUserQuant {
 		sel := ModelExecutionSelection{FromLoadedModels: false}
@@ -117,15 +132,15 @@ func ApplyLLMExecutionToTaskArgsJSON(taskArgsJSON string, sel ModelExecutionSele
 	if err != nil {
 		return "", err
 	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+	payload, err := decodeJSONObjectUseNumber([]byte(taskArgsJSON))
+	if err != nil {
 		return "", err
 	}
 	payload["version"] = models.GPTTaskArgsVersion
 	if sel.Dtype != "" {
 		payload["dtype"] = string(sel.Dtype)
 	}
-	if sel.QuantizationConfig == nil {
+	if !isPresentQuantizationConfig(sel.QuantizationConfig) {
 		payload["quantization_config"] = nil
 	} else {
 		payload["quantization_config"] = sel.QuantizationConfig
@@ -211,8 +226,8 @@ type ImageExecutionResolution struct {
 // GetLoadedSDModelExact returns the Image row whose full cache identity (dtype,
 // quantization_config, components, and lora) equals that of taskArgsJSON.
 func GetLoadedSDModelExact(modelID string, taskArgsJSON string) (LoadedLLMModel, bool, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+	payload, err := decodeJSONObjectUseNumber([]byte(taskArgsJSON))
+	if err != nil {
 		return LoadedLLMModel{}, false, err
 	}
 	identity, err := newImageRequestIdentity(modelID, payload, true)
@@ -269,8 +284,8 @@ func ResolveImageModelExecution(taskArgsJSON string, modelID string) (ImageExecu
 		return ImageExecutionResolution{}, err
 	}
 	modelID = llmadapter.NormalizeModelID(modelID)
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+	payload, err := decodeJSONObjectUseNumber([]byte(taskArgsJSON))
+	if err != nil {
 		return ImageExecutionResolution{}, err
 	}
 	payload["version"] = models.GPTTaskArgsVersion
@@ -327,7 +342,7 @@ func ResolveImageModelExecution(taskArgsJSON string, modelID string) (ImageExecu
 	}
 	payload["dtype"] = loaded.ExecutionDType
 	if _, ok := payload["quantization_config"]; !ok {
-		payload["quantization_config"] = QuantizationConfigForAPI(loaded.QuantizationConfig)
+		payload["quantization_config"] = cloneRawOrNull(loaded.QuantizationConfig)
 	}
 	if _, ok := payload["components"]; !ok && len(loaded.Components) > 0 {
 		payload["components"] = loaded.Components

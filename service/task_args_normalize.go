@@ -1,25 +1,35 @@
 package service
 
 import (
+	"bytes"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
+
+// decodeJSONObjectUseNumber decodes a JSON object while keeping number
+// literals as json.Number so a later Marshal preserves values such as 6.0.
+func decodeJSONObjectUseNumber(data []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var obj map[string]any
+	if err := decoder.Decode(&obj); err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, fmt.Errorf("JSON value must be an object")
+	}
+	return obj, nil
+}
 
 // NormalizeTaskArgsModelNames rewrites Hugging Face model name fields inside
 // TaskArgs JSON with llmadapter.NormalizeModelName so persisted TaskArgs, job
 // model, Bridge submit, and loaded-models matching use the same casing.
 func NormalizeTaskArgsModelNames(taskArgs string, taskType models.TaskType) (string, error) {
-	decoder := json.NewDecoder(strings.NewReader(taskArgs))
-	decoder.UseNumber()
-	var argsMap map[string]any
-	if err := decoder.Decode(&argsMap); err != nil {
+	argsMap, err := decodeJSONObjectUseNumber([]byte(taskArgs))
+	if err != nil {
 		return "", fmt.Errorf("task_args must be valid JSON: %w", err)
-	}
-	if argsMap == nil {
-		return "", fmt.Errorf("task_args must be a JSON object")
 	}
 
 	switch taskType {

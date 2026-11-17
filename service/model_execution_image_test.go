@@ -3,8 +3,20 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
+
+func assertLLMInt8ThresholdFloatLiteral(t *testing.T, taskArgsJSON string) {
+	t.Helper()
+	if !strings.Contains(taskArgsJSON, `"llm_int8_threshold":6.0`) {
+		t.Fatalf("missing llm_int8_threshold 6.0 literal in %s", taskArgsJSON)
+	}
+	if strings.Contains(taskArgsJSON, `"llm_int8_threshold":6,`) ||
+		strings.Contains(taskArgsJSON, `"llm_int8_threshold":6}`) {
+		t.Fatalf("collapsed llm_int8_threshold integer 6 in %s", taskArgsJSON)
+	}
+}
 
 var (
 	testQuantTransformer = map[string]any{
@@ -319,4 +331,77 @@ func TestGetLoadedSDModelExactUsesFullIdentity(t *testing.T) {
 	if _, ok, err = GetLoadedSDModelExact("org/image", plainImageTaskArgs); err != nil || ok {
 		t.Fatalf("plain request matched a components row: %v %v", ok, err)
 	}
+}
+
+func TestResolveImagePreservesClientInt8ThresholdFloatLiteral(t *testing.T) {
+	refreshTestLoadedModels(t, 1, 24,
+		testImageRow("image-bf16", "org/image", "bfloat16", nil, nil, nil, 32, 1, 2),
+	)
+
+	taskArgs := `{
+		"base_model": {"name": "org/image"},
+		"prompt": "a cat",
+		"dtype": "bfloat16",
+		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1},
+		"quantization_config": {
+			"quant_method": "bitsandbytes",
+			"components_to_quantize": ["transformer", "text_encoder"],
+			"quant_kwargs": {"load_in_8bit": true, "llm_int8_threshold": 6.0}
+		}
+	}`
+	out, _, err := ApplyImageExecutionToTaskArgsJSON(taskArgs, "org/image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLLMInt8ThresholdFloatLiteral(t, out)
+}
+
+func TestResolveImageInjectsLoadedInt8ThresholdFloatLiteral(t *testing.T) {
+	quant := json.RawMessage(`{"quant_method":"bitsandbytes","components_to_quantize":["transformer","text_encoder"],"quant_kwargs":{"load_in_8bit":true,"llm_int8_threshold":6.0}}`)
+	refreshTestLoadedModels(t, 1, 24,
+		testImageRow("image-8bit", "org/image", "bfloat16", quant, nil, nil, 32, 1, 2),
+	)
+
+	taskArgs := `{
+		"base_model": {"name": "org/image"},
+		"prompt": "a cat",
+		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1}
+	}`
+	out, minVRAM, err := ApplyImageExecutionToTaskArgsJSON(taskArgs, "org/image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if minVRAM != 32 {
+		t.Fatalf("minVRAM = %d", minVRAM)
+	}
+	assertLLMInt8ThresholdFloatLiteral(t, out)
+}
+
+func TestQuantizationConfigForAPIPreservesFloatLiteral(t *testing.T) {
+	raw := json.RawMessage(`{"quant_kwargs":{"llm_int8_threshold":6.0,"load_in_8bit":true},"quant_method":"bitsandbytes"}`)
+	encoded, err := json.Marshal(map[string]any{"quantization_config": QuantizationConfigForAPI(raw)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLLMInt8ThresholdFloatLiteral(t, string(encoded))
+}
+
+func TestApplyLLMExecutionPreservesInt8ThresholdFloatLiteral(t *testing.T) {
+	taskArgs := `{
+		"model": "org/llm",
+		"messages": [{"role": "user", "content": "hi"}],
+		"dtype": "bfloat16",
+		"quantization_config": {
+			"quant_method": "bitsandbytes",
+			"quant_kwargs": {"load_in_8bit": true, "llm_int8_threshold": 6.0}
+		}
+	}`
+	out, err := ApplyLLMExecutionToTaskArgsJSON(taskArgs, ModelExecutionSelection{
+		Dtype:              "bfloat16",
+		QuantizationConfig: json.RawMessage(`{"quant_method":"bitsandbytes","quant_kwargs":{"load_in_8bit":true,"llm_int8_threshold":6.0}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLLMInt8ThresholdFloatLiteral(t, out)
 }

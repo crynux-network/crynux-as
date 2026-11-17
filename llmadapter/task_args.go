@@ -17,7 +17,7 @@ type llmTaskArgsPayload struct {
 	TemplateArgs       map[string]interface{}      `json:"template_args,omitempty"`
 	Seed               *int                        `json:"seed,omitempty"`
 	DType              models.DType                `json:"dtype,omitempty"`
-	QuantizationConfig any                         `json:"quantization_config"`
+	QuantizationConfig json.RawMessage             `json:"quantization_config,omitempty"`
 }
 
 // crynuxTaskMessages returns a copy of messages whose image blocks contain only

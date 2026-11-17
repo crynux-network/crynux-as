@@ -393,15 +393,19 @@ func ListLoadedLLMModels() []LoadedLLMModel {
 	return models
 }
 
-// QuantizationConfigForAPI returns a JSON value suitable for API responses.
+// QuantizationConfigForAPI returns a JSON value suitable for API responses and
+// TaskArgs injection. Empty or null input yields a true nil any. Non-empty
+// input is returned as json.RawMessage so number literals such as 6.0 stay
+// unchanged when the value is marshaled again.
 func QuantizationConfigForAPI(raw json.RawMessage) any {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil
 	}
-	var parsed any
-	if err := json.Unmarshal(trimmed, &parsed); err != nil {
+	if !json.Valid(trimmed) {
 		return nil
 	}
-	return parsed
+	out := make(json.RawMessage, len(trimmed))
+	copy(out, trimmed)
+	return out
 }

@@ -37,7 +37,7 @@ type CompletionsRequest struct {
 	VramLimit           *uint64            `json:"vram_limit"`
 	QueueTimeout        *uint64            `json:"queue_timeout"`
 	Dtype               string             `json:"dtype"`
-	QuantizationConfig  any                `json:"quantization_config"`
+	QuantizationConfig  json.RawMessage    `json:"quantization_config"`
 }
 
 func (cr *CompletionsRequest) setDefaultValues() {
@@ -90,7 +90,7 @@ type CompletionsMeta struct {
 	StreamOptions       *StreamOptionsMeta
 	N                   int
 	Dtype               string
-	QuantizationConfig  any
+	QuantizationConfig  json.RawMessage
 }
 
 // BuildCompletionsTaskArgs parses a completions request body and returns canonical task args JSON.

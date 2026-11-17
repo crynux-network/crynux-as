@@ -3,6 +3,7 @@ package llmadapter
 import (
 	"crynux_as/models"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -203,5 +204,30 @@ func assertSeed(t *testing.T, taskArgs string, want float64) {
 	}
 	if payload["seed"] != want {
 		t.Fatalf("seed = %v", payload["seed"])
+	}
+}
+
+func TestBuildChatCompletionsPreservesInt8ThresholdFloatLiteral(t *testing.T) {
+	body := []byte(`{
+		"model":"org/llm",
+		"messages":[{"role":"user","content":"hi"}],
+		"quantization_config":{
+			"quant_method":"bitsandbytes",
+			"quant_kwargs":{"load_in_8bit":true,"llm_int8_threshold":6.0}
+		}
+	}`)
+	taskArgsJSON, meta, err := BuildChatCompletionsTaskArgs(body, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(taskArgsJSON, `"llm_int8_threshold":6.0`) {
+		t.Fatalf("missing 6.0 literal in %s", taskArgsJSON)
+	}
+	if strings.Contains(taskArgsJSON, `"llm_int8_threshold":6,`) ||
+		strings.Contains(taskArgsJSON, `"llm_int8_threshold":6}`) {
+		t.Fatalf("collapsed integer 6 in %s", taskArgsJSON)
+	}
+	if !strings.Contains(string(meta.QuantizationConfig), `"llm_int8_threshold":6.0`) {
+		t.Fatalf("meta quantization_config = %s", string(meta.QuantizationConfig))
 	}
 }

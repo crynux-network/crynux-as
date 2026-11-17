@@ -22,6 +22,8 @@ Chat Completions MUST accept top-level `reasoning_effort`. Responses MUST accept
 
 AS MUST persist the complete canonical request in `llm_jobs.task_args_json`. When canonical LLM TaskArgs omit `seed`, or Image TaskArgs omit `task_config.seed`, AS MUST set that field to a uniformly chosen integer from 0 through 2147483647 before persistence. A seed supplied by the client, including 0, MUST be kept. Its worker MUST submit that exact JSON through Bridge raw-task creation. Bridge and Relay schema validation MUST use the matching gpt-task schema version. Worker MUST deserialize the canonical object and invoke gpt-task without API-specific conversion.
 
+When AS parses, rewrites, persists, catalogs, or forwards `quantization_config`, and when AS parses or forwards Image TaskArgs `components`, it MUST preserve JSON number literals. AS MUST NOT decode those objects into generic maps and re-encode them in a way that changes number literals. When a field inside those objects must be a Python `float` on the worker (for example `quant_kwargs.llm_int8_threshold`), a value written as `6.0` MUST remain `6.0` in the persisted TaskArgs and in catalog API responses. AS MUST NOT rewrite an integer literal `6` into `6.0`.
+
 The required task version MUST be `3.7.1`. Relay MUST dispatch the task only to a node whose runner version has major version `3` and minor and patch version not lower than `3.7.1`. Canonical LLM TaskArgs MUST include `version` set to `3.7.1`. Quantization MUST use `quantization_config` and MUST NOT use `quantize_bits`.
 
 ## Raw Output Conversion

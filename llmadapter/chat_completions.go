@@ -47,7 +47,7 @@ type ChatCompletionsRequest struct {
 	VramLimit           *uint64                  `json:"vram_limit"`
 	QueueTimeout        *uint64                  `json:"queue_timeout"`
 	Dtype               string                   `json:"dtype"`
-	QuantizationConfig  any                      `json:"quantization_config"`
+	QuantizationConfig  json.RawMessage          `json:"quantization_config"`
 }
 
 func (ccr *ChatCompletionsRequest) setDefaultValues() {
@@ -198,7 +198,7 @@ type ChatCompletionsMeta struct {
 	StreamOptions       *StreamOptionsMeta
 	N                   int
 	Dtype               string
-	QuantizationConfig  any
+	QuantizationConfig  json.RawMessage
 }
 
 type StreamOptionsMeta struct {

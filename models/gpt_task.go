@@ -1,5 +1,7 @@
 package models
 
+import "encoding/json"
+
 type LLMRole string
 
 const (
@@ -87,7 +89,7 @@ type GPTTaskArgs struct {
 	TemplateArgs       map[string]interface{}   `json:"template_args,omitempty"`
 	Seed               int                      `json:"seed"`
 	DType              DType                    `json:"dtype,omitempty"`
-	QuantizationConfig any                      `json:"quantization_config,omitempty"`
+	QuantizationConfig json.RawMessage          `json:"quantization_config,omitempty"`
 }
 
 type ResponseChoice struct {
