@@ -233,6 +233,33 @@ func TestPrepareTaskImageAutoPersistsResolvedTaskArgs(t *testing.T) {
 	}
 }
 
+func TestPrepareTaskImagePreservesClientTaskArgsVersion(t *testing.T) {
+	setupRawImagePrepareEnv(t, []map[string]any{
+		testImageLoadedRow("plain", "org/image", "bfloat16", nil, nil, 18),
+	})
+	taskType := models.TaskTypeImage
+	prepared, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
+		TaskType: &taskType,
+		TaskArgs: `{
+			"version": "3.8.0",
+			"base_model": {"name": "org/image"},
+			"prompt": "a cat",
+			"dtype": "bfloat16",
+			"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1}
+		}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(prepared.taskArgs), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["version"] != "3.8.0" {
+		t.Fatalf("version = %#v, want 3.8.0", payload["version"])
+	}
+}
+
 func TestPrepareTaskRejectsOversizedFinalTaskArgs(t *testing.T) {
 	setupRawImagePrepareEnv(t, []map[string]any{
 		testImageLoadedRow("plain", "org/image", "bfloat16", nil, nil, 18),

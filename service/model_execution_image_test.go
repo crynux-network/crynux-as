@@ -386,6 +386,40 @@ func TestQuantizationConfigForAPIPreservesFloatLiteral(t *testing.T) {
 	assertLLMInt8ThresholdFloatLiteral(t, string(encoded))
 }
 
+func TestResolveImagePreservesClientVersionAndDefaultsWhenMissing(t *testing.T) {
+	refreshTestLoadedModels(t, 1, 24,
+		testImageRow("image-bf16", "org/image", "bfloat16", nil, nil, nil, 32, 1, 2),
+	)
+
+	withVersion := `{
+		"version": "3.8.0",
+		"base_model": {"name": "org/image"},
+		"prompt": "a cat",
+		"dtype": "bfloat16",
+		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1}
+	}`
+	payload, _ := applyImage(t, withVersion, "org/image")
+	if payload["version"] != "3.8.0" {
+		t.Fatalf("version = %#v, want 3.8.0", payload["version"])
+	}
+
+	autoWithVersion := `{
+		"version": "3.8.0",
+		"base_model": {"name": "org/image"},
+		"prompt": "a cat",
+		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1}
+	}`
+	payload, _ = applyImage(t, autoWithVersion, "org/image")
+	if payload["version"] != "3.8.0" {
+		t.Fatalf("auto mode version = %#v, want 3.8.0", payload["version"])
+	}
+
+	payload, _ = applyImage(t, plainImageTaskArgs, "org/image")
+	if payload["version"] != "3.7.1" {
+		t.Fatalf("missing version = %#v, want default 3.7.1", payload["version"])
+	}
+}
+
 func TestApplyLLMExecutionPreservesInt8ThresholdFloatLiteral(t *testing.T) {
 	taskArgs := `{
 		"model": "org/llm",

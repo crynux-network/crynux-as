@@ -288,7 +288,9 @@ func ResolveImageModelExecution(taskArgsJSON string, modelID string) (ImageExecu
 	if err != nil {
 		return ImageExecutionResolution{}, err
 	}
-	payload["version"] = models.GPTTaskArgsVersion
+	if version, ok := payload["version"].(string); !ok || version == "" {
+		payload["version"] = models.GPTTaskArgsVersion
+	}
 	minVRAM := config.GetConfig().LLM.DefaultVramLimit
 
 	dtype, concrete, err := requestImageDType(payload)
