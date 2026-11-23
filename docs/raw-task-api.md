@@ -26,15 +26,14 @@ The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge Clien
 
 ```json
 {
-  "task_args": "{\"model\":\"example/model\",\"messages\":[]}",
+  "task_args": "{\"version\":\"3.7.1\",\"model\":\"example/model\",\"messages\":[]}",
   "task_type": 1,
-  "task_version": "2.0.0",
   "min_vram": 24,
   "queue_timeout": 43200
 }
 ```
 
-`task_type` MUST be `0` for an Image task or `1` for an LLM task. `task_args` MUST be a JSON string valid for the selected task type.
+`task_type` MUST be `0` for an Image task or `1` for an LLM task. `task_args` MUST be a JSON string valid for the selected task type. The task runner version MUST be `task_args.version`.
 
 The request MAY include optional `queue_timeout` as an unsigned integer number of seconds. When present, the value MUST be greater than zero. AS MUST persist it on the job and MUST forward it to Bridge as raw task `queue_timeout`. When omitted, AS MUST omit the field so Relay applies its configured default queue wait. `queue_timeout` MUST NOT be placed inside `task_args` and MUST NOT change Cost Level or Credits estimation.
 

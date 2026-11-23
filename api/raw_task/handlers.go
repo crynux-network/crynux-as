@@ -471,8 +471,8 @@ func createPreparedTask(ctx context.Context, project *models.Project, prepared *
 	credits, _ := new(big.Int).SetString(prepared.credits, 10)
 	return service.ReserveCreditsAndCreateRawTaskJob(ctx, config.GetDB(), service.CreateRawTaskJobInput{
 		Project: project, TaskType: *prepared.request.TaskType, Model: prepared.model,
-		TaskArgsJSON: prepared.taskArgs, TaskVersion: prepared.request.TaskVersion,
-		MinVram: prepared.minVram,
+		TaskArgsJSON: prepared.taskArgs,
+		MinVram:      prepared.minVram,
 		PriorityGwei: priority, BilledVram: prepared.billedVram, TaskFeeWei: fee,
 		LLMBilling: prepared.llmBilling, ImageCredits: credits, CreditsToLock: credits,
 		QueueTimeout: prepared.request.QueueTimeout,

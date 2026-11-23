@@ -17,7 +17,6 @@ type CreateRawTaskJobInput struct {
 	APIType         models.TaskAPIType
 	Model           string
 	TaskArgsJSON    string
-	TaskVersion     *string
 	MinVram         *uint64
 	RequiredGPU     string
 	RequiredGPUVram uint64
@@ -88,7 +87,6 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 		Model:             in.Model,
 		BilledVram:        in.BilledVram,
 		TaskArgsJSON:      taskArgsJSON,
-		TaskVersion:       in.TaskVersion,
 		MinVram:           in.MinVram,
 		RequiredGPU:       in.RequiredGPU,
 		RequiredGPUVram:   in.RequiredGPUVram,

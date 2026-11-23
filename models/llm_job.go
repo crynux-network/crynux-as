@@ -69,7 +69,6 @@ type TaskJob struct {
 	Background            bool        `gorm:"not null;default:false"`
 	Stream                bool        `gorm:"not null;default:false"`
 	TaskArgsJSON          string      `gorm:"type:longtext;not null"`
-	TaskVersion           *string     `gorm:"type:string;size:64"`
 	MinVram               *uint64
 	RequiredGPU           string                   `gorm:"type:string;size:255"`
 	RequiredGPUVram       uint64                   `gorm:"not null;default:0"`

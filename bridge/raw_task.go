@@ -31,7 +31,6 @@ func NewRawTaskClient(baseURL, apiKey string) *RawTaskClient {
 type CreateRawTaskRequest struct {
 	TaskArgs        string  `json:"task_args"`
 	TaskType        int     `json:"task_type"`
-	TaskVersion     *string `json:"task_version,omitempty"`
 	MinVram         uint64  `json:"min_vram,omitempty"`
 	RequiredGPU     string  `json:"required_gpu,omitempty"`
 	RequiredGPUVram uint64  `json:"required_gpu_vram,omitempty"`

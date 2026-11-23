@@ -136,11 +136,10 @@ func submitPendingTaskJobs(
 		}
 		validJobs = append(validJobs, job)
 		req := bridge.CreateRawTaskRequest{
-			TaskArgs:    job.TaskArgsJSON,
-			TaskType:    int(job.TaskType),
-			TaskVersion: job.TaskVersion,
-			MinVram:     minVram,
-			TaskFee:     taskFeeWei.String(),
+			TaskArgs: job.TaskArgsJSON,
+			TaskType: int(job.TaskType),
+			MinVram:  minVram,
+			TaskFee:  taskFeeWei.String(),
 		}
 		if job.QueueTimeout > 0 {
 			queueTimeout := job.QueueTimeout

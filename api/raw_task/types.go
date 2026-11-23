@@ -11,12 +11,11 @@ const maxBatchSize = 100
 type CreateTaskRequest struct {
 	TaskArgs        string           `json:"task_args"`
 	TaskType        *models.TaskType `json:"task_type"`
-	TaskVersion     *string          `json:"task_version,omitempty"`
 	MinVram         *uint64          `json:"min_vram,omitempty"`
-	RequiredGPU     string          `json:"required_gpu,omitempty"`
-	RequiredGPUVram uint64          `json:"required_gpu_vram,omitempty"`
-	TaskFee         json.RawMessage `json:"task_fee,omitempty"`
-	QueueTimeout    *uint64         `json:"queue_timeout,omitempty"`
+	RequiredGPU     string           `json:"required_gpu,omitempty"`
+	RequiredGPUVram uint64           `json:"required_gpu_vram,omitempty"`
+	TaskFee         json.RawMessage  `json:"task_fee,omitempty"`
+	QueueTimeout    *uint64          `json:"queue_timeout,omitempty"`
 }
 
 type TaskView struct {
