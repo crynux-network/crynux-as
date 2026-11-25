@@ -58,7 +58,7 @@ func ImagesGenerations(c *gin.Context) {
 	}
 	taskArgsJSON, billedVram, err := service.ApplyImageExecutionToTaskArgsJSON(taskArgsJSON, req.Model)
 	if err != nil {
-		if errors.Is(err, service.ErrImageExecutionUnresolved) {
+		if errors.Is(err, service.ErrInvalidExecutionConfig) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -140,7 +140,7 @@ func ImagesGenerations(c *gin.Context) {
 		PriorityGwei:  priorityGwei,
 		BilledVram:    billedVram,
 		TaskFeeWei:    taskFeeWei,
-		ImageCredits:  estimate.Credits,
+		SettlementCredits:  estimate.Credits,
 		CreditsToLock: estimate.Credits,
 		QueueTimeout:  req.QueueTimeout,
 	})
@@ -263,7 +263,7 @@ func ImagesEdits(c *gin.Context) {
 	}
 	taskArgsJSON, billedVram, err := service.ApplyImageExecutionToTaskArgsJSON(taskArgsJSON, req.Model)
 	if err != nil {
-		if errors.Is(err, service.ErrImageExecutionUnresolved) {
+		if errors.Is(err, service.ErrInvalidExecutionConfig) {
 			writeClientError(c, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -345,7 +345,7 @@ func ImagesEdits(c *gin.Context) {
 		PriorityGwei:  priorityGwei,
 		BilledVram:    billedVram,
 		TaskFeeWei:    taskFeeWei,
-		ImageCredits:  estimate.Credits,
+		SettlementCredits:  estimate.Credits,
 		CreditsToLock: estimate.Credits,
 		QueueTimeout:  req.QueueTimeout,
 	})

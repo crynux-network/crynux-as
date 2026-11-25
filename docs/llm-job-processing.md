@@ -15,7 +15,7 @@ Each row MUST contain:
 * Bridge client task ID when submitted
 * execution status and billing status
 * raw result JSON and formatted result JSON when available for LLM OpenAI-compatible jobs
-* versioned `billing_data` with common `priority_gwei`, billed VRAM, and `task_fee_wei`; LLM token-settlement coefficients or the fixed Image settlement Credits; optional audit field `locked_credits`
+* versioned `billing_data` with common `priority_gwei`, billed VRAM, and `task_fee_wei`; LLM token-settlement coefficients or the fixed Image or Video settlement Credits; optional audit field `locked_credits`
 * `credits_locked` and `credits_lock_status` (`none`, `held`, or `released`) for the create-time Credits soft lock
 * optional Responses public ID
 * `task_call_record_id` after the terminal settle or failure record transaction commits
@@ -23,7 +23,7 @@ Each row MUST contain:
 
 `task_jobs` MUST NOT be the permanent store of billed token counts. Final prompt, completion, and total token counts MUST live only on `task_call_records`. Unlock of a Credits hold MUST use `credits_lock_status` and `credits_locked`, not `billing_data.locked_credits`.
 
-Image jobs MUST store successful PNG results only under `{llm.task_result_dir}/{task_jobs.id}/{index}.png`. The worker MUST download every expected image index from Bridge into that directory before the success settle transaction. Image jobs MUST NOT write PNG bytes or base64 image payloads into `raw_result_json`, `formatted_result_json`, or any other MySQL column. The result directory path MUST be derived from `task_jobs.id` and MUST NOT be stored as a database column.
+Image jobs MUST store successful PNG results only under `{llm.task_result_dir}/{task_jobs.id}/{index}.png`. The worker MUST download every expected image index from Bridge into that directory before the success settle transaction. Image jobs MUST NOT write PNG bytes or base64 image payloads into `raw_result_json`, `formatted_result_json`, or any other MySQL column. Video jobs MUST store the successful MP4 result only at `{llm.task_result_dir}/{task_jobs.id}/0.mp4`, downloaded from Bridge before the success settle transaction, and MUST NOT write MP4 bytes into any MySQL column. The result directory path MUST be derived from `task_jobs.id` and MUST NOT be stored as a database column.
 
 Retention:
 
@@ -40,9 +40,9 @@ Each row MUST contain:
 
 * account `user_id` snapshot, project, task type, API type, model, and optional unique `task_job_id`
 * final status (`success` or `failed`)
-* Relay loaded-model identity when resolved: `model_cache_hash` (lowercase hex) and `execution_dtype`; when no cache row matches, `model_cache_hash` MAY be empty while TaskArgs-derived `execution_dtype`, `quantization_config`, and `components` are still stored for display
+* loaded-model identity `model_cache_hash` (lowercase hex) and `dtype`, both derived locally from the final TaskArgs execution identity with the same hash rules as the loaded-models cache; they MUST be empty only when the TaskArgs carry no `dtype`, such as Provider tasks
 * display fields `quantization_config` and `components` (LLM `components` is null)
-* Image workload fields `image_width`, `image_height`, `image_steps`, and `image_count` (all zero for LLM)
+* Image workload fields `image_width`, `image_height`, `image_steps`, and `image_count` (all zero for other task types)
 * prompt, completion, and total token counts when token usage applies
 * `token_usage_applicable`
 * `priority_gwei`
@@ -192,9 +192,9 @@ The handler MUST run one MySQL statement that:
 4. left-joins `task_jobs` to that bounded call-record candidate set on `task_call_records.task_job_id = task_jobs.id` so a retained job can supply `error_message` for failed finished rows
 5. unions the two candidate sets and applies the final limit with deterministic descending order by accepted/created time, source, and id
 
-In-progress items MUST return null for tokens, duration, and credits. Finished items MUST return credits from the processed event amount, or `0` when no event exists. Finished items MUST return null for `prompt_tokens`, `completion_tokens`, and `total_tokens` when `token_usage_applicable` is unset or the call is an Image task. Image call records MUST store `token_usage_applicable = 0` for both success and failure.
+In-progress items MUST return null for tokens, duration, and credits. Finished items MUST return credits from the processed event amount, or `0` when no event exists. Finished items MUST return null for `prompt_tokens`, `completion_tokens`, and `total_tokens` when `token_usage_applicable` is unset or the call is an Image or Video task. Image and Video call records MUST store `token_usage_applicable = 0` for both success and failure.
 
-Each item MUST include `task_type` (`llm` or `image`), optional display `quantization_config` / `components`, and Image workload fields `image_width`, `image_height`, `image_steps`, and `image_count` (null for LLM or when unknown). Unfinished `job` rows MUST derive the same fields from `task_jobs.task_type` and `task_args_json`, with loaded-models lookup when available.
+Each item MUST include `task_type` (`llm`, `image`, or `video`), optional display `quantization_config` / `components`, Image workload fields `image_width`, `image_height`, `image_steps`, and `image_count` (null for other task types or when unknown), and Video workload fields `video_width`, `video_height`, `video_num_frames`, `video_steps`, and `video_count` (null for other task types or when unknown). Unfinished `job` rows MUST derive the same fields from `task_jobs.task_type` and `task_args_json`, with loaded-models lookup when available.
 
 Each item MUST include `phase` and optional `error_message`:
 
@@ -208,7 +208,7 @@ Each item MUST include `source` (`job` or `call_record`) and numeric `id`. Clien
 
 ### Charges
 
-`GET /v1/account/charges` MUST select processed task charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then in one SQL statement join only the selected page of event `ref_id` values to `task_call_records` and those call records to `projects`. The response `credits` field MUST equal the event amount. The response MUST include `project_name` from the current project row. Charge items MUST include the same `task_type`, display identity, and Image workload fields as Recent Requests finished rows.
+`GET /v1/account/charges` MUST select processed task charge events for the authenticated user through the user/type/status/id index, compute total from that event set, then in one SQL statement join only the selected page of event `ref_id` values to `task_call_records` and those call records to `projects`. The response `credits` field MUST equal the event amount. The response MUST include `project_name` from the current project row. Charge items MUST include the same `task_type`, display identity, Image workload fields, and Video workload fields as Recent Requests finished rows.
 
 ### Usage stats
 
@@ -224,11 +224,11 @@ The base usage-stats worker MUST consume `usage_stats_pending_call_records` in b
 
 The worker MUST NOT select unfinished aggregation work by scanning `task_call_records` with an advancing ID cursor. When a pending ID has no permanent call-record row, the batch MUST fail and MUST leave the pending rows unchanged.
 
-Usage stats workers MUST read token counts, Image `image_count`, Relay identity fields, and success/failure status from `task_call_records`, and MUST read charged Credits only from processed LLM `credit_events` referenced by call record ID.
+Usage stats workers MUST read token counts, Image `image_count`, Video `video_count`, loaded-model identity fields, and success/failure status from `task_call_records`, and MUST read charged Credits only from processed LLM `credit_events` referenced by call record ID.
 
-Account and project hourly aggregates MUST accumulate Image `image_count` for Image task call records and MUST keep `image_count` at zero for LLM call records. `GET /v1/account/stats` MUST return the summed `image_count` for the selected range. `GET /v1/projects/:project_id/stats` MUST include `image_count` on each `token_series` point.
+Account and project hourly aggregates MUST accumulate `image_count` only from Image task call records and `video_count` only from Video task call records; other task types MUST add zero to each counter. `GET /v1/account/stats` MUST return the summed `image_count` and `video_count` for the selected range. `GET /v1/projects/:project_id/stats` MUST include `image_count` and `video_count` on each `token_series` point.
 
-Project model 10-minute aggregates and Top-10 snapshots MUST key rows by `(project_id, model_cache_hash, execution_dtype, period_start)`, matching the Relay public loaded-model view identity. Empty `model_cache_hash` or `execution_dtype` MUST participate in the unique key as empty strings, with `model` retained for display; rows with different hashes MUST NOT merge. Aggregates MUST store redundant `model`, `task_type`, `quantization_config`, and `components` for API and UI. Image rows MUST accumulate `image_count`; LLM rows MUST keep `image_count` at zero. `GET /v1/projects/:project_id/stats/models` MUST return those fields together with token totals for Chat rows.
+Project model 10-minute aggregates MUST key rows by the unique index `(project_id, model_cache_hash, dtype, model, period_start)`, and Top-10 snapshots MUST group by `(model_cache_hash, dtype, model)`. Empty `model_cache_hash` or `dtype` MUST participate in the key as empty strings; rows with different hashes MUST NOT merge. Aggregates MUST store redundant `task_type`, `quantization_config`, and `components` for API and UI. Image rows MUST accumulate `image_count` and Video rows MUST accumulate `video_count`; other task types MUST keep each counter at zero. `GET /v1/projects/:project_id/stats/models` MUST return `rank`, `model`, `model_cache_hash`, `dtype`, `task_type`, `quantization_config`, `components`, `request_count`, `prompt_tokens`, `completion_tokens`, `image_count`, `video_count`, `success_rate`, and `credits` for each row.
 
 ## Status Mapping
 

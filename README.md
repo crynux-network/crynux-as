@@ -6,6 +6,7 @@ Crynux AS is the backend for the Crynux AI Services. It exposes the AI capabilit
 * Users pay ERC20 tokens (such as USDT and USDC) on supported blockchain networks to the platform receiving address to purchase Credits.
 * Users create projects under the account. Each project gets a private OpenAI-compatible LLM API base URL and project API keys.
 * LLM API calls are forwarded to the Crynux Bridge, charged from the account Credits by token usage, and recorded for per-project usage statistics.
+* The same project base URL exposes the Raw Task API for LLM, Image, and Video tasks (`task_type` `1`, `0`, and `3`). Image and Video tasks are charged by their workload size, and Video results are downloaded as MP4 files.
 
 See [docs/requirements.md](docs/requirements.md) for the functional requirements and [docs/architecture.md](docs/architecture.md) for the technical architecture.
 

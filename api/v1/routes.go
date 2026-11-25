@@ -147,6 +147,11 @@ func InitRoutes(r *fizz.Fizz) {
 		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
 		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
 	}, tonic.Handler(llm.GetImagePricingExamples, 200))
+	llmGroup.GET("/video_pricing_examples", []fizz.OperationOption{
+		fizz.Summary("Get Video model coefficient rows for Credits and execution-time examples"),
+		fizz.Response("400", "validation errors", response.ValidationErrorResponse{}, nil, nil),
+		fizz.Response("500", "exception", response.ExceptionResponse{}, nil, nil),
+	}, tonic.Handler(llm.GetVideoPricingExamples, 200))
 
 	earnGroup := v1g.Group("earn", "Earn", "Provider Key Sharing Earn APIs", middleware.JWTAuthMiddleware())
 	earnGroup.GET("", []fizz.OperationOption{fizz.Summary("Get Key Owner earning summary")}, tonic.Handler(earn.GetSummary, 200))

@@ -74,9 +74,9 @@ func ValidateTaskArgsQuantizationCompat(taskArgsJSON string, taskType TaskType) 
 	method = strings.TrimSpace(method)
 
 	switch taskType {
-	case TaskTypeImage:
+	case TaskTypeImage, TaskTypeVideo:
 		if method != "bitsandbytes" {
-			return fmt.Errorf("quantization_config.quant_method must be bitsandbytes for image tasks")
+			return fmt.Errorf("quantization_config.quant_method must be bitsandbytes for image and video tasks")
 		}
 	case TaskTypeLLM:
 		if method != "bitsandbytes" && method != "fp8" {

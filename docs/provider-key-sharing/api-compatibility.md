@@ -87,7 +87,7 @@ Provider catalog items MUST contain:
 
 `owned_by` MUST be `openai`, `anthropic`, or `google`.
 
-Provider rows MUST omit Crynux-only fields such as `min_vram`, `on_disk_node_count`, `execution_dtype`, `quantization_config`, `model_cache_hash`, `components`, and `lora`.
+Provider rows MUST omit Crynux-only fields such as `min_vram`, `on_disk_node_count`, `dtype`, `quantization_config`, `model_cache_hash`, `components`, `lora`, and `loras`.
 
 Catalog order MUST be model ID ascending, then execution-source order with Provider rows after Crynux rows for deterministic output. Configuration validation and loaded-model refresh MUST prevent a cross-source name collision.
 

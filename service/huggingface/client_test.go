@@ -43,6 +43,33 @@ func TestValidateBaseModelSDRequiresModelIndex(t *testing.T) {
 	}
 }
 
+func TestValidateBaseModelVideoModelIndexLocations(t *testing.T) {
+	cases := map[string]bool{
+		"model_index.json":                 true,
+		"modular_model_index.json":         true,
+		"diffusers/model_index.json":       true,
+		"a/diffusers/model_index.json":     false,
+		"transformer/config.json":          false,
+		"diffusers/other_model_index.json": false,
+	}
+	for file, ok := range cases {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"siblings": []map[string]string{{"rfilename": file}},
+			})
+		}))
+		client := NewClient(server.URL, time.Second, time.Minute)
+		err := client.ValidateBaseModel(context.Background(), ModelKindVideo, "org/video")
+		server.Close()
+		if ok && err != nil {
+			t.Fatalf("%s: expected pass, got %v", file, err)
+		}
+		if !ok && err != ErrModelNotFound {
+			t.Fatalf("%s: expected ErrModelNotFound, got %v", file, err)
+		}
+	}
+}
+
 func TestValidateBaseModelSDMissingModelIndex(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

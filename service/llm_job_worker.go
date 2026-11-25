@@ -277,11 +277,18 @@ func completeSuccessfulTaskJob(
 	client *bridge.RawTaskClient,
 	job *models.TaskJob,
 ) error {
-	if job.TaskType == models.TaskTypeImage {
+	switch job.TaskType {
+	case models.TaskTypeImage:
 		if err := downloadImageResultsToDisk(ctx, client, job); err != nil {
 			return fmt.Errorf("download image results: %w", err)
 		}
-		_, err := CompleteAndSettleImageTaskJob(ctx, db, job)
+		_, err := CompleteAndSettleFixedCreditsTaskJob(ctx, db, job)
+		return err
+	case models.TaskTypeVideo:
+		if err := downloadVideoResultToDisk(ctx, client, job); err != nil {
+			return fmt.Errorf("download video result: %w", err)
+		}
+		_, err := CompleteAndSettleFixedCreditsTaskJob(ctx, db, job)
 		return err
 	}
 	bridgeClientTaskID := *job.BridgeClientTaskID
@@ -393,6 +400,17 @@ func downloadImageResultsToDisk(ctx context.Context, client *bridge.RawTaskClien
 		images[index] = result.Body
 	}
 	return SaveImageResultPNGs(job.ID, images)
+}
+
+func downloadVideoResultToDisk(ctx context.Context, client *bridge.RawTaskClient, job *models.TaskJob) error {
+	if job == nil || job.BridgeClientTaskID == nil {
+		return errors.New("bridge client task id is required")
+	}
+	result, err := client.DownloadVideoResult(ctx, *job.BridgeClientTaskID)
+	if err != nil {
+		return err
+	}
+	return SaveVideoResultMP4(job.ID, result.Body)
 }
 
 func loadProjectByID(ctx context.Context, db *gorm.DB, projectID uint) (*models.Project, error) {

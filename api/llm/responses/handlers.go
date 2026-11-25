@@ -74,7 +74,16 @@ func CreateResponse(c *gin.Context) {
 		writeLLMAdapterError(c, err)
 		return
 	}
-	execution := service.ResolveLLMModelExecution(req.Model, req.Dtype, req.QuantizationConfig)
+	dtype := req.Dtype
+	if req.HasDtype {
+		concrete, parseErr := models.ParseConcreteDType(req.Dtype)
+		if parseErr != nil {
+			writeClientError(c, http.StatusBadRequest, parseErr.Error())
+			return
+		}
+		dtype = string(concrete)
+	}
+	execution := service.ResolveLLMModelExecution(req.Model, dtype, req.QuantizationConfig)
 	taskArgsJSON, err = service.ApplyLLMExecutionToTaskArgsJSON(taskArgsJSON, execution)
 	if err != nil {
 		writeClientError(c, http.StatusBadRequest, "failed to apply model execution parameters")
@@ -94,7 +103,10 @@ func CreateResponse(c *gin.Context) {
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	effectiveVram := vramlimit.ResolveEffectiveVram(req.Model, userVram)
+	effectiveVram := execution.MinVRAM
+	if userVram != nil {
+		effectiveVram = *userVram
+	}
 
 	if err := service.ValidateTaskModel(
 		c.Request.Context(),

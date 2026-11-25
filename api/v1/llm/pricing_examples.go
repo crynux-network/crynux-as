@@ -21,7 +21,7 @@ const (
 type PricingExampleRow struct {
 	Model                 string  `json:"model" description:"Selected model id"`
 	MinVRAM               uint64  `json:"min_vram" description:"Model minimum VRAM in GB"`
-	ExecutionDType        string  `json:"execution_dtype" description:"Selected execution dtype"`
+	DType                 string  `json:"dtype" description:"Selected dtype"`
 	QuantizationConfig    any     `json:"quantization_config" description:"Selected quantization_config"`
 	ConstantSeconds       float64 `json:"constant_seconds" description:"Relay constant seconds coefficient"`
 	SecondsPerInputToken  float64 `json:"seconds_per_input_token" description:"Relay seconds per input token"`
@@ -48,18 +48,18 @@ func GetPricingExamples(c *gin.Context) (*GetPricingExamplesResponse, error) {
 		minVRAM := model.MinVRAM
 		query := relay.ExecutionTimeQuery{
 			Model:              model.ModelID,
-			Dtype:              model.ExecutionDType,
+			Dtype:              model.DType,
 			QuantizationConfig: service.QuantizationConfigForAPI(model.QuantizationConfig),
 			MinVRAM:            &minVRAM,
 		}
-		coefficients, err := service.GetLLMExecutionTimeForQuery(c.Request.Context(), query)
+		coefficients, err := service.GetLLMExecutionTime(c.Request.Context(), query)
 		if err != nil {
 			return nil, err
 		}
 		examples = append(examples, PricingExampleRow{
 			Model:                 model.ModelID,
 			MinVRAM:               model.MinVRAM,
-			ExecutionDType:        model.ExecutionDType,
+			DType:                 model.DType,
 			QuantizationConfig:    service.QuantizationConfigForAPI(model.QuantizationConfig),
 			ConstantSeconds:       coefficients.ConstantSeconds,
 			SecondsPerInputToken:  coefficients.SecondsPerInputToken,
@@ -89,15 +89,15 @@ func betterPricingExampleRow(candidate, existing service.LoadedLLMModel) bool {
 	if candidate.OnDiskNodeCount != existing.OnDiskNodeCount {
 		return candidate.OnDiskNodeCount > existing.OnDiskNodeCount
 	}
-	if candidate.ExecutionDType != existing.ExecutionDType {
-		return candidate.ExecutionDType < existing.ExecutionDType
+	if candidate.DType != existing.DType {
+		return candidate.DType < existing.DType
 	}
 	return candidate.ModelCacheHash < existing.ModelCacheHash
 }
 
 func selectPricingExampleModels(models []service.LoadedLLMModel) []service.LoadedLLMModel {
 	// Keep one row per (model_id, quantization_config, min_vram). Same identity
-	// with different execution_dtype collapses to the strongest node-count row.
+	// with different dtype collapses to the strongest node-count row.
 	byIdentity := map[string]service.LoadedLLMModel{}
 	for _, model := range models {
 		if model.MinVRAM == 0 {

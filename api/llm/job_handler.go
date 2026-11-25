@@ -28,6 +28,7 @@ type parsedTaskJobRequest struct {
 	maxCompletionTokens *int
 	taskArgsJSON        string
 	streamIncludeUsage  bool
+	hasDtype            bool
 	dtype               string
 	quantizationConfig  any
 }
@@ -56,6 +57,15 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		return
 	}
 
+	if parsed.hasDtype {
+		concrete, parseErr := models.ParseConcreteDType(parsed.dtype)
+		if parseErr != nil {
+			writeClientError(c, http.StatusBadRequest, parseErr.Error())
+			return
+		}
+		parsed.dtype = string(concrete)
+	}
+
 	execution := service.ResolveLLMModelExecution(parsed.model, parsed.dtype, parsed.quantizationConfig)
 	taskArgsJSON, err := service.ApplyLLMExecutionToTaskArgsJSON(parsed.taskArgsJSON, execution)
 	if err != nil {
@@ -77,7 +87,10 @@ func handleTaskJobRequest(c *gin.Context, apiType models.TaskAPIType) {
 		writeClientError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	effectiveVram := vramlimit.ResolveEffectiveVram(parsed.model, userVram)
+	effectiveVram := execution.MinVRAM
+	if userVram != nil {
+		effectiveVram = *userVram
+	}
 
 	if err := service.ValidateTaskModel(
 		c.Request.Context(),
@@ -214,6 +227,7 @@ func parseTaskJobRequest(body []byte, apiType models.TaskAPIType, defaultMaxToke
 			maxCompletionTokens: meta.MaxCompletionTokens,
 			taskArgsJSON:        taskArgsJSON,
 			streamIncludeUsage:  includeUsage,
+			hasDtype:            meta.HasDtype,
 			dtype:               meta.Dtype,
 			quantizationConfig:  meta.QuantizationConfig,
 		}, nil
@@ -235,6 +249,7 @@ func parseTaskJobRequest(body []byte, apiType models.TaskAPIType, defaultMaxToke
 			maxCompletionTokens: meta.MaxCompletionTokens,
 			taskArgsJSON:        taskArgsJSON,
 			streamIncludeUsage:  includeUsage,
+			hasDtype:            meta.HasDtype,
 			dtype:               meta.Dtype,
 			quantizationConfig:  meta.QuantizationConfig,
 		}, nil

@@ -59,6 +59,10 @@ func ValidateTaskModel(ctx context.Context, kind huggingface.ModelKind, modelID 
 		if _, ok := GetLoadedSDModel(modelID); ok {
 			return nil
 		}
+	case huggingface.ModelKindVideo:
+		if _, ok := GetLoadedVideoModel(modelID); ok {
+			return nil
+		}
 	default:
 		return ErrInvalidBaseModel
 	}

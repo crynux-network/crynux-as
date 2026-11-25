@@ -55,7 +55,7 @@ func TestBuildChatCompletionsTaskArgsNormalizesModel(t *testing.T) {
 	if args.Model != "qwen/qwen2.5-7b" {
 		t.Fatalf("task_args.model=%q", args.Model)
 	}
-	if args.DType != models.DTypeBFloat16 {
+	if args.DType != "" {
 		t.Fatalf("dtype=%q", args.DType)
 	}
 }
@@ -79,7 +79,7 @@ func TestBuildCompletionsTaskArgsNormalizesModel(t *testing.T) {
 	if args.Model != "qwen/qwen3-8b" {
 		t.Fatalf("task_args.model=%q", args.Model)
 	}
-	if args.DType != models.DTypeAuto {
+	if args.DType != "" {
 		t.Fatalf("dtype=%q", args.DType)
 	}
 }
@@ -94,14 +94,5 @@ func TestParseResponsesRequestNormalizesModel(t *testing.T) {
 	}
 	if req.Model != "qwen/qwen2.5-7b" {
 		t.Fatalf("req.Model=%q", req.Model)
-	}
-}
-
-func TestResolveDTypeQwen25(t *testing.T) {
-	if got := resolveDType("qwen/qwen2.5-7b"); got != models.DTypeBFloat16 {
-		t.Fatalf("qwen2.5 dtype=%q", got)
-	}
-	if got := resolveDType("qwen/qwen3-8b"); got != models.DTypeAuto {
-		t.Fatalf("qwen3 dtype=%q", got)
 	}
 }

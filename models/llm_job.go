@@ -13,6 +13,8 @@ type TaskType int8
 const (
 	TaskTypeImage TaskType = iota
 	TaskTypeLLM
+	// TaskTypeVideo skips 2 (SDFT LoRA) to match the network task_type value.
+	TaskTypeVideo TaskType = 3
 )
 
 type TaskAPIType int8
@@ -107,6 +109,7 @@ type TaskBillingData struct {
 	LockedCredits string                   `json:"locked_credits,omitempty"`
 	LLM           *LLMTaskBillingData      `json:"llm,omitempty"`
 	Image         *ImageTaskBillingData    `json:"image,omitempty"`
+	Video         *VideoTaskBillingData    `json:"video,omitempty"`
 	Provider      *ProviderTaskBillingData `json:"provider,omitempty"`
 }
 
@@ -135,6 +138,10 @@ type LLMTaskBillingData struct {
 }
 
 type ImageTaskBillingData struct {
+	SettlementCredits string `json:"settlement_credits"`
+}
+
+type VideoTaskBillingData struct {
 	SettlementCredits string `json:"settlement_credits"`
 }
 
@@ -192,6 +199,16 @@ func (j TaskJob) DecodeBillingData() (*TaskBillingData, error) {
 	}
 	if j.TaskType == TaskTypeImage && data.Image == nil && data.Provider == nil {
 		return nil, errors.New("missing image billing data")
+	}
+	if j.TaskType == TaskTypeVideo {
+		if data.Video == nil && data.Provider == nil {
+			return nil, errors.New("missing video billing data")
+		}
+		if data.Video != nil {
+			if value, ok := new(big.Int).SetString(data.Video.SettlementCredits, 10); !ok || value.Sign() <= 0 {
+				return nil, errors.New("invalid video settlement credits")
+			}
+		}
 	}
 	if data.Provider != nil {
 		if data.Provider.ServiceProvider == "" || data.Provider.ModelName == "" {

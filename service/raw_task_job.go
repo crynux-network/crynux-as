@@ -4,6 +4,7 @@ import (
 	"context"
 	"crynux_as/models"
 	"errors"
+	"fmt"
 	"math/big"
 	"time"
 
@@ -24,9 +25,11 @@ type CreateRawTaskJobInput struct {
 	BilledVram      uint64
 	TaskFeeWei      *big.Int
 	LLMBilling      *models.LLMTaskBillingData
-	ImageCredits    *big.Int
-	CreditsToLock   *big.Int
-	QueueTimeout    *uint64
+	// SettlementCredits is the fixed create-time Credits charged on success of
+	// an Image or Video task.
+	SettlementCredits *big.Int
+	CreditsToLock     *big.Int
+	QueueTimeout      *uint64
 }
 
 // ReserveCreditsAndCreateRawTaskJob locks estimated Credits and creates the raw
@@ -35,8 +38,8 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 	if in.Project == nil {
 		return nil, errors.New("project is required")
 	}
-	if in.TaskType != models.TaskTypeLLM && in.TaskType != models.TaskTypeImage {
-		return nil, errors.New("task_type must be 0 or 1")
+	if in.TaskType != models.TaskTypeLLM && in.TaskType != models.TaskTypeImage && in.TaskType != models.TaskTypeVideo {
+		return nil, errors.New("task_type must be 0, 1, or 3")
 	}
 	if in.Model == "" || in.TaskArgsJSON == "" {
 		return nil, errors.New("model and task_args are required")
@@ -68,11 +71,17 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 		LockedCredits: in.CreditsToLock.String(),
 		LLM:           in.LLMBilling,
 	}
-	if in.TaskType == models.TaskTypeImage {
-		if in.ImageCredits == nil || in.ImageCredits.Sign() <= 0 {
+	switch in.TaskType {
+	case models.TaskTypeImage:
+		if in.SettlementCredits == nil || in.SettlementCredits.Sign() <= 0 {
 			return nil, errors.New("image settlement credits are required")
 		}
-		billing.Image = &models.ImageTaskBillingData{SettlementCredits: in.ImageCredits.String()}
+		billing.Image = &models.ImageTaskBillingData{SettlementCredits: in.SettlementCredits.String()}
+	case models.TaskTypeVideo:
+		if in.SettlementCredits == nil || in.SettlementCredits.Sign() <= 0 {
+			return nil, errors.New("video settlement credits are required")
+		}
+		billing.Video = &models.VideoTaskBillingData{SettlementCredits: in.SettlementCredits.String()}
 	}
 	billingJSON, err := models.EncodeTaskBillingData(billing)
 	if err != nil {
@@ -114,7 +123,28 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 	return &job, nil
 }
 
-func CompleteAndSettleImageTaskJob(ctx context.Context, db *gorm.DB, job *models.TaskJob) (*models.TaskJob, error) {
+// fixedSettlementCredits returns the create-time settlement Credits of an
+// Image or Video job.
+func fixedSettlementCredits(taskType models.TaskType, billing *models.TaskBillingData) (*big.Int, error) {
+	var raw string
+	switch {
+	case taskType == models.TaskTypeImage && billing.Image != nil:
+		raw = billing.Image.SettlementCredits
+	case taskType == models.TaskTypeVideo && billing.Video != nil:
+		raw = billing.Video.SettlementCredits
+	default:
+		return nil, fmt.Errorf("task type %d has no fixed settlement credits", taskType)
+	}
+	credits, ok := new(big.Int).SetString(raw, 10)
+	if !ok || credits.Sign() <= 0 {
+		return nil, fmt.Errorf("invalid settlement credits for task type %d", taskType)
+	}
+	return credits, nil
+}
+
+// CompleteAndSettleFixedCreditsTaskJob completes an Image or Video job and
+// charges the fixed settlement Credits persisted at create time.
+func CompleteAndSettleFixedCreditsTaskJob(ctx context.Context, db *gorm.DB, job *models.TaskJob) (*models.TaskJob, error) {
 	if job == nil {
 		return nil, errors.New("job is required")
 	}
@@ -137,9 +167,9 @@ func CompleteAndSettleImageTaskJob(ctx context.Context, db *gorm.DB, job *models
 		if err != nil {
 			return err
 		}
-		credits, ok := new(big.Int).SetString(billing.Image.SettlementCredits, 10)
-		if !ok || credits.Sign() <= 0 {
-			return errors.New("invalid image settlement credits")
+		credits, err := fixedSettlementCredits(locked.TaskType, billing)
+		if err != nil {
+			return err
 		}
 		priority, _ := new(big.Int).SetString(billing.PriorityGwei, 10)
 		jobID := locked.ID

@@ -153,13 +153,16 @@ func IsConfiguredProviderModel(modelName string) bool {
 }
 
 // ProviderModelCollidesWithCrynux reports whether a Provider model name matches a
-// Crynux loaded-model id in the in-memory LLM or Image caches.
+// Crynux loaded-model id in the in-memory LLM, Image, or Video caches.
 func ProviderModelCollidesWithCrynux(modelName string) bool {
 	name := config.NormalizeProviderModelName(modelName)
 	if _, ok := GetLoadedLLMModel(name); ok {
 		return true
 	}
-	_, ok := GetLoadedSDModel(name)
+	if _, ok := GetLoadedSDModel(name); ok {
+		return true
+	}
+	_, ok := GetLoadedVideoModel(name)
 	return ok
 }
 

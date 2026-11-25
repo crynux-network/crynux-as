@@ -129,6 +129,8 @@ func rawTaskModelReady(prepared *preparedTask) bool {
 		return service.CrynuxLLMModelReady(prepared.model)
 	case models.TaskTypeImage:
 		return service.CrynuxImageTaskArgsReady(prepared.taskArgs)
+	case models.TaskTypeVideo:
+		return service.CrynuxVideoTaskArgsReady(prepared.taskArgs)
 	default:
 		return false
 	}
@@ -265,6 +267,10 @@ func DownloadImage(c *gin.Context) {
 	downloadResult(c, models.TaskTypeImage, index)
 }
 
+func DownloadVideo(c *gin.Context) {
+	downloadResult(c, models.TaskTypeVideo, 0)
+}
+
 func downloadResult(c *gin.Context, expectedType models.TaskType, index uint64) {
 	project := llm.GetProject(c)
 	id, err := strconv.ParseUint(c.Param("client_task_id"), 10, 64)
@@ -283,6 +289,16 @@ func downloadResult(c *gin.Context, expectedType models.TaskType, index uint64) 
 	}
 	if job.Status != models.TaskJobStatusCompleted || job.BridgeClientTaskID == nil {
 		writeError(c, http.StatusConflict, "task is not successful")
+		return
+	}
+	if expectedType == models.TaskTypeVideo {
+		body, err := service.ReadVideoResultMP4(job.ID)
+		if err != nil {
+			writeInternalError(c, err)
+			return
+		}
+		c.Header("Content-Disposition", "attachment; filename=0.mp4")
+		c.Data(http.StatusOK, "video/mp4", body)
 		return
 	}
 	if expectedType == models.TaskTypeLLM {
@@ -306,12 +322,60 @@ func downloadResult(c *gin.Context, expectedType models.TaskType, index uint64) 
 	c.Data(http.StatusOK, "image/png", body)
 }
 
+// validateRawTaskType accepts Image (0), LLM (1), and Video (3) Raw tasks.
+func validateRawTaskType(taskType models.TaskType) error {
+	switch taskType {
+	case models.TaskTypeImage, models.TaskTypeLLM, models.TaskTypeVideo:
+		return nil
+	default:
+		return errors.New("task_type must be 0, 1, or 3")
+	}
+}
+
+func validateRawTaskArgsSchema(taskArgs string, taskType models.TaskType) error {
+	validationErr, err := models.ValidateTaskArgsJsonStr(taskArgs, taskType)
+	if err != nil {
+		return err
+	}
+	if validationErr != nil {
+		return fmt.Errorf("invalid task_args: %s", validationErr.Error())
+	}
+	return nil
+}
+
+// resolveRawTaskExecution writes a concrete dtype and the remaining execution
+// fields into normalized TaskArgs and returns the default min_vram.
+func resolveRawTaskExecution(taskType models.TaskType, taskArgs, model string) (service.TaskExecutionResolution, error) {
+	switch taskType {
+	case models.TaskTypeLLM:
+		return service.ResolveRawLLMModelExecution(taskArgs, model)
+	case models.TaskTypeImage:
+		return service.ResolveImageModelExecution(taskArgs, model)
+	case models.TaskTypeVideo:
+		return service.ResolveVideoModelExecution(taskArgs, model)
+	default:
+		return service.TaskExecutionResolution{}, validateRawTaskType(taskType)
+	}
+}
+
+func rawTaskModelKind(taskType models.TaskType) huggingface.ModelKind {
+	switch taskType {
+	case models.TaskTypeImage:
+		return huggingface.ModelKindSD
+	case models.TaskTypeVideo:
+		return huggingface.ModelKindVideo
+	default:
+		return huggingface.ModelKindLLM
+	}
+}
+
 func prepareTask(ctx context.Context, project *models.Project, request CreateTaskRequest) (*preparedTask, error) {
 	if project == nil || request.TaskType == nil {
 		return nil, errors.New("task_type is required")
 	}
-	if *request.TaskType != models.TaskTypeImage && *request.TaskType != models.TaskTypeLLM {
-		return nil, errors.New("task_type must be 0 or 1")
+	taskType := *request.TaskType
+	if err := validateRawTaskType(taskType); err != nil {
+		return nil, err
 	}
 	if len(request.TaskFee) > 0 {
 		return nil, errors.New("task_fee is managed by Crynux AS and must not be provided")
@@ -319,10 +383,8 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	if !json.Valid([]byte(request.TaskArgs)) {
 		return nil, errors.New("task_args must be valid JSON")
 	}
-	if validationErr, err := models.ValidateTaskArgsJsonStr(request.TaskArgs, *request.TaskType); err != nil {
+	if err := validateRawTaskArgsSchema(request.TaskArgs, taskType); err != nil {
 		return nil, err
-	} else if validationErr != nil {
-		return nil, fmt.Errorf("invalid task_args: %s", validationErr.Error())
 	}
 	if err := service.ValidateOptionalQueueTimeout(request.QueueTimeout); err != nil {
 		return nil, err
@@ -331,43 +393,33 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		return nil, errors.New("required_gpu and required_gpu_vram are not supported")
 	}
 
-	taskArgs, err := service.NormalizeTaskArgsModelNames(request.TaskArgs, *request.TaskType)
+	taskArgs, err := service.NormalizeTaskArgsModelNames(request.TaskArgs, taskType)
 	if err != nil {
 		return nil, err
 	}
-	model, dtype, quantConfig, maxTokens, err := parseTaskArgs(*request.TaskType, taskArgs)
+	model, _, _, _, err := parseTaskArgs(taskType, taskArgs)
 	if err != nil {
 		return nil, err
 	}
-	resolvedImageMinVRAM := config.GetConfig().LLM.DefaultVramLimit
-	if *request.TaskType == models.TaskTypeImage {
-		resolved, resolveErr := service.ResolveImageModelExecution(taskArgs, model)
-		if resolveErr != nil {
-			return nil, resolveErr
-		}
-		taskArgs = resolved.TaskArgsJSON
-		resolvedImageMinVRAM = resolved.MinVRAM
-		if validationErr, err := models.ValidateTaskArgsJsonStr(taskArgs, models.TaskTypeImage); err != nil {
-			return nil, err
-		} else if validationErr != nil {
-			return nil, fmt.Errorf("invalid task_args: %s", validationErr.Error())
-		}
-		model, dtype, quantConfig, _, err = parseTaskArgs(*request.TaskType, taskArgs)
-		if err != nil {
-			return nil, err
-		}
+	resolved, err := resolveRawTaskExecution(taskType, taskArgs, model)
+	if err != nil {
+		return nil, err
 	}
-	if err := models.ValidateTaskArgsQuantizationCompat(taskArgs, *request.TaskType); err != nil {
+	taskArgs = resolved.TaskArgsJSON
+	if err := validateRawTaskArgsSchema(taskArgs, taskType); err != nil {
+		return nil, err
+	}
+	model, dtype, quantConfig, maxTokens, err := parseTaskArgs(taskType, taskArgs)
+	if err != nil {
+		return nil, err
+	}
+	if err := models.ValidateTaskArgsQuantizationCompat(taskArgs, taskType); err != nil {
 		return nil, fmt.Errorf("invalid task_args: %s", err.Error())
 	}
 	if err := models.ValidateCrynuxTaskArgsSize(taskArgs, config.GetConfig().LLM.MaxCrynuxTaskArgsBytes); err != nil {
 		return nil, err
 	}
-	kind := huggingface.ModelKindLLM
-	if *request.TaskType == models.TaskTypeImage {
-		kind = huggingface.ModelKindSD
-	}
-	if err := service.ValidateTaskModel(ctx, kind, model); err != nil {
+	if err := service.ValidateTaskModel(ctx, rawTaskModelKind(taskType), model); err != nil {
 		return nil, err
 	}
 	minVram := request.MinVram
@@ -375,15 +427,8 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		return nil, errors.New("min_vram must be a positive integer")
 	}
 	if minVram == nil {
-		resolved := config.GetConfig().LLM.DefaultVramLimit
-		if *request.TaskType == models.TaskTypeImage {
-			resolved = resolvedImageMinVRAM
-		} else if loaded, ok := service.GetLoadedLLMModelExact(model, quantConfig, dtype); ok && loaded.MinVRAM > 0 {
-			resolved = loaded.MinVRAM
-		} else if loaded, ok := service.GetLoadedLLMModel(model); ok && loaded.MinVRAM > 0 {
-			resolved = loaded.MinVRAM
-		}
-		minVram = &resolved
+		defaultMinVram := resolved.MinVRAM
+		minVram = &defaultMinVram
 	}
 	billedVram := *minVram
 	priority, err := service.ResolveEffectivePriorityGwei(project)
@@ -398,12 +443,18 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	}
 	var estimate *service.CalcTaskFeeResult
 	var llmBilling *models.LLMTaskBillingData
-	if *request.TaskType == models.TaskTypeImage {
+	switch taskType {
+	case models.TaskTypeImage:
 		estimate, err = service.EstimateImageTaskFee(ctx, service.CalcImageTaskFeeInput{
 			Project: project, TaskArgs: taskArgs, Query: query, PriorityGwei: priority,
 			EffectiveVram: billedVram,
 		})
-	} else {
+	case models.TaskTypeVideo:
+		estimate, err = service.EstimateVideoTaskFee(ctx, service.CalcImageTaskFeeInput{
+			Project: project, TaskArgs: taskArgs, Query: query, PriorityGwei: priority,
+			EffectiveVram: billedVram,
+		})
+	default:
 		promptTokens := uint64((utf8.RuneCountInString(taskArgs) + 3) / 4)
 		estimate, err = service.EstimateLLMTaskFeeWithQuery(ctx, project, query, billedVram, priority, promptTokens, maxTokens)
 		if err == nil {
@@ -474,7 +525,7 @@ func createPreparedTask(ctx context.Context, project *models.Project, prepared *
 		TaskArgsJSON: prepared.taskArgs,
 		MinVram:      prepared.minVram,
 		PriorityGwei: priority, BilledVram: prepared.billedVram, TaskFeeWei: fee,
-		LLMBilling: prepared.llmBilling, ImageCredits: credits, CreditsToLock: credits,
+		LLMBilling: prepared.llmBilling, SettlementCredits: credits, CreditsToLock: credits,
 		QueueTimeout: prepared.request.QueueTimeout,
 	})
 }

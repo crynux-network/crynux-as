@@ -29,16 +29,21 @@ type ChargeData struct {
 	ProjectID          uint                  `json:"project_id" description:"The project that made the call"`
 	ProjectName        string                `json:"project_name" description:"The current project name"`
 	Model              string                `json:"model" description:"The model ID used for the call"`
-	TaskType           string                `json:"task_type" description:"llm or image"`
+	TaskType           string                `json:"task_type" description:"llm, image, or video"`
 	QuantizationConfig any                   `json:"quantization_config" description:"Selected quantization_config when known"`
-	Components         any                   `json:"components" description:"Image component replacements when known"`
-	PromptTokens       *uint64               `json:"prompt_tokens" description:"Billed prompt token count; null for Image tasks"`
-	CompletionTokens   *uint64               `json:"completion_tokens" description:"Billed completion token count; null for Image tasks"`
-	TotalTokens        *uint64               `json:"total_tokens" description:"Billed total token count; null for Image tasks"`
-	ImageWidth         *uint64               `json:"image_width" description:"Image width for Image tasks; null for LLM"`
-	ImageHeight        *uint64               `json:"image_height" description:"Image height for Image tasks; null for LLM"`
-	ImageSteps         *uint64               `json:"image_steps" description:"Diffusion steps for Image tasks; null for LLM"`
-	ImageCount         *uint64               `json:"image_count" description:"Generated image count for Image tasks; null for LLM"`
+	Components         any                   `json:"components" description:"Image or Video component replacements when known"`
+	PromptTokens       *uint64               `json:"prompt_tokens" description:"Billed prompt token count; null for Image and Video tasks"`
+	CompletionTokens   *uint64               `json:"completion_tokens" description:"Billed completion token count; null for Image and Video tasks"`
+	TotalTokens        *uint64               `json:"total_tokens" description:"Billed total token count; null for Image and Video tasks"`
+	ImageWidth         *uint64               `json:"image_width" description:"Image width for Image tasks; null for other task types"`
+	ImageHeight        *uint64               `json:"image_height" description:"Image height for Image tasks; null for other task types"`
+	ImageSteps         *uint64               `json:"image_steps" description:"Diffusion steps for Image tasks; null for other task types"`
+	ImageCount         *uint64               `json:"image_count" description:"Generated image count for Image tasks; null for other task types"`
+	VideoWidth         *uint64               `json:"video_width" description:"Billed video width for Video tasks; null for other task types"`
+	VideoHeight        *uint64               `json:"video_height" description:"Billed video height for Video tasks; null for other task types"`
+	VideoNumFrames     *uint64               `json:"video_num_frames" description:"Billed frame count for Video tasks; null for other task types"`
+	VideoSteps         *uint64               `json:"video_steps" description:"Diffusion steps for Video tasks; null for other task types"`
+	VideoCount         *uint64               `json:"video_count" description:"Generated video count for Video tasks; null for other task types"`
 	PriorityGwei       string                `json:"priority_gwei" description:"Project Cost Level priority in Gwei used for the charge"`
 	Credits            models.BigInt         `json:"credits" description:"Credits charged for the call"`
 	BilledVram         uint64                `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
@@ -73,6 +78,11 @@ type chargeRow struct {
 	ImageHeight          uint64
 	ImageSteps           uint64
 	ImageCount           uint64
+	VideoWidth           uint64
+	VideoHeight          uint64
+	VideoNumFrames       uint64
+	VideoSteps           uint64
+	VideoCount           uint64
 	PriorityGwei         string
 	Credits              models.BigInt
 	BilledVram           uint64
@@ -152,6 +162,11 @@ SELECT
 	r.image_height AS image_height,
 	r.image_steps AS image_steps,
 	r.image_count AS image_count,
+	r.video_width AS video_width,
+	r.video_height AS video_height,
+	r.video_num_frames AS video_num_frames,
+	r.video_steps AS video_steps,
+	r.video_count AS video_count,
 	r.priority_gwei AS priority_gwei,
 	e.amount AS credits,
 	r.billed_vram AS billed_vram,
@@ -211,24 +226,19 @@ ORDER BY e.id DESC
 				item.Components = components
 			}
 		}
-		if row.TaskType == models.TaskTypeImage {
-			if row.ImageWidth > 0 {
-				w := row.ImageWidth
-				item.ImageWidth = &w
-			}
-			if row.ImageHeight > 0 {
-				h := row.ImageHeight
-				item.ImageHeight = &h
-			}
-			if row.ImageSteps > 0 {
-				s := row.ImageSteps
-				item.ImageSteps = &s
-			}
-			if row.ImageCount > 0 {
-				n := row.ImageCount
-				item.ImageCount = &n
-			}
-		} else if row.TokenUsageApplicable != 0 {
+		switch {
+		case row.TaskType == models.TaskTypeImage:
+			item.ImageWidth = service.UintPtrIfPositive(row.ImageWidth)
+			item.ImageHeight = service.UintPtrIfPositive(row.ImageHeight)
+			item.ImageSteps = service.UintPtrIfPositive(row.ImageSteps)
+			item.ImageCount = service.UintPtrIfPositive(row.ImageCount)
+		case row.TaskType == models.TaskTypeVideo:
+			item.VideoWidth = service.UintPtrIfPositive(row.VideoWidth)
+			item.VideoHeight = service.UintPtrIfPositive(row.VideoHeight)
+			item.VideoNumFrames = service.UintPtrIfPositive(row.VideoNumFrames)
+			item.VideoSteps = service.UintPtrIfPositive(row.VideoSteps)
+			item.VideoCount = service.UintPtrIfPositive(row.VideoCount)
+		case row.TokenUsageApplicable != 0:
 			p := row.PromptTokens
 			cTok := row.CompletionTokens
 			t := row.TotalTokens

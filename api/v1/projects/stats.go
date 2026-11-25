@@ -37,6 +37,7 @@ type ProjectStatsTokenPoint struct {
 	PromptTokens     uint64 `json:"prompt_tokens"`
 	CompletionTokens uint64 `json:"completion_tokens"`
 	ImageCount       uint64 `json:"image_count"`
+	VideoCount       uint64 `json:"video_count"`
 	Complete         bool   `json:"complete"`
 }
 
@@ -104,6 +105,7 @@ func GetProjectStats(c *gin.Context, in *GetProjectStatsInput) (*GetProjectStats
 			PromptTokens:     point.PromptTokens,
 			CompletionTokens: point.CompletionTokens,
 			ImageCount:       point.ImageCount,
+			VideoCount:       point.VideoCount,
 			Complete:         point.Complete,
 		})
 	}
@@ -208,7 +210,7 @@ type ProjectModelStatsItem struct {
 	Rank               uint    `json:"rank"`
 	Model              string  `json:"model"`
 	ModelCacheHash     string  `json:"model_cache_hash"`
-	ExecutionDType     string  `json:"execution_dtype"`
+	DType              string  `json:"dtype"`
 	TaskType           string  `json:"task_type"`
 	QuantizationConfig any     `json:"quantization_config"`
 	Components         any     `json:"components"`
@@ -216,6 +218,7 @@ type ProjectModelStatsItem struct {
 	PromptTokens       uint64  `json:"prompt_tokens"`
 	CompletionTokens   uint64  `json:"completion_tokens"`
 	ImageCount         uint64  `json:"image_count"`
+	VideoCount         uint64  `json:"video_count"`
 	SuccessRate        float64 `json:"success_rate"`
 	Credits            string  `json:"credits"`
 }
@@ -277,13 +280,14 @@ func GetProjectModelStats(c *gin.Context, in *GetProjectModelStatsInput) (*GetPr
 			Rank:               row.Rank,
 			Model:              row.Model,
 			ModelCacheHash:     row.ModelCacheHash,
-			ExecutionDType:     row.ExecutionDType,
+			DType:              row.DType,
 			TaskType:           service.TaskTypeAPIString(row.TaskType),
 			QuantizationConfig: service.QuantizationConfigForAPI(row.QuantizationConfig),
 			RequestCount:       row.RequestCount,
 			PromptTokens:       row.PromptTokens,
 			CompletionTokens:   row.CompletionTokens,
 			ImageCount:         row.ImageCount,
+			VideoCount:         row.VideoCount,
 			SuccessRate:        successRate,
 			Credits:            row.Credits.String(),
 		}

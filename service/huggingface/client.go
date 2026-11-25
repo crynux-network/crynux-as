@@ -20,8 +20,9 @@ var (
 type ModelKind string
 
 const (
-	ModelKindLLM ModelKind = "llm"
-	ModelKindSD  ModelKind = "sd"
+	ModelKindLLM   ModelKind = "llm"
+	ModelKindSD    ModelKind = "sd"
+	ModelKindVideo ModelKind = "video"
 )
 
 type modelInfoResponse struct {
@@ -73,8 +74,14 @@ func (c *Client) ValidateBaseModel(ctx context.Context, kind ModelKind, modelID 
 		c.putCached(cacheKey, err)
 		return err
 	}
-	if kind == ModelKindSD {
+	switch kind {
+	case ModelKindSD:
 		if err := validateSDSiblings(info.Siblings); err != nil {
+			c.putCached(cacheKey, err)
+			return err
+		}
+	case ModelKindVideo:
+		if err := validateVideoSiblings(info.Siblings); err != nil {
 			c.putCached(cacheKey, err)
 			return err
 		}
@@ -145,6 +152,24 @@ func validateSDSiblings(siblings []struct {
 	for _, sibling := range siblings {
 		name := sibling.RFilename
 		if name == "model_index.json" || strings.HasSuffix(name, "/model_index.json") {
+			return nil
+		}
+	}
+	return ErrModelNotFound
+}
+
+// validateVideoSiblings accepts a repository whose root or first-level
+// subdirectory contains model_index.json or modular_model_index.json.
+func validateVideoSiblings(siblings []struct {
+	RFilename string `json:"rfilename"`
+}) error {
+	for _, sibling := range siblings {
+		parts := strings.Split(sibling.RFilename, "/")
+		if len(parts) > 2 {
+			continue
+		}
+		switch parts[len(parts)-1] {
+		case "model_index.json", "modular_model_index.json":
 			return nil
 		}
 	}

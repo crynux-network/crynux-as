@@ -1,6 +1,10 @@
 package models
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 type LLMRole string
 
@@ -25,8 +29,22 @@ const (
 	DTypeFloat16  DType = "float16"
 	DTypeBFloat16 DType = "bfloat16"
 	DTypeFloat32  DType = "float32"
-	DTypeAuto     DType = "auto"
 )
+
+// ParseConcreteDType accepts only float16, bfloat16, or float32 (case-insensitive)
+// and returns the lowercase canonical value.
+func ParseConcreteDType(raw string) (DType, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(DTypeFloat16):
+		return DTypeFloat16, nil
+	case string(DTypeBFloat16):
+		return DTypeBFloat16, nil
+	case string(DTypeFloat32):
+		return DTypeFloat32, nil
+	default:
+		return "", fmt.Errorf("dtype must be float16, bfloat16, or float32")
+	}
+}
 
 const GPTTaskArgsVersion = "3.7.1"
 

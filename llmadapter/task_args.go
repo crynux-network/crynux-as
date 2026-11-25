@@ -93,11 +93,23 @@ func resolveMaxNewTokens(maxTokens *int, maxCompletionTokens *int, defaultMaxCom
 	return nil
 }
 
-func resolveDType(model string) models.DType {
-	if strings.HasPrefix(model, "qwen/qwen2.5") {
-		return models.DTypeBFloat16
+// parseRequestDtype reports whether the request JSON contains a "dtype" key.
+// When present, a JSON string value is trimmed and lowercased; null or non-string
+// values leave dtype empty while still marking hasDtype true.
+func parseRequestDtype(raw map[string]json.RawMessage) (hasDtype bool, dtype string) {
+	value, ok := raw["dtype"]
+	if !ok {
+		return false, ""
 	}
-	return models.DTypeAuto
+	trimmed := strings.TrimSpace(string(value))
+	if trimmed == "" || trimmed == "null" {
+		return true, ""
+	}
+	var asString string
+	if err := json.Unmarshal(value, &asString); err != nil {
+		return true, ""
+	}
+	return true, strings.ToLower(strings.TrimSpace(asString))
 }
 
 func messageContentToString(content any) string {

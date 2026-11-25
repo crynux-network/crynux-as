@@ -92,7 +92,7 @@ llm:
   job_retention_days: 30
   task_result_dir: "data/task_results"
   project_recent_requests_limit: 50
-  max_crynux_task_args_bytes: 1000000
+  max_crynux_task_args_bytes: 25165824
 usage_stats:
   recent_failure_window_seconds: 3600
   recent_failure_rate_threshold: "0.2"
@@ -110,6 +110,7 @@ task_schema:
   stable_diffusion_inference: "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
   gpt_inference: "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
   stable_diffusion_finetune_lora: "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
+  video_inference: "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/fce4cc2b0dba97bdd32132dbe4f13d85cb7234c0/schema/video-task.json"
 provider:
   max_concurrency_per_key: 2
   scheduler_interval_milliseconds: 100

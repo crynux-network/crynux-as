@@ -89,7 +89,7 @@ The following items MUST NOT appear in configuration and MUST NOT be used for Cr
 
 `credits_per_gwei` converts `billable_gwei` into Credits. It MUST NOT change `task_fee_gwei`.
 
-`max_task_price_cnx` is the operator hard cap on one request's submitted task fee and Credits, keyed by provider ID. Each value is a positive decimal string in CNX units. Crynux Network OpenAI-compatible LLM, Raw LLM, and Raw Image fee paths MUST use `max_task_price_cnx.crynux`. Provider Key Sharing paths MUST use the cap for that Service Provider ID. After `billable_gwei` / `task_fee_gwei` are computed from Cost Level, estimated node seconds, and VRAM weight, the service MUST clamp both to that provider's `max_task_fee_gwei` when the uncapped `task_fee_gwei` is greater. The cap MUST NOT change the snapshotted request `priority_gwei`. `billing_config` MUST NOT return `max_task_price_cnx`.
+`max_task_price_cnx` is the operator hard cap on one request's submitted task fee and Credits, keyed by provider ID. Each value is a positive decimal string in CNX units. Crynux Network OpenAI-compatible LLM, Raw LLM, OpenAI-compatible Image, Raw Image, and Raw Video fee paths MUST use `max_task_price_cnx.crynux`. Provider Key Sharing paths MUST use the cap for that Service Provider ID. After `billable_gwei` / `task_fee_gwei` are computed from Cost Level, estimated node seconds, and VRAM weight, the service MUST clamp both to that provider's `max_task_fee_gwei` when the uncapped `task_fee_gwei` is greater. The cap MUST NOT change the snapshotted request `priority_gwei`. `billing_config` MUST NOT return `max_task_price_cnx`.
 
 `min_task_price_cnx` is the operator admission floor. Each value is a non-negative decimal string in CNX units. `0` disables that floor.
 
@@ -111,6 +111,7 @@ Crynux request and baseline units MUST be:
 
 * Crynux Network OpenAI-compatible LLM and Raw LLM: `request_units` is the resolved maximum completion tokens (`max_completion_tokens` if present and positive; otherwise `max_tokens` if present and positive; otherwise `llm.default_max_tokens`). `baseline_units` is `llm.default_max_tokens`.
 * Crynux Network OpenAI-compatible Image and Raw Image: `request_units` is `num_images_per_prompt * image_width * image_height * steps`, using `num_images_per_prompt = 1` when the field is omitted. `baseline_units` is `1 * 1024 * 1024 * 30`, matching the Image TaskArgs schema defaults for width, height, and steps.
+* Crynux Network Raw Video: `request_units` is `width * height * num_frames * steps`. When `width` or `height` is omitted, AS MUST fill the missing dimension from the first conditioning image as specified in [raw-task-api.md](./raw-task-api.md), else use `832` and `480`. When `num_frames` or `steps` is omitted, AS MUST use `81` and `30`. `baseline_units` is `832 * 480 * 81 * 30`.
 
 For Crynux Network requests, admission MUST compare the post-cap estimated fee with `admission_min_task_fee_gwei`. Before that comparison for static mode, estimated Credits at the fixed `priority_gwei` MUST be checked against `auto_max_credits_per_task`: when estimated Credits are strictly greater than Max Credits, static mode MUST reject with HTTP 400 without changing `priority_gwei` and MUST NOT create a job or lock Credits.
 
@@ -155,7 +156,7 @@ Settlement MUST NOT raise Credits or earnings to the minimum after admission. Th
 | Seconds per output token | `Tout` | Same Relay response |
 | Credits per Gwei | `G` | `llm.credits_per_gwei` |
 
-LLM work MUST use the token coefficients in this section. Image work MUST use the Image workload and coefficient contract in [raw-task-api.md](./raw-task-api.md). Model-switch work MUST NOT enter either formula.
+LLM work MUST use the token coefficients in this section. Image and Video work MUST use the Image and Video workload and coefficient contracts in [raw-task-api.md](./raw-task-api.md). Model-switch work MUST NOT enter either formula.
 
 ## Derived Quantities
 
@@ -198,7 +199,7 @@ For each LLM request that requires Credits precheck and task fee, the service MU
 1. Resolve effective VRAM and precheck token estimates (`P` estimate and `C` estimate).
 2. Resolve the request effective `priority_gwei` from the project Cost Level mode as specified in [llm-api.md](./llm-api.md) Project Cost Level.
 3. Fetch and validate execution-time coefficients for `(model, quantization_config, dtype, effective_vram)`.
-4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and uncapped `billable_gwei` using the request's resolved target `priority_gwei`. Apply `llm.max_task_price_cnx.crynux` so that when `floor(uncapped_billable_gwei) > max_task_fee_gwei`, both `billable_gwei` and `task_fee_gwei` become `max_task_fee_gwei`; otherwise `task_fee_gwei = floor(uncapped_billable_gwei)` and Credits use the uncapped floating-point `billable_gwei`. For auto mode, lower `priority_gwei` to the highest value whose estimated Credits are at most `auto_max_credits_per_task`, recomputing the fee at that capped priority. For static mode, when estimated Credits at the fixed `priority_gwei` are strictly greater than `auto_max_credits_per_task`, reject with HTTP 400 without changing `priority_gwei`. Scale `llm.min_task_price_cnx.crynux` by `maximum_completion_tokens / llm.default_max_tokens` for LLM requests, or by `pixel_step_units / (1 * 1024 * 1024 * 30)` for Image requests. When that scaled floor is positive and the final `task_fee_gwei` is strictly below it, static mode MUST reject with HTTP 400, and auto mode MUST raise `priority_gwei` within the Max Credits budget when that budget can meet the scaled floor, otherwise reject with HTTP 400. The snapshotted effective `priority_gwei` MUST be the final create-time value after Auto Max Credits capping and any minimum-fee raise. `auto_max_credits_per_task` MUST NOT be written into `billing_data`.
+4. Compute `vram_weight`, `estimated_node_seconds` for the precheck token estimates, and uncapped `billable_gwei` using the request's resolved target `priority_gwei`. Apply `llm.max_task_price_cnx.crynux` so that when `floor(uncapped_billable_gwei) > max_task_fee_gwei`, both `billable_gwei` and `task_fee_gwei` become `max_task_fee_gwei`; otherwise `task_fee_gwei = floor(uncapped_billable_gwei)` and Credits use the uncapped floating-point `billable_gwei`. For auto mode, lower `priority_gwei` to the highest value whose estimated Credits are at most `auto_max_credits_per_task`, recomputing the fee at that capped priority. For static mode, when estimated Credits at the fixed `priority_gwei` are strictly greater than `auto_max_credits_per_task`, reject with HTTP 400 without changing `priority_gwei`. Scale `llm.min_task_price_cnx.crynux` by `maximum_completion_tokens / llm.default_max_tokens` for LLM requests, by `pixel_step_units / (1 * 1024 * 1024 * 30)` for Image requests, or by `video_units / (832 * 480 * 81 * 30)` for Raw Video requests. When that scaled floor is positive and the final `task_fee_gwei` is strictly below it, static mode MUST reject with HTTP 400, and auto mode MUST raise `priority_gwei` within the Max Credits budget when that budget can meet the scaled floor, otherwise reject with HTTP 400. The snapshotted effective `priority_gwei` MUST be the final create-time value after Auto Max Credits capping and any minimum-fee raise. `auto_max_credits_per_task` MUST NOT be written into `billing_data`.
 5. Let `estimate = max(1, floor(billable_gwei * G))` using the post-cap `billable_gwei`. In one database transaction, lock the user's `credit_accounts` row with `SELECT ... FOR UPDATE`, reject with HTTP 402 when `available = balance - locked` is strictly less than `estimate`, increase `credit_accounts.locked` by `estimate`, and create the `task_jobs` row with `credits_locked = estimate` and `credits_lock_status = held`. The pre-lock MUST NOT write a `credit_events` row and MUST NOT change `credit_accounts.balance`.
 6. Use the post-cap `task_fee_gwei` from step 4 as the submitted task fee in Gwei.
 7. Resolve `median_priority_gwei` with the Queue Median Hint rules in [llm-api.md](./llm-api.md). This resolution MUST always produce a value and MUST NOT fail the request.
@@ -228,7 +229,7 @@ After a successful Bridge response:
 5. Let `available = max(balance - remaining_locked, 0)` after the current job hold has been released, and let `charge = min(computed_credits, available)`. The debit MUST NOT consume Credits still locked by other jobs. When `charge` is greater than zero, the service MUST create one `credit_events` row of type LLM charge referencing the call record ID and MUST decrease the account balance by `charge` in the same database transaction. The event amount is the sole permanent store of the charged Credits. When `charge` is zero, the service MUST NOT create a ledger event. When `charge` is less than `computed_credits`, the platform MUST absorb the shortfall and the service MUST emit an error log for operators.
 6. The service MUST mark the LLM job `completed` only after steps 1 through 5 succeed.
 
-For a Raw Image task, AS MUST persist the create-time settlement Credits in the versioned job billing data and MUST pre-lock that same amount at job create. Successful settle MUST release the hold, then charge `min(persisted_settlement_credits, available)` where `available = max(balance - remaining_locked, 0)`, and MUST NOT fetch coefficients or read current configuration. The submitted `task_fee` MUST be the Wei fee expected by Bridge for one network task.
+For a Raw Image or Raw Video task, AS MUST persist the create-time settlement Credits in the versioned job billing data and MUST pre-lock that same amount at job create. Successful settle MUST release the hold, then charge `min(persisted_settlement_credits, available)` where `available = max(balance - remaining_locked, 0)`, and MUST NOT fetch coefficients or read current configuration. The submitted `task_fee` MUST be the Wei fee expected by Bridge for one network task.
 
 Settle MUST NOT re-fetch Relay coefficients for the charge. Settle MUST NOT recompute or replace the already submitted `task_fee_gwei`. The full transaction ownership rules are specified in [llm-job-processing.md](./llm-job-processing.md).
 
@@ -324,7 +325,7 @@ When mode is `auto`, the panel MUST provide two separate setting groups.
 
 ### Example tables
 
-The panel MUST NOT read model rows from `GET /v1/llm/pricing_examples` or `GET /v1/llm/image_pricing_examples` for queue comparison. Those endpoints are only for per-model Credits and execution-time example tables under the Chat and Image tabs.
+The panel MUST NOT read model rows from `GET /v1/llm/pricing_examples`, `GET /v1/llm/image_pricing_examples`, or `GET /v1/llm/video_pricing_examples` for queue comparison. Those endpoints are only for per-model Credits and execution-time example tables.
 
 When mode is `static`, the WebUI Credits and execution-time example tables on the project page MUST recompute when the user changes `priority_gwei`. Credits example cells MUST use the current static `priority_gwei`.
 
@@ -423,7 +424,7 @@ Response shape:
       {
         "model": "example/model",
         "min_vram": 24,
-        "execution_dtype": "bfloat16",
+        "dtype": "bfloat16",
         "quantization_config": null,
         "constant_seconds": 30,
         "seconds_per_input_token": 0.0004,
@@ -438,16 +439,16 @@ Example selection MUST use the in-memory LLM catalog snapshot only. That snapsho
 
 1. Collect rows with a positive `min_vram`.
 2. Group by `(model_id, canonical quantization_config, min_vram)`. Different quantization configs or different `min_vram` values for the same model MUST remain separate candidates.
-3. Within each group, choose one row: greatest `in_memory_node_count`, then greatest `on_disk_node_count`, then `execution_dtype` ascending, then `model_cache_hash` ascending. `execution_dtype` MUST NOT create additional example rows for the same model, quantization config, and `min_vram`.
+3. Within each group, choose one row: greatest `in_memory_node_count`, then greatest `on_disk_node_count`, then `dtype` ascending, then `model_cache_hash` ascending. `dtype` MUST NOT create additional example rows for the same model, quantization config, and `min_vram`.
 4. Sort the chosen representatives by `min_vram` ascending, then `model_id` ascending, then canonical `quantization_config` ascending.
 5. If more than four representatives exist, keep exactly the representatives at indexes `0`, `floor((n-1)/3)`, `floor(2*(n-1)/3)`, and `n-1` in that sorted list, removing duplicates while preserving order.
 6. If fewer than one representative exists, `examples` MUST be an empty list.
 
-For each selected row, coefficients MUST come from Relay execution-time with `model=<selected model>`, `min_vram=<selected min_vram>`, `dtype=<selected execution_dtype>`, and `quantization_config=<selected quantization_config>`.
+For each selected row, coefficients MUST come from Relay execution-time with `model=<selected model>`, `min_vram=<selected min_vram>`, `dtype=<selected dtype>`, and `quantization_config=<selected quantization_config>`.
 
 `pricing_prompt_tokens` and `pricing_completion_tokens` MUST both be `1000000`. They are the token counts the UI MUST use for the Credits-per-1M-token Input and Output unit examples.
 
-The WebUI Credits table title MUST be `Credits per 1M tokens` in static mode and `Maximum Credits per 1M tokens` in auto mode. Column headers MUST be `Model`, `1M Input`, and `1M Output`. The Model cell MUST keep a single compact line: the model id followed by a small quantization tag (`4bit`, `8bit`, another `<n>bit`, or `full` when there is no quantization) and a small VRAM tag as `><n>GB` when `min_vram` is greater than zero. The Model cell MUST NOT show `quant_method`, `llm_int8_threshold`, or `execution_dtype`. The WebUI MUST NOT present the sum of the Input and Output cells as the Credits for one combined request.
+The WebUI Credits table title MUST be `Credits per 1M tokens` in static mode and `Maximum Credits per 1M tokens` in auto mode. Column headers MUST be `Model`, `1M Input`, and `1M Output`. The Model cell MUST keep a single compact line: the model id followed by a small quantization tag (`4bit`, `8bit`, another `<n>bit`, or `full` when there is no quantization) and a small VRAM tag as `><n>GB` when `min_vram` is greater than zero. The Model cell MUST NOT show `quant_method`, `llm_int8_threshold`, or `dtype`. The WebUI MUST NOT present the sum of the Input and Output cells as the Credits for one combined request.
 
 Credits example cells MUST use marginal token work only. They MUST NOT include `constant_seconds` (`T0`):
 
@@ -494,7 +495,7 @@ Response shape:
       {
         "model": "example/sd-model",
         "min_vram": 24,
-        "execution_dtype": "bfloat16",
+        "dtype": "bfloat16",
         "quantization_config": null,
         "components": {
           "transformer": {
@@ -516,16 +517,16 @@ Example selection MUST use the in-memory Image catalog snapshot only. That snaps
 
 1. Collect rows with a positive `min_vram`.
 2. Group by `(model_id, canonical quantization_config, canonical components, min_vram)`. Different quantization configs, different component sets, or different `min_vram` values for the same model MUST remain separate candidates.
-3. Within each group, choose one row: greatest `in_memory_node_count`, then greatest `on_disk_node_count`, then `execution_dtype` ascending, then `model_cache_hash` ascending. `execution_dtype` MUST NOT create additional example rows for the same model, quantization config, components, and `min_vram`.
+3. Within each group, choose one row: greatest `in_memory_node_count`, then greatest `on_disk_node_count`, then `dtype` ascending, then `model_cache_hash` ascending. `dtype` MUST NOT create additional example rows for the same model, quantization config, components, and `min_vram`.
 4. Sort the chosen representatives by `min_vram` ascending, then `model_id` ascending, then canonical `quantization_config` ascending, then canonical components ascending.
 5. If more than four representatives exist, keep exactly the representatives at indexes `0`, `floor((n-1)/3)`, `floor(2*(n-1)/3)`, and `n-1` in that sorted list, removing duplicates while preserving order.
 6. If fewer than one representative exists, `examples` MUST be an empty list.
 
-For each selected row, coefficients MUST come from Relay SD execution-time with `model=<selected model>`, `min_vram=<selected min_vram>`, `dtype=<selected execution_dtype>`, and `quantization_config=<selected quantization_config>`.
+For each selected row, coefficients MUST come from Relay SD execution-time with `model=<selected model>`, `min_vram=<selected min_vram>`, `dtype=<selected dtype>`, and `quantization_config=<selected quantization_config>`.
 
 `example_width` MUST be `512`. `example_height` MUST be `512`. `example_steps` MUST be `20`. `example_num_images` MUST be `1`. They are the fixed Image workload the UI MUST use for both Credits and execution-time examples.
 
-The WebUI Cost Level example tables MUST sit under Chat and Image tabs. Chat MUST use `GET /v1/llm/pricing_examples`. Image MUST use `GET /v1/llm/image_pricing_examples`.
+The WebUI Cost Level example tables MUST sit under Chat, Image, and Video tabs. Chat MUST use `GET /v1/llm/pricing_examples`. Image MUST use `GET /v1/llm/image_pricing_examples`. Video MUST use `GET /v1/llm/video_pricing_examples`.
 
 The Image Credits table title MUST be `Credits per image` in static mode and `Maximum Credits per image` in auto mode. Column headers MUST be `Model`, `Size`, `Steps`, and `Credits`. The Model cell MUST use the same compact model-id-plus-quantization-and-VRAM-tag layout as the Chat tables. When an Image example row's `components` include one or more `repo` values, the Model cell MUST also show those repository names as muted small text on a new line under the model-id line. The Model cell MUST NOT invent component names when no `repo` is present. `Size` MUST show `example_width×example_height`. `Steps` MUST show `example_steps`. The table description MUST state that the estimate is for `example_num_images` image.
 
@@ -543,6 +544,53 @@ with the same `Prio`, `vram_weight`, and `G` rules as Chat Credits examples. Pri
 The Image execution-time table title MUST be `Execution time examples`. Column headers MUST be `Model`, `Size`, `Steps`, and `Seconds`. `Size` and `Steps` MUST show the same fixed workload as the Credits table. Seconds MUST use the same `estimated_node_seconds` formula, including `overhead_seconds`.
 
 The image pricing-examples API MUST NOT return queue wait estimates.
+
+### Video pricing examples
+
+`GET /v1/llm/video_pricing_examples` requires a valid JWT. It MUST return only per-model Video example rows and the fixed video workload used by Video example tables. It MUST NOT be the source for cost-level queue position.
+
+Response shape:
+
+```json
+{
+  "message": "success",
+  "data": {
+    "example_width": 832,
+    "example_height": 480,
+    "example_num_frames": 81,
+    "example_steps": 20,
+    "example_num_videos": 1,
+    "examples": [
+      {
+        "model": "example/video-model",
+        "min_vram": 24,
+        "dtype": "bfloat16",
+        "quantization_config": null,
+        "components": {},
+        "overhead_seconds": 10,
+        "seconds_per_video_unit": 0.000000001
+      }
+    ]
+  }
+}
+```
+
+Each example row MUST include the selected row's `components` object (Video TaskArgs shape).
+
+Example selection MUST use the in-memory Video catalog snapshot only, so candidates MUST match the public Video catalog visibility of `GET /models/video`. It MUST NOT read the LLM or Image loaded-models caches. Grouping, representative choice, sorting, and down-sampling MUST follow the Image pricing-examples steps above with Video rows in place of Image rows.
+
+For each selected row, coefficients MUST come from Relay `GET /v2/models/video/execution-time` with `model=<selected model>`, `min_vram=<selected min_vram>`, `dtype=<selected dtype>`, and `quantization_config=<selected quantization_config>`.
+
+`example_width` MUST be `832`. `example_height` MUST be `480`. `example_num_frames` MUST be `81`. `example_steps` MUST be `20`. `example_num_videos` MUST be `1`. They are the fixed Video workload for both Credits and execution-time examples:
+
+```text
+video_units = example_num_videos * example_width * example_height * example_num_frames * example_steps
+estimated_node_seconds = overhead_seconds + seconds_per_video_unit * video_units
+billable_gwei = Prio * estimated_node_seconds * vram_weight
+credits = floor(billable_gwei * G)
+```
+
+with the same `Prio`, `vram_weight`, and `G` rules as Chat Credits examples. The video pricing-examples API MUST NOT return queue wait estimates.
 
 ## Failed Calls
 

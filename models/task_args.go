@@ -14,14 +14,19 @@ import (
 var sdInferenceTaskSchema *jsonschema.Schema
 var gptInferenceTaskSchema *jsonschema.Schema
 var sdFinetuneLoraTaskSchema *jsonschema.Schema
+var videoInferenceTaskSchema *jsonschema.Schema
 
 func ValidateTaskArgsJsonStr(jsonStr string, taskType TaskType) (validationError, err error) {
-	if taskType == TaskTypeImage {
+	switch taskType {
+	case TaskTypeImage:
 		return validateSDTaskArgs(jsonStr)
-	} else if taskType == TaskTypeLLM {
+	case TaskTypeLLM:
 		return validateGPTTaskArgs(jsonStr)
+	case TaskTypeVideo:
+		return validateVideoTaskArgs(jsonStr)
+	default:
+		return validateSDFinetuneLoraTaskArgs(jsonStr)
 	}
-	return validateSDFinetuneLoraTaskArgs(jsonStr)
 }
 
 // ValidateCrynuxTaskArgsSize rejects final Crynux TaskArgs JSON whose byte
@@ -88,6 +93,24 @@ func validateSDFinetuneLoraTaskArgs(jsonStr string) (validationError, err error)
 	return sdFinetuneLoraTaskSchema.Validate(v), nil
 }
 
+func validateVideoTaskArgs(jsonStr string) (validationError, err error) {
+	if videoInferenceTaskSchema == nil {
+		schemaJSON := config.GetConfig().TaskSchema.VideoInference
+		if !isValidURL(schemaJSON) {
+			return nil, errors.New("invalid URL for task json schema")
+		}
+		videoInferenceTaskSchema, err = jsonschema.Compile(schemaJSON)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var v interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &v); err != nil {
+		return nil, err
+	}
+	return videoInferenceTaskSchema.Validate(v), nil
+}
+
 func isValidURL(toTest string) bool {
 	_, err := url.ParseRequestURI(toTest)
 	if err != nil {
@@ -105,4 +128,5 @@ func ResetTaskArgsSchemasForTest() {
 	sdInferenceTaskSchema = nil
 	gptInferenceTaskSchema = nil
 	sdFinetuneLoraTaskSchema = nil
+	videoInferenceTaskSchema = nil
 }

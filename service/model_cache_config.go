@@ -1,66 +1,60 @@
 package service
 
 import (
-	"bytes"
 	"crynux_as/llmadapter"
 	"crynux_as/models"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 )
 
 const (
 	modelCacheTaskKindLLM   = "llm"
 	modelCacheTaskKindImage = "image"
-	modelCacheHashBytes     = 32
+	modelCacheTaskKindVideo = "video"
 	defaultLoraWeight       = "100"
-	autoExecutionDType      = "auto"
+	defaultVideoLoraTarget  = "auto"
 )
 
-type modelCacheEntry struct {
-	Repository   string         `json:"repository"`
-	Format       string         `json:"format"`
-	FormatKwargs map[string]any `json:"format_kwargs"`
+// modelCacheIdentity is the normalized execution identity of one model
+// configuration. The key fields hold canonical JSON. ComponentsKey is used by
+// image and video; LoraKey holds lora for image and loras for video.
+type modelCacheIdentity struct {
+	TaskKind        string
+	ModelID         string
+	DType           string
+	QuantizationKey string
+	ComponentsKey   string
+	LoraKey         string
 }
 
-// modelCacheConfig is the canonical config Relay derives model_cache_hash from.
-type modelCacheConfig struct {
-	TaskKind           string                     `json:"task_kind"`
-	Model              *modelCacheEntry           `json:"model"`
-	BaseModel          *modelCacheEntry           `json:"base_model"`
-	Components         map[string]modelCacheEntry `json:"components"`
-	Lora               any                        `json:"lora"`
-	DType              string                     `json:"dtype"`
-	QuantizationConfig json.RawMessage            `json:"quantization_config"`
-}
-
-// parsedModelCacheConfig holds the executable fields of a model cache config.
-// Components and Lora use the Image TaskArgs shape.
-type parsedModelCacheConfig struct {
-	TaskKind           string
-	ModelID            string
-	DType              string
-	QuantizationConfig json.RawMessage
-	QuantizationKey    string
-	Components         map[string]any
-	ComponentsKey      string
-	Lora               map[string]any
-	LoraKey            string
-}
-
-// normalizeModelCacheHash validates a hex encoded 32-byte hash and returns its lowercase form.
-func normalizeModelCacheHash(raw string) (string, error) {
-	hash := strings.ToLower(strings.TrimSpace(raw))
-	decoded, err := hex.DecodeString(hash)
+// hash returns the lowercase hex SHA-256 of the canonical identity JSON.
+func (i modelCacheIdentity) hash() (string, error) {
+	identity := map[string]any{
+		"task_kind":           i.TaskKind,
+		"model_id":            i.ModelID,
+		"dtype":               i.DType,
+		"quantization_config": json.RawMessage(i.QuantizationKey),
+	}
+	switch i.TaskKind {
+	case modelCacheTaskKindLLM:
+	case modelCacheTaskKindImage:
+		identity["components"] = json.RawMessage(i.ComponentsKey)
+		identity["lora"] = json.RawMessage(i.LoraKey)
+	case modelCacheTaskKindVideo:
+		identity["components"] = json.RawMessage(i.ComponentsKey)
+		identity["loras"] = json.RawMessage(i.LoraKey)
+	default:
+		return "", fmt.Errorf("unsupported model cache task_kind %q", i.TaskKind)
+	}
+	canonical, err := models.CanonicalJSON(identity)
 	if err != nil {
-		return "", fmt.Errorf("model_cache_hash is not hex: %w", err)
+		return "", err
 	}
-	if len(decoded) != modelCacheHashBytes {
-		return "", fmt.Errorf("model_cache_hash must be %d bytes, got %d", modelCacheHashBytes, len(decoded))
-	}
-	return hash, nil
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // normalizeRepository lowercases Hugging Face repository names and keeps URLs unchanged.
@@ -68,16 +62,8 @@ func normalizeRepository(name string) string {
 	return llmadapter.NormalizeModelName(name)
 }
 
-func normalizeExecutionDType(dtype string) string {
-	dtype = strings.ToLower(strings.TrimSpace(dtype))
-	if dtype == "" {
-		return autoExecutionDType
-	}
-	return dtype
-}
-
 // normalizeComponentSource converts a component source to its identity shape:
-// format, normalized repo, and format_kwargs when present. The revision is not part of the identity.
+// format, normalized repo, and format_kwargs when non-empty. The revision is not part of the identity.
 func normalizeComponentSource(usage string, format, repo string, formatKwargs map[string]any) (map[string]any, error) {
 	if usage == "" || format == "" || repo == "" {
 		return nil, fmt.Errorf("component %q requires usage name, format and repo", usage)
@@ -86,7 +72,7 @@ func normalizeComponentSource(usage string, format, repo string, formatKwargs ma
 		"format": format,
 		"repo":   normalizeRepository(repo),
 	}
-	if formatKwargs != nil {
+	if len(formatKwargs) > 0 {
 		source["format_kwargs"] = formatKwargs
 	}
 	return source, nil
@@ -159,58 +145,45 @@ func normalizeTaskArgsLora(value any) (map[string]any, string, error) {
 	return lora, string(key), nil
 }
 
-func (e *modelCacheEntry) repository() string {
-	if e == nil {
-		return ""
+// normalizeTaskArgsVideoLoras converts a TaskArgs loras value to the identity
+// shape with defaults applied and returns it with its canonical key. A nil
+// value or an empty list means no LoRAs and yields an empty list.
+func normalizeTaskArgsVideoLoras(value any) ([]any, string, error) {
+	loras := []any{}
+	if value != nil {
+		raw, ok := value.([]any)
+		if !ok {
+			return nil, "", errors.New("loras must be an array")
+		}
+		for index, item := range raw {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				return nil, "", fmt.Errorf("loras[%d] must be an object", index)
+			}
+			model, _ := entry["model"].(string)
+			if model == "" {
+				return nil, "", fmt.Errorf("loras[%d] requires model", index)
+			}
+			weightFileName, _ := entry["weight_file_name"].(string)
+			var weight any = json.Number(defaultLoraWeight)
+			if entry["weight"] != nil {
+				weight = entry["weight"]
+			}
+			target, _ := entry["target"].(string)
+			if target == "" {
+				target = defaultVideoLoraTarget
+			}
+			loras = append(loras, map[string]any{
+				"model":            normalizeRepository(model),
+				"weight_file_name": weightFileName,
+				"weight":           weight,
+				"target":           target,
+			})
+		}
 	}
-	return normalizeRepository(e.Repository)
-}
-
-// parseModelCacheConfig parses the canonical Relay model cache config into executable fields.
-func parseModelCacheConfig(raw json.RawMessage) (parsedModelCacheConfig, error) {
-	var config modelCacheConfig
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&config); err != nil {
-		return parsedModelCacheConfig{}, fmt.Errorf("invalid model_cache_config: %w", err)
-	}
-	quantRaw, quantKey, err := normalizeQuantizationConfig(config.QuantizationConfig)
+	key, err := models.CanonicalJSON(loras)
 	if err != nil {
-		return parsedModelCacheConfig{}, fmt.Errorf("invalid model_cache_config quantization_config: %w", err)
+		return nil, "", err
 	}
-	parsed := parsedModelCacheConfig{
-		TaskKind:           config.TaskKind,
-		DType:              strings.ToLower(strings.TrimSpace(config.DType)),
-		QuantizationConfig: quantRaw,
-		QuantizationKey:    quantKey,
-	}
-	switch config.TaskKind {
-	case modelCacheTaskKindLLM:
-		parsed.ModelID = config.Model.repository()
-	case modelCacheTaskKindImage:
-		parsed.ModelID = config.BaseModel.repository()
-		components := make(map[string]any, len(config.Components))
-		for usage, entry := range config.Components {
-			source := map[string]any{
-				"format": entry.Format,
-				"repo":   entry.Repository,
-			}
-			if entry.FormatKwargs != nil {
-				source["format_kwargs"] = entry.FormatKwargs
-			}
-			components[usage] = source
-		}
-		if parsed.Components, parsed.ComponentsKey, err = normalizeTaskArgsComponents(components); err != nil {
-			return parsedModelCacheConfig{}, fmt.Errorf("invalid model_cache_config components: %w", err)
-		}
-		if parsed.Lora, parsed.LoraKey, err = normalizeTaskArgsLora(config.Lora); err != nil {
-			return parsedModelCacheConfig{}, fmt.Errorf("invalid model_cache_config lora: %w", err)
-		}
-	default:
-		return parsedModelCacheConfig{}, fmt.Errorf("unsupported model_cache_config task_kind %q", config.TaskKind)
-	}
-	if parsed.ModelID == "" {
-		return parsedModelCacheConfig{}, errors.New("model_cache_config model is empty")
-	}
-	return parsed, nil
+	return loras, string(key), nil
 }

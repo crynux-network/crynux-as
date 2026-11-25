@@ -8,6 +8,7 @@ func InitRoutes(group *gin.RouterGroup) {
 	group.POST("/inference_tasks/:client_task_id/abort", AbortTask)
 	group.GET("/inference_tasks/:client_task_id/llm", DownloadLLM)
 	group.GET("/inference_tasks/:client_task_id/images/:index", DownloadImage)
+	group.GET("/inference_tasks/:client_task_id/video", DownloadVideo)
 	group.POST("/inference_tasks/batch", BatchCreate)
 	group.POST("/inference_tasks/batch/status", BatchStatus)
 	group.POST("/inference_tasks/batch/abort", BatchAbort)

@@ -104,6 +104,27 @@ func SaveImageResultFiles(jobID uint, images map[uint64]ImageResultFile) error {
 	if len(images) == 0 {
 		return errors.New("images are required")
 	}
+	files := make(map[string][]byte, len(images))
+	for index, file := range images {
+		if len(file.Data) == 0 {
+			return fmt.Errorf("image index %d is empty", index)
+		}
+		ext := file.Format
+		if ext == "" {
+			ext = "png"
+		}
+		if ext == "jpeg" {
+			ext = "jpg"
+		}
+		files[fmt.Sprintf("%d.%s", index, ext)] = file.Data
+	}
+	return saveTaskResultFiles(jobID, files)
+}
+
+// saveTaskResultFiles writes every file into a temporary directory next to the
+// job result directory, then renames it to the final job result path so
+// readers never observe a partially written result.
+func saveTaskResultFiles(jobID uint, files map[string][]byte) error {
 	jobDir, err := TaskResultJobDir(jobID)
 	if err != nil {
 		return err
@@ -118,27 +139,53 @@ func SaveImageResultFiles(jobID uint, images map[uint64]ImageResultFile) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	for index, file := range images {
-		if len(file.Data) == 0 {
-			return fmt.Errorf("image index %d is empty", index)
-		}
-		ext := file.Format
-		if ext == "" {
-			ext = "png"
-		}
-		if ext == "jpeg" {
-			ext = "jpg"
-		}
-		path := filepath.Join(tmpDir, fmt.Sprintf("%d.%s", index, ext))
-		if err := os.WriteFile(path, file.Data, 0o644); err != nil {
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), data, 0o644); err != nil {
 			return err
 		}
 	}
-	_ = os.RemoveAll(jobDir)
+	if err := os.RemoveAll(jobDir); err != nil {
+		return err
+	}
 	if err := os.Rename(tmpDir, jobDir); err != nil {
 		return err
 	}
 	return nil
+}
+
+const taskResultVideoFileName = "0.mp4"
+
+// TaskResultVideoPath returns {llm.task_result_dir}/{job_id}/0.mp4.
+func TaskResultVideoPath(jobID uint) (string, error) {
+	jobDir, err := TaskResultJobDir(jobID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(jobDir, taskResultVideoFileName), nil
+}
+
+// SaveVideoResultMP4 stores the Video task MP4 result as 0.mp4 in the job
+// result directory.
+func SaveVideoResultMP4(jobID uint, body []byte) error {
+	if len(body) == 0 {
+		return errors.New("video result is empty")
+	}
+	return saveTaskResultFiles(jobID, map[string][]byte{taskResultVideoFileName: body})
+}
+
+func ReadVideoResultMP4(jobID uint) ([]byte, error) {
+	path, err := TaskResultVideoPath(jobID)
+	if err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		return nil, errors.New("video result is empty")
+	}
+	return body, nil
 }
 
 func ReadImageResultPNG(jobID uint, index uint64) ([]byte, error) {

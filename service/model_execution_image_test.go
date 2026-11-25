@@ -38,7 +38,7 @@ var (
 
 func testTransformerComponents(repository string) map[string]any {
 	return map[string]any{
-		"transformer": testCacheEntry(repository, "gguf", map[string]any{"filename": "model.gguf"}),
+		"transformer": testComponent(repository, "gguf", map[string]any{"filename": "model.gguf"}),
 	}
 }
 
@@ -85,8 +85,8 @@ const plainImageTaskArgs = `{
 
 func TestApplyImageExecutionKeepsRowsWithDifferentComponentRepos(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-a", "org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
-		testImageRow("image-b", "org/image", "float16", testQuantTransformer, testTransformerComponents("org/quant-b"), nil, 16, 1, 2),
+		testImageRow("org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
+		testImageRow("org/image", "float16", testQuantTransformer, testTransformerComponents("org/quant-b"), nil, 16, 1, 2),
 	)
 
 	taskArgsB := `{
@@ -121,8 +121,8 @@ func TestApplyImageExecutionKeepsRowsWithDifferentComponentRepos(t *testing.T) {
 
 func TestApplyImageExecutionInjectsFullConfigFromSelectedRow(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-a", "org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
-		testImageRow("image-b", "org/image", "float16", testQuantTextEncoder, testTransformerComponents("org/quant-b"), nil, 16, 1, 2),
+		testImageRow("org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
+		testImageRow("org/image", "float16", testQuantTextEncoder, testTransformerComponents("org/quant-b"), nil, 16, 1, 2),
 	)
 
 	payload, minVRAM := applyImage(t, plainImageTaskArgs, "org/image")
@@ -144,8 +144,8 @@ func TestApplyImageExecutionInjectsFullConfigFromSelectedRow(t *testing.T) {
 
 func TestApplyImageExecutionClientQuantizationSelectsMatchingRow(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-a", "org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
-		testImageRow("image-b", "org/image", "float16", testQuantTextEncoder, testTransformerComponents("org/quant-b"), nil, 16, 1, 2),
+		testImageRow("org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
+		testImageRow("org/image", "float16", testQuantTextEncoder, testTransformerComponents("org/quant-b"), nil, 16, 1, 2),
 	)
 
 	taskArgs := `{
@@ -163,9 +163,9 @@ func TestApplyImageExecutionClientQuantizationSelectsMatchingRow(t *testing.T) {
 	}
 }
 
-func TestApplyImageExecutionAutoMissDoesNotBorrowFromOtherIdentity(t *testing.T) {
+func TestApplyImageExecutionOmittedDtypeMissFallsBackToBFloat16(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-a", "org/image", "bfloat16", nil, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
+		testImageRow("org/image", "float16", nil, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
 	)
 
 	taskArgs := `{
@@ -174,17 +174,23 @@ func TestApplyImageExecutionAutoMissDoesNotBorrowFromOtherIdentity(t *testing.T)
 		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1},
 		"components": {"transformer": {"format": "gguf", "repo": "org/unknown", "format_kwargs": {"filename": "model.gguf"}}}
 	}`
-	err := applyImageErr(t, taskArgs, "org/image")
-	if !errors.Is(err, ErrImageExecutionUnresolved) {
-		t.Fatalf("error = %v", err)
+	payload, minVRAM := applyImage(t, taskArgs, "org/image")
+	if minVRAM != 24 || payload["dtype"] != "bfloat16" {
+		t.Fatalf("minVRAM = %d dtype = %#v", minVRAM, payload["dtype"])
+	}
+	if repo := transformerRepo(t, payload); repo != "org/unknown" {
+		t.Fatalf("components borrowed: %#v", repo)
+	}
+	if _, ok := payload["quantization_config"]; ok {
+		t.Fatalf("quantization_config injected on miss: %#v", payload["quantization_config"])
 	}
 }
 
 func TestApplyImageExecutionPlainRequestSkipsLoraRows(t *testing.T) {
 	lora := map[string]any{"model": "org/lora", "weight_file_name": "", "weight": 100}
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-plain", "org/image", "float16", nil, nil, nil, 12, 1, 2),
-		testImageRow("image-lora", "org/image", "bfloat16", nil, nil, lora, 40, 1, 2),
+		testImageRow("org/image", "float16", nil, nil, nil, 12, 1, 2),
+		testImageRow("org/image", "bfloat16", nil, nil, lora, 40, 1, 2),
 	)
 
 	payload, minVRAM := applyImage(t, plainImageTaskArgs, "org/image")
@@ -209,7 +215,7 @@ func TestApplyImageExecutionPlainRequestSkipsLoraRows(t *testing.T) {
 
 func TestApplyImageExecutionConcreteDtypeKeepsFieldsOnCacheMiss(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("other", "org/other", "bfloat16", nil, nil, nil, 20, 1, 2),
+		testImageRow("org/other", "bfloat16", nil, nil, nil, 20, 1, 2),
 	)
 
 	for _, dtype := range []string{"float16", "bfloat16", "float32"} {
@@ -236,71 +242,79 @@ func TestApplyImageExecutionConcreteDtypeKeepsFieldsOnCacheMiss(t *testing.T) {
 	}
 }
 
-func TestApplyImageExecutionAutoInjectsConcreteDtypeFromGGUFRow(t *testing.T) {
+func TestApplyImageExecutionOmittedDtypeInjectsConcreteDtypeFromGGUFRow(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("gguf-4bit", "org/image", "bfloat16", testQuantGGUF4Bit, testTransformerComponents("org/gguf-4bit"), nil, 18, 1, 2),
+		testImageRow("org/image", "float16", testQuantGGUF4Bit, testTransformerComponents("org/gguf-4bit"), nil, 18, 1, 2),
 	)
 
 	taskArgs := `{
 		"base_model": {"name": "org/image"},
 		"prompt": "a cat",
-		"dtype": "auto",
 		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1},
 		"quantization_config": {"quant_method": "gguf", "components_to_quantize": ["transformer"], "quant_kwargs": {"quant_type": "Q4_K"}},
 		"components": {"transformer": {"format": "gguf", "repo": "org/gguf-4bit", "format_kwargs": {"filename": "model.gguf"}}}
 	}`
 	payload, minVRAM := applyImage(t, taskArgs, "org/image")
-	if minVRAM != 18 || payload["dtype"] != "bfloat16" {
+	if minVRAM != 18 || payload["dtype"] != "float16" {
 		t.Fatalf("minVRAM = %d dtype = %#v", minVRAM, payload["dtype"])
 	}
 }
 
-func TestApplyImageExecutionAutoQuantMismatchRejects(t *testing.T) {
+func TestApplyImageExecutionOmittedDtypeQuantMismatchFallsBack(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("gguf-4bit", "org/image", "bfloat16", testQuantGGUF4Bit, testTransformerComponents("org/gguf-4bit"), nil, 18, 1, 2),
+		testImageRow("org/image", "float16", testQuantGGUF4Bit, testTransformerComponents("org/gguf-4bit"), nil, 18, 1, 2),
 	)
 
 	taskArgs := `{
 		"base_model": {"name": "org/image"},
 		"prompt": "a cat",
-		"dtype": "auto",
 		"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1},
 		"quantization_config": {"quant_method": "gguf", "components_to_quantize": ["transformer"], "quant_kwargs": {"quant_type": "Q8_0"}},
 		"components": {"transformer": {"format": "gguf", "repo": "org/gguf-4bit", "format_kwargs": {"filename": "model.gguf"}}}
 	}`
-	err := applyImageErr(t, taskArgs, "org/image")
-	if !errors.Is(err, ErrImageExecutionUnresolved) {
-		t.Fatalf("error = %v", err)
+	payload, minVRAM := applyImage(t, taskArgs, "org/image")
+	if minVRAM != 24 || payload["dtype"] != "bfloat16" {
+		t.Fatalf("minVRAM = %d dtype = %#v", minVRAM, payload["dtype"])
 	}
 }
 
-func TestApplyImageExecutionRejectsNonConcreteLoadedDtype(t *testing.T) {
+func TestApplyImageExecutionRejectsNonConcreteDtype(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("auto-row", "org/image", "auto", nil, nil, nil, 12, 1, 2),
+		testImageRow("org/image", "bfloat16", nil, nil, nil, 12, 1, 2),
 	)
 
-	err := applyImageErr(t, plainImageTaskArgs, "org/image")
-	if !errors.Is(err, ErrImageExecutionUnresolved) {
-		t.Fatalf("error = %v", err)
+	for _, dtype := range []string{`"auto"`, `""`, `null`, `"fp16"`, `16`} {
+		taskArgs := `{
+			"base_model": {"name": "org/image"},
+			"prompt": "a cat",
+			"dtype": ` + dtype + `,
+			"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1}
+		}`
+		if err := applyImageErr(t, taskArgs, "org/image"); !errors.Is(err, ErrInvalidExecutionConfig) {
+			t.Fatalf("dtype %s: error = %v", dtype, err)
+		}
 	}
 }
 
-func TestApplyImageExecutionAutoOnlyLoraRowsRejects(t *testing.T) {
+func TestApplyImageExecutionPlainRequestDoesNotSelectLoraRows(t *testing.T) {
 	lora := map[string]any{"model": "org/lora", "weight_file_name": "", "weight": 100}
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-lora", "org/image", "bfloat16", nil, nil, lora, 40, 1, 2),
+		testImageRow("org/image", "float16", nil, nil, lora, 40, 1, 2),
 	)
 
-	err := applyImageErr(t, plainImageTaskArgs, "org/image")
-	if !errors.Is(err, ErrImageExecutionUnresolved) {
-		t.Fatalf("error = %v", err)
+	payload, minVRAM := applyImage(t, plainImageTaskArgs, "org/image")
+	if minVRAM != 24 || payload["dtype"] != "bfloat16" {
+		t.Fatalf("minVRAM = %d dtype = %#v", minVRAM, payload["dtype"])
+	}
+	if _, ok := payload["lora"]; ok {
+		t.Fatalf("lora injected into plain request: %#v", payload["lora"])
 	}
 }
 
-func TestGetLoadedSDModelExactUsesFullIdentity(t *testing.T) {
+func TestApplyImageExecutionConcreteDtypeUsesExactIdentityMinVRAM(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-a", "org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
-		testImageRow("image-b", "org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-b"), nil, 16, 1, 2),
+		testImageRow("org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 20, 1, 2),
+		testImageRow("org/image", "bfloat16", testQuantTransformer, testTransformerComponents("org/quant-b"), nil, 16, 1, 2),
 	)
 
 	build := func(repo, dtype string) string {
@@ -314,28 +328,102 @@ func TestGetLoadedSDModelExactUsesFullIdentity(t *testing.T) {
 		}`
 	}
 
-	loaded, ok, err := GetLoadedSDModelExact("org/image", build("org/quant-b", "bfloat16"))
-	if err != nil || !ok || loaded.MinVRAM != 16 {
-		t.Fatalf("exact row b = %+v %v %v", loaded, ok, err)
+	cases := []struct {
+		taskArgs string
+		minVRAM  uint64
+	}{
+		{build("org/quant-b", "BFloat16"), 16},
+		{build("org/quant-a", "bfloat16"), 20},
+		{build("org/quant-c", "bfloat16"), 24},
+		{build("org/quant-a", "float16"), 24},
 	}
-	loaded, ok, err = GetLoadedSDModelExact("org/image", build("org/quant-a", "bfloat16"))
-	if err != nil || !ok || loaded.MinVRAM != 20 {
-		t.Fatalf("exact row a = %+v %v %v", loaded, ok, err)
+	for _, tc := range cases {
+		resolved, err := ResolveImageModelExecution(tc.taskArgs, "org/image")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.MinVRAM != tc.minVRAM || resolved.FromLoadedModels != (tc.minVRAM != 24) {
+			t.Fatalf("resolved = %+v, want min_vram %d", resolved, tc.minVRAM)
+		}
 	}
-	if _, ok, err = GetLoadedSDModelExact("org/image", build("org/quant-c", "bfloat16")); err != nil || ok {
-		t.Fatalf("unknown component repo matched: %v %v", ok, err)
+}
+
+const plainVideoTaskArgs = `{
+	"version": "3.8.0",
+	"base_model": {"name": "Org/Video"},
+	"prompt": "a cat",
+	"task_config": {"width": 832, "height": 480, "num_frames": 81, "steps": 30}
+}`
+
+func TestResolveVideoExecutionMatchesLorasAndFillsFromRow(t *testing.T) {
+	loras := []any{map[string]any{"model": "org/lora", "weight_file_name": "", "weight": 100, "target": "auto"}}
+	refreshTestLoadedModels(t, 1, 24,
+		testVideoRow("org/video", "float16", testQuantTransformer, testTransformerComponents("org/quant-a"), nil, 48, 1, 2),
+		testVideoRow("org/video", "bfloat16", nil, nil, loras, 80, 1, 2),
+		testImageRow("org/video", "float32", nil, nil, nil, 96, 1, 2),
+	)
+
+	resolved, err := ResolveVideoModelExecution(plainVideoTaskArgs, "Org/Video")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok, err = GetLoadedSDModelExact("org/image", build("org/quant-a", "float16")); err != nil || ok {
-		t.Fatalf("different dtype matched: %v %v", ok, err)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(resolved.TaskArgsJSON), &payload); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok, err = GetLoadedSDModelExact("org/image", plainImageTaskArgs); err != nil || ok {
-		t.Fatalf("plain request matched a components row: %v %v", ok, err)
+	if resolved.MinVRAM != 48 || payload["dtype"] != "float16" || payload["version"] != "3.8.0" {
+		t.Fatalf("resolved = %+v payload = %#v", resolved, payload)
+	}
+	if repo := transformerRepo(t, payload); repo != "org/quant-a" {
+		t.Fatalf("components = %#v", repo)
+	}
+
+	loraArgs := `{
+		"version": "3.8.0",
+		"base_model": {"name": "org/video"},
+		"prompt": "a cat",
+		"loras": [{"model": "Org/LoRA"}]
+	}`
+	resolved, err = ResolveVideoModelExecution(loraArgs, "org/video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.MinVRAM != 80 || !strings.Contains(resolved.TaskArgsJSON, `"dtype":"bfloat16"`) {
+		t.Fatalf("lora request resolved = %+v", resolved)
+	}
+}
+
+func TestResolveVideoExecutionMissAndConcreteDtype(t *testing.T) {
+	refreshTestLoadedModels(t, 1, 24,
+		testVideoRow("org/video", "float16", nil, nil, nil, 48, 1, 2),
+	)
+
+	resolved, err := ResolveVideoModelExecution(plainVideoTaskArgs, "org/new-video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.MinVRAM != 24 || resolved.FromLoadedModels || !strings.Contains(resolved.TaskArgsJSON, `"dtype":"bfloat16"`) {
+		t.Fatalf("miss resolved = %+v", resolved)
+	}
+
+	concrete := strings.Replace(plainVideoTaskArgs, `"prompt": "a cat",`, `"prompt": "a cat", "dtype": "float16",`, 1)
+	resolved, err = ResolveVideoModelExecution(concrete, "org/video")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.MinVRAM != 48 || !resolved.FromLoadedModels {
+		t.Fatalf("concrete resolved = %+v", resolved)
+	}
+
+	auto := strings.Replace(plainVideoTaskArgs, `"prompt": "a cat",`, `"prompt": "a cat", "dtype": "auto",`, 1)
+	if _, err := ResolveVideoModelExecution(auto, "org/video"); !errors.Is(err, ErrInvalidExecutionConfig) {
+		t.Fatalf("auto dtype error = %v", err)
 	}
 }
 
 func TestResolveImagePreservesClientInt8ThresholdFloatLiteral(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-bf16", "org/image", "bfloat16", nil, nil, nil, 32, 1, 2),
+		testImageRow("org/image", "bfloat16", nil, nil, nil, 32, 1, 2),
 	)
 
 	taskArgs := `{
@@ -359,7 +447,7 @@ func TestResolveImagePreservesClientInt8ThresholdFloatLiteral(t *testing.T) {
 func TestResolveImageInjectsLoadedInt8ThresholdFloatLiteral(t *testing.T) {
 	quant := json.RawMessage(`{"quant_method":"bitsandbytes","components_to_quantize":["transformer","text_encoder"],"quant_kwargs":{"load_in_8bit":true,"llm_int8_threshold":6.0}}`)
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-8bit", "org/image", "bfloat16", quant, nil, nil, 32, 1, 2),
+		testImageRow("org/image", "bfloat16", quant, nil, nil, 32, 1, 2),
 	)
 
 	taskArgs := `{
@@ -388,7 +476,7 @@ func TestQuantizationConfigForAPIPreservesFloatLiteral(t *testing.T) {
 
 func TestResolveImagePreservesClientVersionAndDefaultsWhenMissing(t *testing.T) {
 	refreshTestLoadedModels(t, 1, 24,
-		testImageRow("image-bf16", "org/image", "bfloat16", nil, nil, nil, 32, 1, 2),
+		testImageRow("org/image", "bfloat16", nil, nil, nil, 32, 1, 2),
 	)
 
 	withVersion := `{

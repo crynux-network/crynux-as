@@ -35,7 +35,7 @@ func EnsureTaskSeed(taskArgsJSON string, taskType models.TaskType) (string, erro
 			return "", err
 		}
 		payload["seed"] = encoded
-	case models.TaskTypeImage:
+	case models.TaskTypeImage, models.TaskTypeVideo:
 		updated, changed, err := imageTaskConfigWithSeed(payload["task_config"])
 		if err != nil {
 			return "", err
@@ -45,7 +45,7 @@ func EnsureTaskSeed(taskArgsJSON string, taskType models.TaskType) (string, erro
 		}
 		payload["task_config"] = updated
 	default:
-		return "", errors.New("task_type must be 0 or 1")
+		return "", errors.New("task_type must be 0, 1, or 3")
 	}
 	out, err := json.Marshal(payload)
 	if err != nil {

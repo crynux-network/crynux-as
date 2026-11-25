@@ -1,15 +1,24 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/relay"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"math"
 	"math/big"
+	"strings"
+
+	_ "golang.org/x/image/webp"
 )
 
 type CalcBillableInput struct {
@@ -112,6 +121,17 @@ const (
 	imageAdmissionBaselineSteps     uint64 = 30
 	imageAdmissionBaselineNumImages uint64 = 1
 )
+
+const (
+	defaultVideoWidth     uint64 = 832
+	defaultVideoHeight    uint64 = 480
+	defaultVideoNumFrames uint64 = 81
+	defaultVideoSteps     uint64 = 30
+)
+
+func videoAdmissionBaselineUnits() uint64 {
+	return defaultVideoWidth * defaultVideoHeight * defaultVideoNumFrames * defaultVideoSteps
+}
 
 func imageAdmissionBaselineUnits() uint64 {
 	return imageAdmissionBaselineNumImages *
@@ -401,6 +421,35 @@ func EstimateImageTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcT
 		return nil, errors.New("image execution-time coefficients must be finite and non-negative")
 	}
 	seconds := coefficients.OverheadSeconds + float64(units)*coefficients.SecondsPerSDPixelStep
+	return estimateWorkloadTaskFee(in, seconds, units, imageAdmissionBaselineUnits())
+}
+
+// EstimateVideoTaskFee estimates a Video task fee from Relay video
+// execution-time coefficients and the TaskArgs video workload units.
+func EstimateVideoTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcTaskFeeResult, error) {
+	units, err := videoTaskUnits(in.TaskArgs)
+	if err != nil {
+		return nil, err
+	}
+	coefficients, err := GetVideoExecutionTime(ctx, in.Query)
+	if err != nil {
+		return nil, fmt.Errorf("fetch video execution-time: %w", err)
+	}
+	if math.IsNaN(coefficients.OverheadSeconds) ||
+		math.IsInf(coefficients.OverheadSeconds, 0) ||
+		coefficients.OverheadSeconds < 0 ||
+		math.IsNaN(coefficients.SecondsPerVideoUnit) ||
+		math.IsInf(coefficients.SecondsPerVideoUnit, 0) ||
+		coefficients.SecondsPerVideoUnit < 0 {
+		return nil, errors.New("video execution-time coefficients must be finite and non-negative")
+	}
+	seconds := coefficients.OverheadSeconds + float64(units)*coefficients.SecondsPerVideoUnit
+	return estimateWorkloadTaskFee(in, seconds, units, videoAdmissionBaselineUnits())
+}
+
+// estimateWorkloadTaskFee prices a task whose estimated node seconds are fixed
+// at admission. The minimum task fee is scaled by units / baselineUnits.
+func estimateWorkloadTaskFee(in CalcImageTaskFeeInput, seconds float64, units, baselineUnits uint64) (*CalcTaskFeeResult, error) {
 	if seconds < 1 {
 		seconds = 1
 	}
@@ -421,7 +470,7 @@ func EstimateImageTaskFee(ctx context.Context, in CalcImageTaskFeeInput) (*CalcT
 	if err != nil {
 		return nil, fmt.Errorf("min_task_price_cnx.%s: %w", config.MaxTaskPriceProviderCrynux, err)
 	}
-	minFeeGwei, err := scaleAdmissionMinTaskFee(baseMinFeeGwei, units, imageAdmissionBaselineUnits())
+	minFeeGwei, err := scaleAdmissionMinTaskFee(baseMinFeeGwei, units, baselineUnits)
 	if err != nil {
 		return nil, err
 	}
@@ -482,6 +531,131 @@ func imagePixelStepUnits(taskArgs string) (uint64, error) {
 	for _, factor := range []uint64{cfg.ImageWidth, cfg.ImageHeight, cfg.Steps} {
 		if units > math.MaxUint64/factor {
 			return 0, errors.New("image pixel-step units overflow uint64")
+		}
+		units *= factor
+	}
+	return units, nil
+}
+
+type videoTaskArgs struct {
+	Image     *string `json:"image"`
+	LastImage *string `json:"last_image"`
+	Keyframes []struct {
+		Image string `json:"image"`
+	} `json:"keyframes"`
+	References []struct {
+		Type string `json:"type"`
+		Data string `json:"data"`
+	} `json:"references"`
+	TaskConfig *struct {
+		Width     *uint64 `json:"width"`
+		Height    *uint64 `json:"height"`
+		NumFrames *uint64 `json:"num_frames"`
+		Steps     *uint64 `json:"steps"`
+	} `json:"task_config"`
+}
+
+// firstVideoConditionImage returns the first conditioning image data URL in
+// the order image, last_image, keyframes[0].image, first image reference.
+func (args *videoTaskArgs) firstVideoConditionImage() string {
+	if args.Image != nil && *args.Image != "" {
+		return *args.Image
+	}
+	if args.LastImage != nil && *args.LastImage != "" {
+		return *args.LastImage
+	}
+	if len(args.Keyframes) > 0 && args.Keyframes[0].Image != "" {
+		return args.Keyframes[0].Image
+	}
+	for _, ref := range args.References {
+		if ref.Type == "image" && ref.Data != "" {
+			return ref.Data
+		}
+	}
+	return ""
+}
+
+func decodeImageDataURLDimensions(dataURL string) (uint64, uint64, error) {
+	header, payload, ok := strings.Cut(dataURL, ",")
+	if !ok || !strings.HasPrefix(header, "data:image/") || !strings.Contains(header, ";base64") {
+		return 0, 0, errors.New("video image input must be a base64 image data URL")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(payload))
+	if err != nil {
+		return 0, 0, fmt.Errorf("decode video image base64: %w", err)
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(decoded))
+	if err != nil {
+		return 0, 0, fmt.Errorf("read video image dimensions: %w", err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, errors.New("video image dimensions must be positive")
+	}
+	return uint64(cfg.Width), uint64(cfg.Height), nil
+}
+
+type videoTaskDimensions struct {
+	Width     uint64
+	Height    uint64
+	NumFrames uint64
+	Steps     uint64
+}
+
+// resolveVideoTaskDimensions returns the billed video dimensions. An
+// unspecified width or height is taken from the first conditioning image,
+// else 832x480.
+func resolveVideoTaskDimensions(taskArgs string) (videoTaskDimensions, error) {
+	var args videoTaskArgs
+	if err := json.Unmarshal([]byte(taskArgs), &args); err != nil {
+		return videoTaskDimensions{}, fmt.Errorf("parse video task args: %w", err)
+	}
+	width, height := uint64(0), uint64(0)
+	numFrames, steps := defaultVideoNumFrames, defaultVideoSteps
+	if cfg := args.TaskConfig; cfg != nil {
+		if cfg.Width != nil {
+			width = *cfg.Width
+		}
+		if cfg.Height != nil {
+			height = *cfg.Height
+		}
+		if cfg.NumFrames != nil {
+			numFrames = *cfg.NumFrames
+		}
+		if cfg.Steps != nil {
+			steps = *cfg.Steps
+		}
+	}
+	if width == 0 || height == 0 {
+		imgWidth, imgHeight := defaultVideoWidth, defaultVideoHeight
+		if dataURL := args.firstVideoConditionImage(); dataURL != "" {
+			var err error
+			if imgWidth, imgHeight, err = decodeImageDataURLDimensions(dataURL); err != nil {
+				return videoTaskDimensions{}, err
+			}
+		}
+		if width == 0 {
+			width = imgWidth
+		}
+		if height == 0 {
+			height = imgHeight
+		}
+	}
+	if numFrames == 0 || steps == 0 {
+		return videoTaskDimensions{}, errors.New("video width, height, num_frames, and steps must be positive")
+	}
+	return videoTaskDimensions{Width: width, Height: height, NumFrames: numFrames, Steps: steps}, nil
+}
+
+// videoTaskUnits returns width * height * num_frames * steps.
+func videoTaskUnits(taskArgs string) (uint64, error) {
+	dims, err := resolveVideoTaskDimensions(taskArgs)
+	if err != nil {
+		return 0, err
+	}
+	units := dims.Width
+	for _, factor := range []uint64{dims.Height, dims.NumFrames, dims.Steps} {
+		if units > math.MaxUint64/factor {
+			return 0, errors.New("video workload units overflow uint64")
 		}
 		units *= factor
 	}
@@ -622,30 +796,6 @@ func validateExecutionTimeCoefficients(constantSeconds, secondsPerInputToken, se
 	return nil
 }
 
-// EstimateTaskFee fetches execution-time coefficients, computes shared
-// billable_gwei for Credits precheck and task fee, and resolves a queue median
-// hint snapshot that does not enter billable_gwei.
-func EstimateTaskFee(
-	ctx context.Context,
-	project *models.Project,
-	model string,
-	effectiveVram uint64,
-	priorityGwei *big.Int,
-	estimatedPromptTokens uint64,
-	maxCompletionTokens uint64,
-) (*CalcTaskFeeResult, error) {
-	query := relay.ExecutionTimeQuery{Model: model, MinVRAM: &effectiveVram}
-	return EstimateLLMTaskFeeWithQuery(
-		ctx,
-		project,
-		query,
-		effectiveVram,
-		priorityGwei,
-		estimatedPromptTokens,
-		maxCompletionTokens,
-	)
-}
-
 func EstimateLLMTaskFeeWithQuery(
 	ctx context.Context,
 	project *models.Project,
@@ -661,7 +811,7 @@ func EstimateLLMTaskFeeWithQuery(
 		return nil, fmt.Errorf("parse credits_per_gwei: %w", err)
 	}
 
-	coefficients, err := GetLLMExecutionTimeForQuery(ctx, query)
+	coefficients, err := GetLLMExecutionTime(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("fetch llm execution-time: %w", err)
 	}

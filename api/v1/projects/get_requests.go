@@ -22,27 +22,32 @@ type GetProjectRequestsInput struct {
 }
 
 type ProjectRequestData struct {
-	ID                 uint            `json:"id" description:"Numeric ID from the source table"`
-	Source             string          `json:"source" description:"job or call_record"`
-	CreatedAt          time.Time       `json:"created_at" description:"When the request was accepted"`
-	Model              string          `json:"model" description:"The model ID used for the call"`
-	TaskType           string          `json:"task_type" description:"llm or image"`
-	QuantizationConfig any             `json:"quantization_config" description:"Selected quantization_config when known"`
-	Components         any             `json:"components" description:"Image component replacements when known"`
-	PromptTokens       *uint64         `json:"prompt_tokens" description:"Billed prompt token count; null while in progress, for Image tasks, or when token usage does not apply"`
-	CompletionTokens   *uint64         `json:"completion_tokens" description:"Billed completion token count; null while in progress, for Image tasks, or when token usage does not apply"`
-	TotalTokens        *uint64         `json:"total_tokens" description:"Billed total token count; null while in progress, for Image tasks, or when token usage does not apply"`
-	ImageWidth         *uint64         `json:"image_width" description:"Image width for Image tasks; null for LLM or when unknown"`
-	ImageHeight        *uint64         `json:"image_height" description:"Image height for Image tasks; null for LLM or when unknown"`
-	ImageSteps         *uint64         `json:"image_steps" description:"Diffusion steps for Image tasks; null for LLM or when unknown"`
-	ImageCount         *uint64         `json:"image_count" description:"Generated image count for Image tasks; null for LLM or when unknown"`
-	PriorityGwei       string          `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
-	Credits            *models.BigInt  `json:"credits" description:"Credits charged, null while in progress"`
-	BilledVram         uint64          `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
-	DurationMs         *uint64         `json:"duration_ms" description:"Call duration in milliseconds, null while in progress"`
-	Status             string          `json:"status" description:"queued, in_progress, success, or failed"`
-	Phase              string          `json:"phase" description:"Logical execution phase; unfinished jobs use Bridge/AS phase, finished rows use success or failed"`
-	ErrorMessage       *string         `json:"error_message" description:"Failure reason when a failed call record still has a retained task_jobs row; otherwise null"`
+	ID                 uint           `json:"id" description:"Numeric ID from the source table"`
+	Source             string         `json:"source" description:"job or call_record"`
+	CreatedAt          time.Time      `json:"created_at" description:"When the request was accepted"`
+	Model              string         `json:"model" description:"The model ID used for the call"`
+	TaskType           string         `json:"task_type" description:"llm, image, or video"`
+	QuantizationConfig any            `json:"quantization_config" description:"Selected quantization_config when known"`
+	Components         any            `json:"components" description:"Image component replacements when known"`
+	PromptTokens       *uint64        `json:"prompt_tokens" description:"Billed prompt token count; null while in progress, for Image tasks, or when token usage does not apply"`
+	CompletionTokens   *uint64        `json:"completion_tokens" description:"Billed completion token count; null while in progress, for Image tasks, or when token usage does not apply"`
+	TotalTokens        *uint64        `json:"total_tokens" description:"Billed total token count; null while in progress, for Image tasks, or when token usage does not apply"`
+	ImageWidth         *uint64        `json:"image_width" description:"Image width for Image tasks; null for LLM or when unknown"`
+	ImageHeight        *uint64        `json:"image_height" description:"Image height for Image tasks; null for LLM or when unknown"`
+	ImageSteps         *uint64        `json:"image_steps" description:"Diffusion steps for Image tasks; null for LLM or when unknown"`
+	ImageCount         *uint64        `json:"image_count" description:"Generated image count for Image tasks; null for LLM or when unknown"`
+	VideoWidth         *uint64        `json:"video_width" description:"Billed video width for Video tasks; null for other task types or when unknown"`
+	VideoHeight        *uint64        `json:"video_height" description:"Billed video height for Video tasks; null for other task types or when unknown"`
+	VideoNumFrames     *uint64        `json:"video_num_frames" description:"Billed frame count for Video tasks; null for other task types or when unknown"`
+	VideoSteps         *uint64        `json:"video_steps" description:"Diffusion steps for Video tasks; null for other task types or when unknown"`
+	VideoCount         *uint64        `json:"video_count" description:"Generated video count for Video tasks; null for other task types or when unknown"`
+	PriorityGwei       string         `json:"priority_gwei" description:"Project Cost Level priority in Gwei"`
+	Credits            *models.BigInt `json:"credits" description:"Credits charged, null while in progress"`
+	BilledVram         uint64         `json:"billed_vram" description:"Effective VRAM in GB used for billing"`
+	DurationMs         *uint64        `json:"duration_ms" description:"Call duration in milliseconds, null while in progress"`
+	Status             string         `json:"status" description:"queued, in_progress, success, or failed"`
+	Phase              string         `json:"phase" description:"Logical execution phase; unfinished jobs use Bridge/AS phase, finished rows use success or failed"`
+	ErrorMessage       *string        `json:"error_message" description:"Failure reason when a failed call record still has a retained task_jobs row; otherwise null"`
 }
 
 type GetProjectRequestsData struct {
@@ -66,13 +71,18 @@ type projectRequestRow struct {
 	TaskType             sql.NullInt64
 	TaskArgsJSON         sql.NullString
 	ModelCacheHash       sql.NullString
-	ExecutionDType       sql.NullString
+	DType                sql.NullString
 	QuantizationConfig   []byte
 	Components           []byte
 	ImageWidth           sql.NullInt64
 	ImageHeight          sql.NullInt64
 	ImageSteps           sql.NullInt64
 	ImageCount           sql.NullInt64
+	VideoWidth           sql.NullInt64
+	VideoHeight          sql.NullInt64
+	VideoNumFrames       sql.NullInt64
+	VideoSteps           sql.NullInt64
+	VideoCount           sql.NullInt64
 	PriorityGwei         string
 	Credits              sql.NullString
 	BilledVram           uint64
@@ -115,13 +125,18 @@ SELECT
 	task_type,
 	task_args_json,
 	model_cache_hash,
-	execution_dtype,
+	dtype,
 	quantization_config,
 	components,
 	image_width,
 	image_height,
 	image_steps,
 	image_count,
+	video_width,
+	video_height,
+	video_num_frames,
+	video_steps,
+	video_count,
 	priority_gwei,
 	credits,
 	billed_vram,
@@ -142,13 +157,18 @@ FROM (
 		j.task_type AS task_type,
 		j.task_args_json AS task_args_json,
 		CAST(NULL AS CHAR) AS model_cache_hash,
-		CAST(NULL AS CHAR) AS execution_dtype,
+		CAST(NULL AS CHAR) AS dtype,
 		CAST(NULL AS JSON) AS quantization_config,
 		CAST(NULL AS JSON) AS components,
 		CAST(NULL AS SIGNED) AS image_width,
 		CAST(NULL AS SIGNED) AS image_height,
 		CAST(NULL AS SIGNED) AS image_steps,
 		CAST(NULL AS SIGNED) AS image_count,
+		CAST(NULL AS SIGNED) AS video_width,
+		CAST(NULL AS SIGNED) AS video_height,
+		CAST(NULL AS SIGNED) AS video_num_frames,
+		CAST(NULL AS SIGNED) AS video_steps,
+		CAST(NULL AS SIGNED) AS video_count,
 		j.priority_gwei AS priority_gwei,
 		CAST(NULL AS CHAR) AS credits,
 		j.billed_vram AS billed_vram,
@@ -182,13 +202,18 @@ FROM (
 		r.task_type AS task_type,
 		CAST(NULL AS CHAR) AS task_args_json,
 		r.model_cache_hash AS model_cache_hash,
-		r.execution_dtype AS execution_dtype,
+		r.dtype AS dtype,
 		r.quantization_config AS quantization_config,
 		r.components AS components,
 		r.image_width AS image_width,
 		r.image_height AS image_height,
 		r.image_steps AS image_steps,
 		r.image_count AS image_count,
+		r.video_width AS video_width,
+		r.video_height AS video_height,
+		r.video_num_frames AS video_num_frames,
+		r.video_steps AS video_steps,
+		r.video_count AS video_count,
 		r.priority_gwei AS priority_gwei,
 		COALESCE(e.amount, '0') AS credits,
 		r.billed_vram AS billed_vram,
@@ -216,13 +241,18 @@ FROM (
 			token_usage_applicable,
 			task_type,
 			model_cache_hash,
-			execution_dtype,
+			dtype,
 			quantization_config,
 			components,
 			image_width,
 			image_height,
 			image_steps,
 			image_count,
+			video_width,
+			video_height,
+			video_num_frames,
+			video_steps,
+			video_count,
 			priority_gwei,
 			billed_vram,
 			duration_ms,
@@ -298,11 +328,18 @@ LIMIT ?
 					item.Components = components
 				}
 			}
-			if taskType == models.TaskTypeImage {
-				item.ImageWidth = uintPtrIfPositive(workload.ImageWidth)
-				item.ImageHeight = uintPtrIfPositive(workload.ImageHeight)
-				item.ImageSteps = uintPtrIfPositive(workload.ImageSteps)
-				item.ImageCount = uintPtrIfPositive(workload.ImageCount)
+			switch taskType {
+			case models.TaskTypeImage:
+				item.ImageWidth = service.UintPtrIfPositive(workload.ImageWidth)
+				item.ImageHeight = service.UintPtrIfPositive(workload.ImageHeight)
+				item.ImageSteps = service.UintPtrIfPositive(workload.ImageSteps)
+				item.ImageCount = service.UintPtrIfPositive(workload.ImageCount)
+			case models.TaskTypeVideo:
+				item.VideoWidth = service.UintPtrIfPositive(workload.VideoWidth)
+				item.VideoHeight = service.UintPtrIfPositive(workload.VideoHeight)
+				item.VideoNumFrames = service.UintPtrIfPositive(workload.VideoNumFrames)
+				item.VideoSteps = service.UintPtrIfPositive(workload.VideoSteps)
+				item.VideoCount = service.UintPtrIfPositive(workload.VideoCount)
 			}
 			requests = append(requests, item)
 			continue
@@ -327,12 +364,20 @@ LIMIT ?
 		credits := models.BigInt{Int: *creditsValue}
 		item.Credits = &credits
 		tokenUsageApplicable := row.TokenUsageApplicable.Valid && row.TokenUsageApplicable.Int64 != 0
-		if taskType == models.TaskTypeImage {
+		switch taskType {
+		case models.TaskTypeImage:
 			tokenUsageApplicable = false
-			item.ImageWidth = uintPtrIfPositive(uint64(row.ImageWidth.Int64))
-			item.ImageHeight = uintPtrIfPositive(uint64(row.ImageHeight.Int64))
-			item.ImageSteps = uintPtrIfPositive(uint64(row.ImageSteps.Int64))
-			item.ImageCount = uintPtrIfPositive(uint64(row.ImageCount.Int64))
+			item.ImageWidth = service.UintPtrIfPositive(uint64(row.ImageWidth.Int64))
+			item.ImageHeight = service.UintPtrIfPositive(uint64(row.ImageHeight.Int64))
+			item.ImageSteps = service.UintPtrIfPositive(uint64(row.ImageSteps.Int64))
+			item.ImageCount = service.UintPtrIfPositive(uint64(row.ImageCount.Int64))
+		case models.TaskTypeVideo:
+			tokenUsageApplicable = false
+			item.VideoWidth = service.UintPtrIfPositive(uint64(row.VideoWidth.Int64))
+			item.VideoHeight = service.UintPtrIfPositive(uint64(row.VideoHeight.Int64))
+			item.VideoNumFrames = service.UintPtrIfPositive(uint64(row.VideoNumFrames.Int64))
+			item.VideoSteps = service.UintPtrIfPositive(uint64(row.VideoSteps.Int64))
+			item.VideoCount = service.UintPtrIfPositive(uint64(row.VideoCount.Int64))
 		}
 		if tokenUsageApplicable {
 			promptTokens := uint64(row.PromptTokens.Int64)
@@ -350,11 +395,4 @@ LIMIT ?
 			Requests: requests,
 		},
 	}, nil
-}
-
-func uintPtrIfPositive(v uint64) *uint64 {
-	if v == 0 {
-		return nil
-	}
-	return &v
 }

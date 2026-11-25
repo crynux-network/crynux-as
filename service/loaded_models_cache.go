@@ -16,25 +16,46 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const loadedModelTypeLLM = "llm"
-const loadedModelTypeSD = "sd"
+const (
+	loadedModelTypeLLM   = "llm"
+	loadedModelTypeSD    = "sd"
+	loadedModelTypeVideo = "video"
+)
 
-// LoadedLLMModel is one Relay loaded-models row identified by its model cache
-// hash and execution dtype. Components and Lora use the Image TaskArgs shape.
+// LoadedLLMModel is one Relay loaded-models row identified by its local model
+// cache hash. Components, Lora, and Loras use the TaskArgs shape: Components is
+// set for image and video rows, Lora for image rows, and Loras for video rows.
 type LoadedLLMModel struct {
 	ModelCacheHash     string
 	TaskKind           string
 	ModelID            string
-	ExecutionDType     string
+	DType              string
 	QuantizationConfig json.RawMessage
 	QuantizationKey    string
 	Components         map[string]any
 	ComponentsKey      string
 	Lora               map[string]any
 	LoraKey            string
+	Loras              []any
+	LorasKey           string
 	MinVRAM            uint64
 	NodeCount          int64
 	OnDiskNodeCount    int64
+}
+
+func (m LoadedLLMModel) identity() modelCacheIdentity {
+	identity := modelCacheIdentity{
+		TaskKind:        m.TaskKind,
+		ModelID:         m.ModelID,
+		DType:           m.DType,
+		QuantizationKey: m.QuantizationKey,
+		ComponentsKey:   m.ComponentsKey,
+		LoraKey:         m.LoraKey,
+	}
+	if m.TaskKind == modelCacheTaskKindVideo {
+		identity.LoraKey = m.LorasKey
+	}
+	return identity
 }
 
 type loadedModelsCache struct {
@@ -44,19 +65,18 @@ type loadedModelsCache struct {
 	catalogModels map[string]LoadedLLMModel
 }
 
-var llmModelsCache = &loadedModelsCache{
-	models:        map[string]LoadedLLMModel{},
-	catalogModels: map[string]LoadedLLMModel{},
+func newLoadedModelsCache() *loadedModelsCache {
+	return &loadedModelsCache{
+		models:        map[string]LoadedLLMModel{},
+		catalogModels: map[string]LoadedLLMModel{},
+	}
 }
 
-var sdModelsCache = &loadedModelsCache{
-	models:        map[string]LoadedLLMModel{},
-	catalogModels: map[string]LoadedLLMModel{},
-}
+var llmModelsCache = newLoadedModelsCache()
 
-func modelCacheKey(modelCacheHash, executionDType string) string {
-	return modelCacheHash + "\x00" + strings.ToLower(executionDType)
-}
+var sdModelsCache = newLoadedModelsCache()
+
+var videoModelsCache = newLoadedModelsCache()
 
 func catalogVisible(model LoadedLLMModel, minOnDiskNodeCount uint64) bool {
 	if model.OnDiskNodeCount < 0 {
@@ -86,59 +106,82 @@ func normalizeQuantizationConfig(raw json.RawMessage) (json.RawMessage, string, 
 	return json.RawMessage(key), key, nil
 }
 
-// newLoadedModel builds a cache row from a Relay row. model_cache_config carries
-// the request-side cache identity (including requested dtype, which MAY be
-// auto). execution_dtype is the actual dtype reported by a successful run and
-// MAY differ from model_cache_config.dtype.
+// decodeOptionalJSON decodes raw with json.Number for numbers. Empty raw decodes to nil.
+func decodeOptionalJSON(raw json.RawMessage) (any, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+// newLoadedModel builds a cache row from a public Relay row and derives its
+// local model cache hash from the normalized execution identity.
 func newLoadedModel(loaded relay.LoadedModel) (LoadedLLMModel, error) {
 	modelID := strings.ToLower(strings.TrimSpace(loaded.ModelID))
 	if modelID == "" {
 		return LoadedLLMModel{}, errors.New("model_id is empty")
 	}
-	hash, err := normalizeModelCacheHash(loaded.ModelCacheHash)
+	dtype, err := models.ParseConcreteDType(loaded.DType)
 	if err != nil {
-		return LoadedLLMModel{}, err
+		return LoadedLLMModel{}, fmt.Errorf("invalid dtype %q: %w", loaded.DType, err)
 	}
-	cacheConfig, err := parseModelCacheConfig(loaded.ModelCacheConfig)
-	if err != nil {
-		return LoadedLLMModel{}, err
-	}
-	wantTaskKind := modelCacheTaskKindLLM
-	if loaded.ModelType == loadedModelTypeSD {
-		wantTaskKind = modelCacheTaskKindImage
-	}
-	if cacheConfig.TaskKind != wantTaskKind {
-		return LoadedLLMModel{}, fmt.Errorf("model_cache_config task_kind %q does not match model_type %q", cacheConfig.TaskKind, loaded.ModelType)
-	}
-	if cacheConfig.ModelID != modelID {
-		return LoadedLLMModel{}, fmt.Errorf("model_cache_config model %q does not match model_id %q", cacheConfig.ModelID, modelID)
-	}
-	executionDType := strings.ToLower(strings.TrimSpace(loaded.ExecutionDType))
-	if executionDType == "" {
-		return LoadedLLMModel{}, errors.New("execution_dtype is empty")
-	}
-	_, quantKey, err := normalizeQuantizationConfig(loaded.QuantizationConfig)
+	quantRaw, quantKey, err := normalizeQuantizationConfig(loaded.QuantizationConfig)
 	if err != nil {
 		return LoadedLLMModel{}, fmt.Errorf("invalid quantization_config: %w", err)
 	}
-	if cacheConfig.QuantizationKey != quantKey {
-		return LoadedLLMModel{}, errors.New("model_cache_config quantization_config does not match quantization_config")
-	}
-	return LoadedLLMModel{
-		ModelCacheHash:     hash,
-		TaskKind:           cacheConfig.TaskKind,
+	entry := LoadedLLMModel{
 		ModelID:            modelID,
-		ExecutionDType:     executionDType,
-		QuantizationConfig: cacheConfig.QuantizationConfig,
-		QuantizationKey:    cacheConfig.QuantizationKey,
-		Components:         cacheConfig.Components,
-		ComponentsKey:      cacheConfig.ComponentsKey,
-		Lora:               cacheConfig.Lora,
-		LoraKey:            cacheConfig.LoraKey,
+		DType:              string(dtype),
+		QuantizationConfig: quantRaw,
+		QuantizationKey:    quantKey,
 		MinVRAM:            loaded.MinVRAM,
 		NodeCount:          loaded.InMemoryNodeCount,
 		OnDiskNodeCount:    loaded.OnDiskNodeCount,
-	}, nil
+	}
+	switch loaded.ModelType {
+	case loadedModelTypeLLM:
+		entry.TaskKind = modelCacheTaskKindLLM
+	case loadedModelTypeSD, loadedModelTypeVideo:
+		components, err := decodeOptionalJSON(loaded.Components)
+		if err != nil {
+			return LoadedLLMModel{}, fmt.Errorf("invalid components: %w", err)
+		}
+		if entry.Components, entry.ComponentsKey, err = normalizeTaskArgsComponents(components); err != nil {
+			return LoadedLLMModel{}, fmt.Errorf("invalid components: %w", err)
+		}
+		if loaded.ModelType == loadedModelTypeSD {
+			entry.TaskKind = modelCacheTaskKindImage
+			lora, err := decodeOptionalJSON(loaded.Lora)
+			if err != nil {
+				return LoadedLLMModel{}, fmt.Errorf("invalid lora: %w", err)
+			}
+			if entry.Lora, entry.LoraKey, err = normalizeTaskArgsLora(lora); err != nil {
+				return LoadedLLMModel{}, fmt.Errorf("invalid lora: %w", err)
+			}
+		} else {
+			entry.TaskKind = modelCacheTaskKindVideo
+			loras, err := decodeOptionalJSON(loaded.Loras)
+			if err != nil {
+				return LoadedLLMModel{}, fmt.Errorf("invalid loras: %w", err)
+			}
+			if entry.Loras, entry.LorasKey, err = normalizeTaskArgsVideoLoras(loras); err != nil {
+				return LoadedLLMModel{}, fmt.Errorf("invalid loras: %w", err)
+			}
+		}
+	default:
+		return LoadedLLMModel{}, fmt.Errorf("unsupported model_type %q", loaded.ModelType)
+	}
+	if entry.ModelCacheHash, err = entry.identity().hash(); err != nil {
+		return LoadedLLMModel{}, err
+	}
+	return entry, nil
 }
 
 func betterMaxMinVRAM(candidate, existing LoadedLLMModel) bool {
@@ -148,8 +191,8 @@ func betterMaxMinVRAM(candidate, existing LoadedLLMModel) bool {
 	if candidate.QuantizationKey != existing.QuantizationKey {
 		return candidate.QuantizationKey < existing.QuantizationKey
 	}
-	if candidate.ExecutionDType != existing.ExecutionDType {
-		return candidate.ExecutionDType < existing.ExecutionDType
+	if candidate.DType != existing.DType {
+		return candidate.DType < existing.DType
 	}
 	return candidate.ModelCacheHash < existing.ModelCacheHash
 }
@@ -180,8 +223,8 @@ func sortLoadedModels(models []LoadedLLMModel) {
 		if models[i].ModelID != models[j].ModelID {
 			return models[i].ModelID < models[j].ModelID
 		}
-		if models[i].ExecutionDType != models[j].ExecutionDType {
-			return models[i].ExecutionDType < models[j].ExecutionDType
+		if models[i].DType != models[j].DType {
+			return models[i].DType < models[j].DType
 		}
 		if models[i].QuantizationKey != models[j].QuantizationKey {
 			return models[i].QuantizationKey < models[j].QuantizationKey
@@ -190,20 +233,73 @@ func sortLoadedModels(models []LoadedLLMModel) {
 	})
 }
 
+// getMaxMinVRAM returns the full-cache row of modelID with the greatest min_vram.
+func (c *loadedModelsCache) getMaxMinVRAM(modelID string) (LoadedLLMModel, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return pickMaxMinVRAM(c.models, modelID)
+}
+
+// pick returns the full-cache row with the greatest min_vram among rows matching match.
+func (c *loadedModelsCache) pick(match func(LoadedLLMModel) bool) (LoadedLLMModel, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return pickBest(c.models, match)
+}
+
+// hasOnDiskNodes reports whether any full-cache row matching match has on_disk_node_count > 0.
+func (c *loadedModelsCache) hasOnDiskNodes(match func(LoadedLLMModel) bool) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, model := range c.models {
+		if model.OnDiskNodeCount > 0 && match(model) {
+			return true
+		}
+	}
+	return false
+}
+
+// listCatalog returns the sorted catalog rows matching match; a nil match returns all rows.
+func (c *loadedModelsCache) listCatalog(match func(LoadedLLMModel) bool) []LoadedLLMModel {
+	c.mu.RLock()
+	models := make([]LoadedLLMModel, 0, len(c.catalogModels))
+	for _, model := range c.catalogModels {
+		if match == nil || match(model) {
+			models = append(models, model)
+		}
+	}
+	c.mu.RUnlock()
+	sortLoadedModels(models)
+	return models
+}
+
+func (c *loadedModelsCache) listCatalogByID(modelID string) []LoadedLLMModel {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	return c.listCatalog(func(model LoadedLLMModel) bool { return model.ModelID == modelID })
+}
+
+func (c *loadedModelsCache) replace(models map[string]LoadedLLMModel, minOnDiskNodeCount uint64) map[string]LoadedLLMModel {
+	catalog := filterCatalogModels(models, minOnDiskNodeCount)
+	c.mu.Lock()
+	c.models = models
+	c.catalogModels = catalog
+	c.mu.Unlock()
+	return catalog
+}
+
 // InitLoadedModelsCache sets the Relay client used by cache refreshes. It must
 // be called once at startup before RefreshLoadedModels.
 func InitLoadedModelsCache(client *relay.Client) {
-	llmModelsCache.mu.Lock()
-	defer llmModelsCache.mu.Unlock()
-	llmModelsCache.client = client
-	sdModelsCache.mu.Lock()
-	sdModelsCache.client = client
-	sdModelsCache.mu.Unlock()
+	for _, cache := range []*loadedModelsCache{llmModelsCache, sdModelsCache, videoModelsCache} {
+		cache.mu.Lock()
+		cache.client = client
+		cache.mu.Unlock()
+	}
 }
 
 // RefreshLoadedModels fetches the loaded models from the Relay and replaces the
-// in-memory LLM and SD model snapshots. On failure the previous snapshots are kept.
-// Rows with a missing or inconsistent model_cache_hash or model_cache_config are skipped.
+// in-memory LLM, image, and video model snapshots. On failure the previous
+// snapshots are kept. Rows that fail validation are skipped.
 func RefreshLoadedModels(ctx context.Context) error {
 	llmModelsCache.mu.RLock()
 	client := llmModelsCache.client
@@ -217,15 +313,19 @@ func RefreshLoadedModels(ctx context.Context) error {
 		return err
 	}
 
-	llmSnapshot := make(map[string]LoadedLLMModel)
-	sdSnapshot := make(map[string]LoadedLLMModel)
+	snapshots := map[string]map[string]LoadedLLMModel{
+		loadedModelTypeLLM:   {},
+		loadedModelTypeSD:    {},
+		loadedModelTypeVideo: {},
+	}
 	for _, loadedModel := range loadedModels {
-		if loadedModel.ModelType != loadedModelTypeLLM && loadedModel.ModelType != loadedModelTypeSD {
+		snapshot, ok := snapshots[loadedModel.ModelType]
+		if !ok {
 			continue
 		}
 		entry, err := newLoadedModel(loadedModel)
 		if err != nil {
-			log.Warnf("skip loaded model %q (type %s, cache hash %q): %v", loadedModel.ModelID, loadedModel.ModelType, loadedModel.ModelCacheHash, err)
+			log.Warnf("skip loaded model %q (type %s, dtype %q): %v", loadedModel.ModelID, loadedModel.ModelType, loadedModel.DType, err)
 			continue
 		}
 		if IsConfiguredProviderModel(entry.ModelID) {
@@ -236,33 +336,22 @@ func RefreshLoadedModels(ctx context.Context) error {
 			)
 			continue
 		}
-		key := modelCacheKey(entry.ModelCacheHash, entry.ExecutionDType)
-		if loadedModel.ModelType == loadedModelTypeLLM {
-			llmSnapshot[key] = entry
-		} else {
-			sdSnapshot[key] = entry
-		}
+		snapshot[entry.ModelCacheHash] = entry
 	}
 
 	minOnDiskNodeCount := config.GetConfig().LLM.MinCatalogOnDiskNodeCount
-	llmCatalog := filterCatalogModels(llmSnapshot, minOnDiskNodeCount)
-	sdCatalog := filterCatalogModels(sdSnapshot, minOnDiskNodeCount)
-
-	llmModelsCache.mu.Lock()
-	llmModelsCache.models = llmSnapshot
-	llmModelsCache.catalogModels = llmCatalog
-	llmModelsCache.mu.Unlock()
-	sdModelsCache.mu.Lock()
-	sdModelsCache.models = sdSnapshot
-	sdModelsCache.catalogModels = sdCatalog
-	sdModelsCache.mu.Unlock()
+	llmCatalog := llmModelsCache.replace(snapshots[loadedModelTypeLLM], minOnDiskNodeCount)
+	sdCatalog := sdModelsCache.replace(snapshots[loadedModelTypeSD], minOnDiskNodeCount)
+	videoCatalog := videoModelsCache.replace(snapshots[loadedModelTypeVideo], minOnDiskNodeCount)
 
 	log.Infof(
-		"loaded models cache refreshed: %d LLM models (%d catalog), %d image models (%d catalog)",
-		len(llmSnapshot),
+		"loaded models cache refreshed: %d LLM models (%d catalog), %d image models (%d catalog), %d video models (%d catalog)",
+		len(snapshots[loadedModelTypeLLM]),
 		len(llmCatalog),
-		len(sdSnapshot),
+		len(snapshots[loadedModelTypeSD]),
 		len(sdCatalog),
+		len(snapshots[loadedModelTypeVideo]),
+		len(videoCatalog),
 	)
 	return nil
 }
@@ -270,76 +359,82 @@ func RefreshLoadedModels(ctx context.Context) error {
 // GetLoadedSDModel returns the Image row of modelID with the greatest min_vram.
 // It is for model-level checks only; executable selection MUST use the full cache identity.
 func GetLoadedSDModel(modelID string) (LoadedLLMModel, bool) {
-	sdModelsCache.mu.RLock()
-	defer sdModelsCache.mu.RUnlock()
-	return pickMaxMinVRAM(sdModelsCache.models, modelID)
+	return sdModelsCache.getMaxMinVRAM(modelID)
 }
 
 // pickLoadedSD returns the Image row with the greatest min_vram among rows matching identity.
-func pickLoadedSD(identity imageRequestIdentity) (LoadedLLMModel, bool) {
-	sdModelsCache.mu.RLock()
-	defer sdModelsCache.mu.RUnlock()
-	return pickBest(sdModelsCache.models, identity.matches)
+func pickLoadedSD(identity diffusionRequestIdentity) (LoadedLLMModel, bool) {
+	return sdModelsCache.pick(identity.matches)
 }
 
 func ListLoadedSDModels() []LoadedLLMModel {
-	sdModelsCache.mu.RLock()
-	models := make([]LoadedLLMModel, 0, len(sdModelsCache.catalogModels))
-	for _, model := range sdModelsCache.catalogModels {
-		models = append(models, model)
-	}
-	sdModelsCache.mu.RUnlock()
-	sortLoadedModels(models)
-	return models
+	return sdModelsCache.listCatalog(nil)
+}
+
+// GetLoadedVideoModel returns the Video row of modelID with the greatest min_vram.
+// It is for model-level checks only; executable selection MUST use the full cache identity.
+func GetLoadedVideoModel(modelID string) (LoadedLLMModel, bool) {
+	return videoModelsCache.getMaxMinVRAM(modelID)
+}
+
+// pickLoadedVideo returns the Video row with the greatest min_vram among rows matching identity.
+func pickLoadedVideo(identity diffusionRequestIdentity) (LoadedLLMModel, bool) {
+	return videoModelsCache.pick(identity.matches)
+}
+
+// ListLoadedVideoModels returns the catalog Video models sorted by model ID,
+// dtype, quantization key, and model cache hash.
+func ListLoadedVideoModels() []LoadedLLMModel {
+	return videoModelsCache.listCatalog(nil)
+}
+
+// ListCatalogVideoModelsByID returns every catalog Video row for modelID.
+func ListCatalogVideoModelsByID(modelID string) []LoadedLLMModel {
+	return videoModelsCache.listCatalogByID(modelID)
 }
 
 // GetLoadedLLMModel looks up cached LLM rows by model ID and returns the row
 // with the greatest min_vram (ties broken by quantization key, dtype, then cache hash).
 func GetLoadedLLMModel(modelID string) (LoadedLLMModel, bool) {
-	llmModelsCache.mu.RLock()
-	defer llmModelsCache.mu.RUnlock()
-	return pickMaxMinVRAM(llmModelsCache.models, modelID)
+	return llmModelsCache.getMaxMinVRAM(modelID)
 }
 
 // llmModelHasOnDiskNodes reports whether any full-cache LLM row for modelID has
 // on_disk_node_count greater than zero.
 func llmModelHasOnDiskNodes(modelID string) bool {
 	modelID = strings.ToLower(strings.TrimSpace(modelID))
-	llmModelsCache.mu.RLock()
-	defer llmModelsCache.mu.RUnlock()
-	for _, model := range llmModelsCache.models {
-		if model.ModelID == modelID && model.OnDiskNodeCount > 0 {
-			return true
-		}
-	}
-	return false
+	return llmModelsCache.hasOnDiskNodes(func(model LoadedLLMModel) bool {
+		return model.ModelID == modelID
+	})
 }
 
 // sdModelHasOnDiskNodes reports whether any full-cache Image row for modelID and
 // componentsKey has on_disk_node_count greater than zero.
 func sdModelHasOnDiskNodes(modelID, componentsKey string) bool {
 	modelID = strings.ToLower(strings.TrimSpace(modelID))
-	sdModelsCache.mu.RLock()
-	defer sdModelsCache.mu.RUnlock()
-	for _, model := range sdModelsCache.models {
-		if model.ModelID == modelID && model.ComponentsKey == componentsKey && model.OnDiskNodeCount > 0 {
-			return true
-		}
-	}
-	return false
+	return sdModelsCache.hasOnDiskNodes(func(model LoadedLLMModel) bool {
+		return model.ModelID == modelID && model.ComponentsKey == componentsKey
+	})
 }
 
-func GetLoadedLLMModelExact(modelID string, quantizationConfig any, executionDType string) (LoadedLLMModel, bool) {
+// videoModelHasOnDiskNodes reports whether any full-cache Video row for modelID and
+// componentsKey has on_disk_node_count greater than zero.
+func videoModelHasOnDiskNodes(modelID, componentsKey string) bool {
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	return videoModelsCache.hasOnDiskNodes(func(model LoadedLLMModel) bool {
+		return model.ModelID == modelID && model.ComponentsKey == componentsKey
+	})
+}
+
+func GetLoadedLLMModelExact(modelID string, quantizationConfig any, dtype string) (LoadedLLMModel, bool) {
 	quantKey, err := models.QuantizationConfigKey(quantizationConfig)
 	if err != nil {
 		return LoadedLLMModel{}, false
 	}
 	modelID = strings.ToLower(strings.TrimSpace(modelID))
-	executionDType = strings.ToLower(executionDType)
-	llmModelsCache.mu.RLock()
-	defer llmModelsCache.mu.RUnlock()
-	return pickBest(llmModelsCache.models, func(model LoadedLLMModel) bool {
-		return model.ModelID == modelID && model.QuantizationKey == quantKey && model.ExecutionDType == executionDType
+	dtype = strings.ToLower(dtype)
+	return llmModelsCache.pick(func(model LoadedLLMModel) bool {
+		return model.ModelID == modelID && model.QuantizationKey == quantKey && model.DType == dtype
 	})
 }
 
@@ -352,45 +447,18 @@ func GetCatalogLLMModel(modelID string) (LoadedLLMModel, bool) {
 
 // ListCatalogLLMModelsByID returns every catalog LLM row for modelID.
 func ListCatalogLLMModelsByID(modelID string) []LoadedLLMModel {
-	modelID = strings.ToLower(strings.TrimSpace(modelID))
-	llmModelsCache.mu.RLock()
-	models := make([]LoadedLLMModel, 0)
-	for _, model := range llmModelsCache.catalogModels {
-		if model.ModelID == modelID {
-			models = append(models, model)
-		}
-	}
-	llmModelsCache.mu.RUnlock()
-	sortLoadedModels(models)
-	return models
+	return llmModelsCache.listCatalogByID(modelID)
 }
 
 // ListCatalogSDModelsByID returns every catalog Image row for modelID.
 func ListCatalogSDModelsByID(modelID string) []LoadedLLMModel {
-	modelID = strings.ToLower(strings.TrimSpace(modelID))
-	sdModelsCache.mu.RLock()
-	models := make([]LoadedLLMModel, 0)
-	for _, model := range sdModelsCache.catalogModels {
-		if model.ModelID == modelID {
-			models = append(models, model)
-		}
-	}
-	sdModelsCache.mu.RUnlock()
-	sortLoadedModels(models)
-	return models
+	return sdModelsCache.listCatalogByID(modelID)
 }
 
 // ListLoadedLLMModels returns the catalog LLM models sorted by model ID,
-// execution dtype, quantization key, and model cache hash.
+// dtype, quantization key, and model cache hash.
 func ListLoadedLLMModels() []LoadedLLMModel {
-	llmModelsCache.mu.RLock()
-	models := make([]LoadedLLMModel, 0, len(llmModelsCache.catalogModels))
-	for _, model := range llmModelsCache.catalogModels {
-		models = append(models, model)
-	}
-	llmModelsCache.mu.RUnlock()
-	sortLoadedModels(models)
-	return models
+	return llmModelsCache.listCatalog(nil)
 }
 
 // QuantizationConfigForAPI returns a JSON value suitable for API responses and

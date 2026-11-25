@@ -21,7 +21,7 @@ const (
 type ImagePricingExampleRow struct {
 	Model                 string         `json:"model" description:"Selected model id"`
 	MinVRAM               uint64         `json:"min_vram" description:"Model minimum VRAM in GB"`
-	ExecutionDType        string         `json:"execution_dtype" description:"Selected execution dtype"`
+	DType                 string         `json:"dtype" description:"Selected dtype"`
 	QuantizationConfig    any            `json:"quantization_config" description:"Selected quantization_config"`
 	Components            map[string]any `json:"components" description:"Executable component replacements for this Image row"`
 	OverheadSeconds       float64        `json:"overhead_seconds" description:"Relay SD overhead seconds"`
@@ -42,13 +42,13 @@ type GetImagePricingExamplesResponse struct {
 }
 
 func GetImagePricingExamples(c *gin.Context) (*GetImagePricingExamplesResponse, error) {
-	selected := selectImagePricingExampleModels(service.ListLoadedSDModels())
+	selected := selectDiffusionPricingExampleModels(service.ListLoadedSDModels())
 	examples := make([]ImagePricingExampleRow, 0, len(selected))
 	for _, model := range selected {
 		minVRAM := model.MinVRAM
 		query := relay.ExecutionTimeQuery{
 			Model:              model.ModelID,
-			Dtype:              model.ExecutionDType,
+			Dtype:              model.DType,
 			QuantizationConfig: service.QuantizationConfigForAPI(model.QuantizationConfig),
 			MinVRAM:            &minVRAM,
 		}
@@ -59,7 +59,7 @@ func GetImagePricingExamples(c *gin.Context) (*GetImagePricingExamplesResponse, 
 		examples = append(examples, ImagePricingExampleRow{
 			Model:                 model.ModelID,
 			MinVRAM:               model.MinVRAM,
-			ExecutionDType:        model.ExecutionDType,
+			DType:                 model.DType,
 			QuantizationConfig:    service.QuantizationConfigForAPI(model.QuantizationConfig),
 			Components:            model.Components,
 			OverheadSeconds:       coefficients.OverheadSeconds,
@@ -78,23 +78,23 @@ func GetImagePricingExamples(c *gin.Context) (*GetImagePricingExamplesResponse, 
 	}, nil
 }
 
-func imagePricingExampleGroupKey(model service.LoadedLLMModel) string {
+func diffusionPricingExampleGroupKey(model service.LoadedLLMModel) string {
 	return model.ModelID + "\x00" +
 		model.QuantizationKey + "\x00" +
 		model.ComponentsKey + "\x00" +
 		strconv.FormatUint(model.MinVRAM, 10)
 }
 
-func selectImagePricingExampleModels(models []service.LoadedLLMModel) []service.LoadedLLMModel {
+func selectDiffusionPricingExampleModels(models []service.LoadedLLMModel) []service.LoadedLLMModel {
 	// Keep one row per (model_id, quantization_config, components, min_vram).
-	// Same identity with different execution_dtype collapses to the strongest
+	// Same identity with different dtype collapses to the strongest
 	// node-count row.
 	byIdentity := map[string]service.LoadedLLMModel{}
 	for _, model := range models {
 		if model.MinVRAM == 0 {
 			continue
 		}
-		key := imagePricingExampleGroupKey(model)
+		key := diffusionPricingExampleGroupKey(model)
 		existing, ok := byIdentity[key]
 		if !ok || betterPricingExampleRow(model, existing) {
 			byIdentity[key] = model

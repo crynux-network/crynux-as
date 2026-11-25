@@ -36,6 +36,7 @@ type GetAccountStatsData struct {
 	PromptTokens     uint64                    `json:"prompt_tokens"`
 	CompletionTokens uint64                    `json:"completion_tokens"`
 	ImageCount       uint64                    `json:"image_count"`
+	VideoCount       uint64                    `json:"video_count"`
 	Credits          string                    `json:"credits"`
 	SuccessRate      float64                   `json:"success_rate"`
 	RequestsSeries   []AccountStatsCountPoint  `json:"requests_series"`
@@ -100,6 +101,7 @@ func GetAccountStats(c *gin.Context, in *GetAccountStatsInput) (*GetAccountStats
 			PromptTokens:     stats.PromptTokens,
 			CompletionTokens: stats.CompletionTokens,
 			ImageCount:       stats.ImageCount,
+			VideoCount:       stats.VideoCount,
 			Credits:          stats.Credits.String(),
 			SuccessRate:      stats.SuccessRate,
 			RequestsSeries:   requestsSeries,

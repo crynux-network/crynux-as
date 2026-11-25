@@ -110,11 +110,12 @@ Each project exposes the following endpoints under its private base URL:
 * `GET /api/<endpoint_token>/v1/models`
 * `GET /api/<endpoint_token>/v1/models/chat`
 * `GET /api/<endpoint_token>/v1/models/image`
+* `GET /api/<endpoint_token>/v1/models/video`
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
 The request and response formats are OpenAI-compatible for the supported fields of each endpoint.
 
-`GET /models` returns the merged chat and image catalogs. `GET /models/chat` returns chat models only. `GET /models/image` returns image models only. Crynux rows come from the Relay loaded-model snapshot and MUST include only models whose Relay `on_disk_node_count` is at least `llm.min_catalog_on_disk_node_count`. Provider rows come from explicit YAML model configuration and appear only while the Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Provider model names MUST remain their official API names without a prefix or alias. See [llm-api.md](./llm-api.md) and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
+`GET /models` returns the merged chat, image, and video catalogs. `GET /models/chat` returns chat models only. `GET /models/image` returns image models only. `GET /models/video` returns Crynux Video models only. Crynux rows come from the Relay loaded-model snapshot and MUST include only models whose Relay `on_disk_node_count` is at least `llm.min_catalog_on_disk_node_count`. Provider rows come from explicit YAML model configuration and appear only while the Service Provider has at least one enabled, non-deleted, system-valid Shared API Key. Provider model names MUST remain their official API names without a prefix or alias. See [llm-api.md](./llm-api.md) and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
 
 A Crynux request MAY specify a VRAM limit in GB through the `<vram_limit>` URL path segment or the `vram_limit` body field; the path value overrides the body value. The resolved effective VRAM selects `vram_weight` for Credits and task fee and is sent to Bridge as raw task `min_vram`. Provider requests MUST reject VRAM fields and path-based VRAM selection. See [llm-api.md](./llm-api.md), [credits-billing.md](./credits-billing.md), and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
 
@@ -129,13 +130,13 @@ A request failing either check MUST be rejected with HTTP 401. The project API k
 
 ### Raw Task API
 
-The same project authentication MUST protect the Raw Task routes specified in [raw-task-api.md](./raw-task-api.md). Raw Task creation MUST support LLM and Image task types through the shared Task job, call-record, Credits, and usage-statistics lifecycle. Raw Task IDs MUST be local AS job IDs scoped to the authenticated project. Raw requests MUST NOT supply `task_fee`; AS MUST calculate and submit it from the project Cost Level.
+The same project authentication MUST protect the Raw Task routes specified in [raw-task-api.md](./raw-task-api.md). Raw Task creation MUST support LLM (`task_type` `1`), Image (`task_type` `0`), and Video (`task_type` `3`) tasks through the shared Task job, call-record, Credits, and usage-statistics lifecycle. Raw Task IDs MUST be local AS job IDs scoped to the authenticated project. Raw requests MUST NOT supply `task_fee`; AS MUST calculate and submit it from the project Cost Level. Every Crynux TaskArgs `dtype` MUST be `float16`, `bfloat16`, or `float32`; `auto` and other values MUST be rejected. When a request omits `dtype`, AS MUST take it from the matching loaded-models row, or use `bfloat16` when no row matches.
 
 Raw batch create and status requests MUST contain between 1 and 100 items and MUST preserve request order. Item validation, insufficient Credits, missing IDs, cross-project IDs, and model-not-ready outcomes MUST be represented as item errors without preventing other valid items from being accepted. Raw batch create MUST return HTTP 200 only when every item is a successful `client_task`; when any item has an `error`, the HTTP status MUST be 400.
 
 ### Task Execution
 
-The service executes Crynux LLM and Image jobs through the Crynux Bridge raw task APIs. AS parses OpenAI-compatible Crynux LLM requests into canonical `GPTTaskArgs`, submits Bridge ClientTasks, queries ClientTask status, downloads raw `GPTTaskResponse` JSON, and formats public responses locally. For Image jobs, including OpenAI Images generations, OpenAI Images edits, and Raw Image tasks, AS downloads PNG results from Bridge into `llm.task_result_dir` before settle and serves or encodes those files from disk. After a Crynux job is created, when the loaded-models cache shows no on-disk node coverage for the required model file set, OpenAI-compatible and Raw create APIs MUST return HTTP 400 with `code` `model_not_ready` while the job continues through Bridge. See [llm-api.md](./llm-api.md) and [raw-task-api.md](./raw-task-api.md).
+The service executes Crynux LLM, Image, and Video jobs through the Crynux Bridge raw task APIs. AS parses OpenAI-compatible Crynux LLM requests into canonical `GPTTaskArgs`, submits Bridge ClientTasks, queries ClientTask status, downloads raw `GPTTaskResponse` JSON, and formats public responses locally. For Image jobs, including OpenAI Images generations, OpenAI Images edits, and Raw Image tasks, AS downloads PNG results from Bridge into `llm.task_result_dir` before settle and serves or encodes those files from disk. For Raw Video tasks, AS downloads the single MP4 result into `llm.task_result_dir` before settle and serves it from `GET /inference_tasks/:client_task_id/video`. After a Crynux job is created, when the loaded-models cache shows no on-disk node coverage for the required model file set, OpenAI-compatible and Raw create APIs MUST return HTTP 400 with `code` `model_not_ready` while the job continues through Bridge. See [llm-api.md](./llm-api.md) and [raw-task-api.md](./raw-task-api.md).
 
 Configured Provider chat and image models execute through independent Service Provider adapters and a priority scheduler. Provider calls MUST use a Shared API Key of the matched Service Provider, enforce the global per-key concurrency limit, stream chat output in real time when requested, store Provider image results under `llm.task_result_dir`, and settle Key Owner earnings from final normalized usage. Provider execution MUST NOT block the Bridge bounded-batch poller. See [provider-key-sharing/job-execution.md](./provider-key-sharing/job-execution.md) and [provider-key-sharing/api-compatibility.md](./provider-key-sharing/api-compatibility.md).
 
@@ -143,7 +144,7 @@ Configured Provider chat and image models execute through independent Service Pr
 
 Each LLM call is charged from the Credits balance of the owning account using the Credits billing model in [credits-billing.md](./credits-billing.md). Insufficient available Credits (`balance - locked`) for the pre-forward estimate MUST be rejected with HTTP 402. Accepted jobs MUST soft-lock the estimate until success settle or failure recording releases it.
 
-`GET /v1/llm/billing_config`, `GET /v1/llm/pricing_examples`, and `GET /v1/llm/image_pricing_examples` are JWT-authenticated management APIs specified in [credits-billing.md](./credits-billing.md).
+`GET /v1/llm/billing_config`, `GET /v1/llm/pricing_examples`, `GET /v1/llm/image_pricing_examples`, and `GET /v1/llm/video_pricing_examples` are JWT-authenticated management APIs specified in [credits-billing.md](./credits-billing.md).
 
 ### Call Records
 
@@ -157,9 +158,9 @@ Finished task-creating calls from OpenAI-compatible and Raw Task endpoints MUST 
 
 Requests MUST count only finished success and failure calls from `task_call_records`. Task execution failures after a `task_jobs` row exists MUST count as failures. Failures before a `task_jobs` row is created, including authenticated request validation failures, insufficient balance, and estimation failures, MUST NOT enter usage stats. HTTP 401 responses MUST NOT enter usage stats. `GET /responses/:id` and other non-creating GET requests MUST NOT enter usage stats.
 
-Credits in usage stats MUST equal processed `credit_events` rows of type LLM charge referenced by call record ID. Token metrics MUST include only calls with `token_usage_applicable = 1`. Account and project hourly aggregates MUST accumulate Image `image_count` for Image task call records and MUST keep `image_count` at zero for LLM call records.
+Credits in usage stats MUST equal processed `credit_events` rows of type LLM charge referenced by call record ID. Token metrics MUST include only calls with `token_usage_applicable = 1`. Account and project hourly aggregates MUST accumulate `image_count` only from Image task call records and `video_count` only from Video task call records.
 
-Project model 10-minute aggregates and Top-10 snapshots MUST key Crynux rows by Relay loaded-model identity `(model_cache_hash, execution_dtype)` together with `execution_source = crynux`, `project_id`, and the period start. Provider rows MUST key by execution source, exact configured model name, project ID, and period start and MUST not use a separate Service Provider identity or a fabricated Relay identity. A Crynux call record MUST store its normalized lowercase repository model for display. A Provider call record MUST preserve its exact case-sensitive configured model name. Aggregates MUST also store `task_type`, `quantization_config`, `components`, and Image `image_count`. Usage stats aggregation MUST NOT apply additional case folding or case-insensitive merging of model names.
+Project model 10-minute aggregates and Top-10 snapshots MUST key rows by `project_id`, loaded-model identity `(model_cache_hash, dtype)`, `model`, and the period start. Provider rows MUST store empty `model_cache_hash` and `dtype` with the exact configured model name and MUST NOT use a separate Service Provider identity or a fabricated loaded-model identity. A Crynux call record MUST store its normalized lowercase repository model for display. A Provider call record MUST preserve its exact case-sensitive configured model name. Aggregates MUST also store `task_type`, `quantization_config`, `components`, Image `image_count`, and Video `video_count`. Usage stats aggregation MUST NOT apply additional case folding or case-insensitive merging of model names.
 
 Deleting a project MUST set project status to Deleted. Deleted projects MUST NOT appear in list or detail APIs and MUST NOT accept new LLM requests. Existing jobs MUST continue using create-time snapshots. Historical account usage MUST retain Deleted project consumption.
 
@@ -175,8 +176,8 @@ Configuration:
 
 Management APIs:
 
-* `GET /v1/account/stats?range=1d|7d|1m` MUST return request and Credits series plus totals for `request_count`, `prompt_tokens`, `completion_tokens`, `image_count`, charged Credits, and `success_rate`.
-* `GET /v1/projects/:project_id/stats?range=1d|1m` MUST return `request_series`, `credits_series`, and `token_series`. Each `token_series` point MUST include `prompt_tokens`, `completion_tokens`, and `image_count` for that period.
+* `GET /v1/account/stats?range=1d|7d|1m` MUST return request and Credits series plus totals for `request_count`, `prompt_tokens`, `completion_tokens`, `image_count`, `video_count`, charged Credits, and `success_rate`.
+* `GET /v1/projects/:project_id/stats?range=1d|1m` MUST return `request_series`, `credits_series`, and `token_series`. Each `token_series` point MUST include `prompt_tokens`, `completion_tokens`, `image_count`, and `video_count` for that period.
 * `GET /v1/projects/:project_id/stats/completion-duration?range=1h|1d|7d`
 * `GET /v1/projects/:project_id/stats/models?range=1h|1d|7d`
 

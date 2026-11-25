@@ -19,7 +19,7 @@ type ModelsCatalogChatItem struct {
 	OwnedBy            string `json:"owned_by"`
 	MinVram            uint64 `json:"min_vram,omitempty"`
 	OnDiskNodeCount    int64  `json:"on_disk_node_count,omitempty"`
-	ExecutionDType     string `json:"execution_dtype,omitempty"`
+	DType              string `json:"dtype,omitempty"`
 	QuantizationConfig any    `json:"quantization_config,omitempty"`
 }
 
@@ -30,9 +30,17 @@ type ModelsCatalogImageItem struct {
 	Lora       map[string]any `json:"lora"`
 }
 
+// ModelsCatalogVideoItem is one public video catalog row.
+type ModelsCatalogVideoItem struct {
+	ModelsCatalogChatItem
+	Components map[string]any `json:"components"`
+	Loras      []any          `json:"loras"`
+}
+
 type modelsCatalogSnapshot struct {
 	chat  []any
 	image []any
+	video []any
 	all   []any
 }
 
@@ -54,7 +62,7 @@ func newCrynuxChatCatalogItem(model LoadedLLMModel) ModelsCatalogChatItem {
 		OwnedBy:            "crynux",
 		MinVram:            model.MinVRAM,
 		OnDiskNodeCount:    model.OnDiskNodeCount,
-		ExecutionDType:     model.ExecutionDType,
+		DType:              model.DType,
 		QuantizationConfig: QuantizationConfigForAPI(model.QuantizationConfig),
 	}
 }
@@ -64,6 +72,14 @@ func newCrynuxImageCatalogItem(model LoadedLLMModel) ModelsCatalogImageItem {
 		ModelsCatalogChatItem: newCrynuxChatCatalogItem(model),
 		Components:            model.Components,
 		Lora:                  model.Lora,
+	}
+}
+
+func newCrynuxVideoCatalogItem(model LoadedLLMModel) ModelsCatalogVideoItem {
+	return ModelsCatalogVideoItem{
+		ModelsCatalogChatItem: newCrynuxChatCatalogItem(model),
+		Components:            model.Components,
+		Loras:                 model.Loras,
 	}
 }
 
@@ -97,6 +113,8 @@ func catalogItemID(item any) string {
 		return v.ID
 	case ModelsCatalogImageItem:
 		return v.ID
+	case ModelsCatalogVideoItem:
+		return v.ID
 	default:
 		return ""
 	}
@@ -107,6 +125,8 @@ func catalogItemOwnedBy(item any) string {
 	case ModelsCatalogChatItem:
 		return v.OwnedBy
 	case ModelsCatalogImageItem:
+		return v.OwnedBy
+	case ModelsCatalogVideoItem:
 		return v.OwnedBy
 	default:
 		return ""
@@ -190,22 +210,32 @@ func RefreshModelsCatalog(ctx context.Context, db *gorm.DB) error {
 	image = append(image, providerImage...)
 	sortModelsCatalogItems(image)
 
-	all := make([]any, 0, len(chat)+len(image))
+	loadedVideo := ListLoadedVideoModels()
+	video := make([]any, 0, len(loadedVideo))
+	for _, model := range loadedVideo {
+		video = append(video, newCrynuxVideoCatalogItem(model))
+	}
+	sortModelsCatalogItems(video)
+
+	all := make([]any, 0, len(chat)+len(image)+len(video))
 	all = append(all, chat...)
 	all = append(all, image...)
+	all = append(all, video...)
 	sortModelsCatalogItems(all)
 
 	modelsCatalogCache.mu.Lock()
 	modelsCatalogCache.snapshot = modelsCatalogSnapshot{
 		chat:  chat,
 		image: image,
+		video: video,
 		all:   all,
 	}
 	modelsCatalogCache.mu.Unlock()
 	log.Infof(
-		"models catalog cache refreshed: %d chat, %d image, %d total",
+		"models catalog cache refreshed: %d chat, %d image, %d video, %d total",
 		len(chat),
 		len(image),
+		len(video),
 		len(all),
 	)
 	return nil
@@ -231,7 +261,14 @@ func ListModelsCatalogImage() []any {
 	return copyCatalogItems(modelsCatalogCache.snapshot.image)
 }
 
-// ListModelsCatalogAll returns the cached merged chat and image catalog rows.
+// ListModelsCatalogVideo returns the cached video catalog rows.
+func ListModelsCatalogVideo() []any {
+	modelsCatalogCache.mu.RLock()
+	defer modelsCatalogCache.mu.RUnlock()
+	return copyCatalogItems(modelsCatalogCache.snapshot.video)
+}
+
+// ListModelsCatalogAll returns the cached merged chat, image, and video catalog rows.
 func ListModelsCatalogAll() []any {
 	modelsCatalogCache.mu.RLock()
 	defer modelsCatalogCache.mu.RUnlock()
@@ -256,6 +293,7 @@ func ListModelsCatalogByID(modelID string) []any {
 	}
 	appendMatches(modelsCatalogCache.snapshot.chat)
 	appendMatches(modelsCatalogCache.snapshot.image)
+	appendMatches(modelsCatalogCache.snapshot.video)
 	sortModelsCatalogItems(out)
 	return out
 }

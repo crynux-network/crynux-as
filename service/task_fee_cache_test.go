@@ -114,6 +114,14 @@ func TestResolveMedianPriorityEmptyWithoutHistory(t *testing.T) {
 	}
 }
 
+var testLLMExecutionTimeVRAM uint64 = 24
+
+var testLLMExecutionTimeQuery = relay.ExecutionTimeQuery{
+	Model:   "qwen/qwen3",
+	Dtype:   "bfloat16",
+	MinVRAM: &testLLMExecutionTimeVRAM,
+}
+
 func TestGetLLMExecutionTimeTTL(t *testing.T) {
 	resetExecutionTimeCacheForTest()
 	t.Cleanup(resetExecutionTimeCacheForTest)
@@ -139,7 +147,7 @@ func TestGetLLMExecutionTimeTTL(t *testing.T) {
 	InitExecutionTimeCache(relay.NewClient(server.URL), 10)
 	setExecutionTimeCacheNowForTest(func() time.Time { return now })
 
-	first, err := GetLLMExecutionTime(context.Background(), "qwen/qwen3", 24)
+	first, err := GetLLMExecutionTime(context.Background(), testLLMExecutionTimeQuery)
 	if err != nil {
 		t.Fatalf("first fetch: %v", err)
 	}
@@ -148,7 +156,7 @@ func TestGetLLMExecutionTimeTTL(t *testing.T) {
 	}
 
 	now = now.Add(5 * time.Second)
-	second, err := GetLLMExecutionTime(context.Background(), "qwen/qwen3", 24)
+	second, err := GetLLMExecutionTime(context.Background(), testLLMExecutionTimeQuery)
 	if err != nil {
 		t.Fatalf("cached fetch: %v", err)
 	}
@@ -160,7 +168,7 @@ func TestGetLLMExecutionTimeTTL(t *testing.T) {
 	}
 
 	now = now.Add(6 * time.Second)
-	third, err := GetLLMExecutionTime(context.Background(), "qwen/qwen3", 24)
+	third, err := GetLLMExecutionTime(context.Background(), testLLMExecutionTimeQuery)
 	if err != nil {
 		t.Fatalf("expired fetch: %v", err)
 	}

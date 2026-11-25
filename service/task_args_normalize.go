@@ -46,12 +46,20 @@ func NormalizeTaskArgsModelNames(taskArgs string, taskType models.TaskType) (str
 		normalizeStringModelName(argsMap, "vae")
 		normalizeStringModelName(argsMap, "textual_inversion")
 		normalizeComponentsRepos(argsMap)
+	case models.TaskTypeVideo:
+		if baseModel, ok := argsMap["base_model"].(string); ok {
+			argsMap["base_model"] = llmadapter.NormalizeModelName(baseModel)
+		} else {
+			normalizeObjectModelName(argsMap, "base_model", "name")
+		}
+		normalizeComponentsRepos(argsMap)
+		normalizeVideoLorasModels(argsMap)
 	case models.TaskTypeLLM:
 		if model, ok := argsMap["model"].(string); ok {
 			argsMap["model"] = llmadapter.NormalizeModelName(model)
 		}
 	default:
-		return "", fmt.Errorf("task_type must be 0 or 1")
+		return "", fmt.Errorf("task_type must be 0, 1, or 3")
 	}
 
 	normalized, err := json.Marshal(argsMap)
@@ -89,6 +97,22 @@ func normalizeComponentsRepos(argsMap map[string]any) {
 		}
 		if repo, ok := object["repo"].(string); ok {
 			object["repo"] = llmadapter.NormalizeModelName(repo)
+		}
+	}
+}
+
+func normalizeVideoLorasModels(argsMap map[string]any) {
+	loras, ok := argsMap["loras"].([]any)
+	if !ok {
+		return
+	}
+	for _, raw := range loras {
+		object, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if model, ok := object["model"].(string); ok {
+			object["model"] = llmadapter.NormalizeModelName(model)
 		}
 	}
 }

@@ -111,6 +111,10 @@ func stripPreviousResponseID(body []byte) []byte {
 }
 
 func parseProviderResponsesRequest(body []byte, modelName string) (parsedTaskJobRequest, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return parsedTaskJobRequest{}, &llmadapter.ValidationError{Message: "invalid JSON body"}
+	}
 	var req struct {
 		Model              string  `json:"model"`
 		Stream             bool    `json:"stream"`
@@ -118,7 +122,6 @@ func parseProviderResponsesRequest(body []byte, modelName string) (parsedTaskJob
 		MaxOutputTokens    *int    `json:"max_output_tokens"`
 		QueueTimeout       *uint64 `json:"queue_timeout"`
 		VramLimit          *uint64 `json:"vram_limit"`
-		Dtype              string  `json:"dtype"`
 		QuantizationConfig any     `json:"quantization_config"`
 		Input              any     `json:"input"`
 	}
@@ -134,6 +137,7 @@ func parseProviderResponsesRequest(body []byte, modelName string) (parsedTaskJob
 	if req.Stream && req.Background {
 		return parsedTaskJobRequest{}, &llmadapter.ValidationError{Field: "stream", Message: "stream and background cannot both be true"}
 	}
+	_, hasDtype := raw["dtype"]
 	return parsedTaskJobRequest{
 		model:               modelName,
 		stream:              req.Stream,
@@ -144,7 +148,7 @@ func parseProviderResponsesRequest(body []byte, modelName string) (parsedTaskJob
 		maxCompletionTokens: req.MaxOutputTokens,
 		taskArgsJSON:        string(body),
 		streamIncludeUsage:  true,
-		dtype:               req.Dtype,
+		hasDtype:            hasDtype,
 		quantizationConfig:  req.QuantizationConfig,
 	}, nil
 }

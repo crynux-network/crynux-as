@@ -45,14 +45,25 @@ func CrynuxLLMModelReady(modelID string) bool {
 // base model and components set with on_disk_node_count > 0. Quantization, dtype, and
 // lora are ignored. Components identity MUST match as one set (Relay file-set semantics).
 func CrynuxImageTaskArgsReady(taskArgsJSON string) bool {
-	modelID, componentsKey, ok := imageInventoryIdentity(taskArgsJSON)
+	modelID, componentsKey, ok := diffusionInventoryIdentity(taskArgsJSON)
 	if !ok {
 		return false
 	}
 	return sdModelHasOnDiskNodes(modelID, componentsKey)
 }
 
-func imageInventoryIdentity(taskArgsJSON string) (modelID string, componentsKey string, ok bool) {
+// CrynuxVideoTaskArgsReady reports whether any full-cache Video row matches the TaskArgs
+// base model and components set with on_disk_node_count > 0. Quantization, dtype, and
+// loras are ignored. Components identity MUST match as one set (Relay file-set semantics).
+func CrynuxVideoTaskArgsReady(taskArgsJSON string) bool {
+	modelID, componentsKey, ok := diffusionInventoryIdentity(taskArgsJSON)
+	if !ok {
+		return false
+	}
+	return videoModelHasOnDiskNodes(modelID, componentsKey)
+}
+
+func diffusionInventoryIdentity(taskArgsJSON string) (modelID string, componentsKey string, ok bool) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
 		return "", "", false

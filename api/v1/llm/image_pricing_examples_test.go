@@ -16,7 +16,7 @@ func TestSelectImagePricingExampleModelsCapsAtFourAcrossVRAM(t *testing.T) {
 		{ModelID: "z/skip", MinVRAM: 0, NodeCount: 99, QuantizationKey: "null", ComponentsKey: "{}"},
 	}
 
-	got := selectImagePricingExampleModels(models)
+	got := selectDiffusionPricingExampleModels(models)
 	if len(got) != 4 {
 		t.Fatalf("len = %d, want 4", len(got))
 	}
@@ -41,7 +41,7 @@ func TestSelectImagePricingExampleModelsKeepsSameVRAMDifferentComponents(t *test
 			MinVRAM:         24,
 			NodeCount:       2,
 			OnDiskNodeCount: 10,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: "null",
 			ComponentsKey:   `{"unet":"a"}`,
 			ModelCacheHash:  "hash-a",
@@ -51,7 +51,7 @@ func TestSelectImagePricingExampleModelsKeepsSameVRAMDifferentComponents(t *test
 			MinVRAM:         24,
 			NodeCount:       2,
 			OnDiskNodeCount: 10,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: "null",
 			ComponentsKey:   `{"unet":"b"}`,
 			ModelCacheHash:  "hash-b",
@@ -61,14 +61,14 @@ func TestSelectImagePricingExampleModelsKeepsSameVRAMDifferentComponents(t *test
 			MinVRAM:         24,
 			NodeCount:       2,
 			OnDiskNodeCount: 10,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: `{"quant_method":"bitsandbytes","quant_kwargs":{"load_in_4bit":true}}`,
 			ComponentsKey:   `{"unet":"a"}`,
 			ModelCacheHash:  "hash-4bit",
 		},
 	}
 
-	got := selectImagePricingExampleModels(models)
+	got := selectDiffusionPricingExampleModels(models)
 	if len(got) != 3 {
 		t.Fatalf("len = %d, want 3", len(got))
 	}
@@ -112,7 +112,7 @@ func TestSelectImagePricingExampleModelsCollapsesDtypeForSameIdentity(t *testing
 			MinVRAM:         24,
 			NodeCount:       1,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "float16",
+			DType:           "float16",
 			QuantizationKey: "null",
 			ComponentsKey:   `{"unet":"a"}`,
 			ModelCacheHash:  "hash-f16",
@@ -122,18 +122,18 @@ func TestSelectImagePricingExampleModelsCollapsesDtypeForSameIdentity(t *testing
 			MinVRAM:         24,
 			NodeCount:       5,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: "null",
 			ComponentsKey:   `{"unet":"a"}`,
 			ModelCacheHash:  "hash-bf16",
 		},
 	}
 
-	got := selectImagePricingExampleModels(models)
+	got := selectDiffusionPricingExampleModels(models)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
-	if got[0].ExecutionDType != "bfloat16" || got[0].NodeCount != 5 {
+	if got[0].DType != "bfloat16" || got[0].NodeCount != 5 {
 		t.Fatalf("got = %+v, want bfloat16 with node count 5", got[0])
 	}
 }

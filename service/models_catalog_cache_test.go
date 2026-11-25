@@ -82,7 +82,7 @@ func TestRefreshModelsCatalogUsesVisibleProvidersAndSorts(t *testing.T) {
 			ModelID:         "z-org/z-model",
 			MinVRAM:         8,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 		},
 	})
 	setCatalogSDModels(map[string]LoadedLLMModel{
@@ -90,7 +90,7 @@ func TestRefreshModelsCatalogUsesVisibleProvidersAndSorts(t *testing.T) {
 			ModelID:         "a-org/a-image",
 			MinVRAM:         12,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			Components:      map[string]any{},
 			Lora:            nil,
 		},
@@ -172,7 +172,7 @@ func TestRefreshModelsCatalogReusesProviderRowsOnVisibilityFailure(t *testing.T)
 			ModelID:         "old-org/old-model",
 			MinVRAM:         8,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 		},
 	})
 	setCatalogSDModels(map[string]LoadedLLMModel{})
@@ -185,7 +185,7 @@ func TestRefreshModelsCatalogReusesProviderRowsOnVisibilityFailure(t *testing.T)
 			ModelID:         "new-org/new-model",
 			MinVRAM:         16,
 			OnDiskNodeCount: 4,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 		},
 	})
 	listVisibleProviderModels = func(context.Context, *gorm.DB, string) ([]ProviderModelRoute, error) {
@@ -227,7 +227,7 @@ func TestRefreshModelsCatalogFirstFailureKeepsCrynuxOnly(t *testing.T) {
 			ModelID:         "only-org/only-model",
 			MinVRAM:         8,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 		},
 	})
 	setCatalogSDModels(map[string]LoadedLLMModel{})
@@ -264,14 +264,14 @@ func TestRefreshModelsCatalogPreservesMultiDtypeOrder(t *testing.T) {
 			ModelID:         "same-org/same-model",
 			MinVRAM:         8,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "float16",
+			DType:           "float16",
 			ModelCacheHash:  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		},
 		"same|bfloat16": {
 			ModelID:         "same-org/same-model",
 			MinVRAM:         8,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			ModelCacheHash:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		},
 	})
@@ -285,11 +285,11 @@ func TestRefreshModelsCatalogPreservesMultiDtypeOrder(t *testing.T) {
 		t.Fatalf("chat len=%d data=%v", len(chat), chat)
 	}
 	first, ok := chat[0].(ModelsCatalogChatItem)
-	if !ok || first.ExecutionDType != "bfloat16" {
+	if !ok || first.DType != "bfloat16" {
 		t.Fatalf("chat[0]=%v", chat[0])
 	}
 	second, ok := chat[1].(ModelsCatalogChatItem)
-	if !ok || second.ExecutionDType != "float16" {
+	if !ok || second.DType != "float16" {
 		t.Fatalf("chat[1]=%v", chat[1])
 	}
 }
@@ -320,7 +320,7 @@ func TestListModelsCatalogByIDReturnsCrynuxAndProvider(t *testing.T) {
 			ModelID:         "shared-model",
 			MinVRAM:         8,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 		},
 	})
 	setCatalogSDModels(map[string]LoadedLLMModel{})
@@ -426,7 +426,7 @@ func TestRefreshModelsCatalogFailedRefreshDoesNotRestoreStaleProviders(t *testin
 			ModelID:         "race-org/race-model",
 			MinVRAM:         8,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 		},
 	})
 	setCatalogSDModels(map[string]LoadedLLMModel{})

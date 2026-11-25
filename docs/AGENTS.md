@@ -9,7 +9,7 @@
 | [llm-job-processing.md](./llm-job-processing.md) | Task execution and ledger ownership: `task_jobs`, `task_call_records`, `credit_events`, and `credit_accounts` responsibilities, request processing order, settle and failure transactions, Responses retention, Recent Requests merge, and retention cleanup |
 | [model-compatibility/](./model-compatibility/) | OpenAI-compatible request conversion, canonical task persistence and raw-task transport, raw assistant-text parsing, and public response construction |
 | [credits-billing.md](./credits-billing.md) | Credits billing and shared `billable_gwei` task-fee inputs: project Cost Level `priority_gwei`, Relay execution-time coefficients, VRAM weight, settle rules, and pricing-examples API |
-| [raw-task-api.md](./raw-task-api.md) | Project-authenticated Raw Task routes, local ID isolation, batch behavior, LLM and Image results, model catalogs, pricing, and settlement |
+| [raw-task-api.md](./raw-task-api.md) | Project-authenticated Raw Task routes, local ID isolation, batch behavior, LLM, Image, and Video results, concrete dtype resolution, model catalogs, pricing, and settlement |
 | [provider-key-sharing/](./provider-key-sharing/) | Provider Key Sharing specification: Service Provider model routing, encrypted Shared API Keys, independent Bridge and Provider workers, real streaming, pricing, Key Owner earnings, Wallet-compatible withdrawals, APIs, operations, and testing |
 
 ## Doc Update Requirements

@@ -29,6 +29,7 @@ type AccountUsageHourlyStat struct {
 	CompletionTokens uint64    `json:"completion_tokens" gorm:"not null;default:0"`
 	TotalTokens      uint64    `json:"total_tokens" gorm:"not null;default:0"`
 	ImageCount       uint64    `json:"image_count" gorm:"not null;default:0"`
+	VideoCount       uint64    `json:"video_count" gorm:"not null;default:0"`
 	Credits          BigInt    `json:"credits" gorm:"type:string;size:255;not null"`
 }
 
@@ -51,6 +52,7 @@ type ProjectUsageHourlyStat struct {
 	CompletionTokens uint64    `json:"completion_tokens" gorm:"not null;default:0"`
 	TotalTokens      uint64    `json:"total_tokens" gorm:"not null;default:0"`
 	ImageCount       uint64    `json:"image_count" gorm:"not null;default:0"`
+	VideoCount       uint64    `json:"video_count" gorm:"not null;default:0"`
 	Credits          BigInt    `json:"credits" gorm:"type:string;size:255;not null"`
 }
 
@@ -59,7 +61,7 @@ func (ProjectUsageHourlyStat) TableName() string {
 }
 
 // ProjectModelUsage10mStat stores per-project per Relay loaded-model identity usage
-// for one Unix 10-minute period. Identity matches Relay (model_cache_hash, execution_dtype).
+// for one Unix 10-minute period. Identity matches Relay (model_cache_hash, dtype).
 type ProjectModelUsage10mStat struct {
 	ID                 uint            `json:"id" gorm:"primarykey"`
 	CreatedAt          time.Time       `json:"created_at" gorm:"not null"`
@@ -67,7 +69,7 @@ type ProjectModelUsage10mStat struct {
 	ProjectID          uint            `json:"project_id" gorm:"not null;uniqueIndex:idx_project_model_usage_10m_identity_period,priority:1"`
 	UserID             uint            `json:"user_id" gorm:"not null;index"`
 	ModelCacheHash     string          `json:"model_cache_hash" gorm:"column:model_cache_hash;type:string;size:64;not null;default:'';uniqueIndex:idx_project_model_usage_10m_identity_period,priority:2"`
-	ExecutionDType     string          `json:"execution_dtype" gorm:"column:execution_dtype;type:string;size:64;not null;default:'';uniqueIndex:idx_project_model_usage_10m_identity_period,priority:3"`
+	DType              string          `json:"dtype" gorm:"column:dtype;type:string;size:64;not null;default:'';uniqueIndex:idx_project_model_usage_10m_identity_period,priority:3"`
 	Model              string          `json:"model" gorm:"type:string;size:255;not null;uniqueIndex:idx_project_model_usage_10m_identity_period,priority:4"`
 	PeriodStart        int64           `json:"period_start" gorm:"not null;uniqueIndex:idx_project_model_usage_10m_identity_period,priority:5;index"`
 	TaskType           TaskType        `json:"task_type" gorm:"not null;default:0"`
@@ -80,6 +82,7 @@ type ProjectModelUsage10mStat struct {
 	CompletionTokens   uint64          `json:"completion_tokens" gorm:"not null;default:0"`
 	TotalTokens        uint64          `json:"total_tokens" gorm:"not null;default:0"`
 	ImageCount         uint64          `json:"image_count" gorm:"not null;default:0"`
+	VideoCount         uint64          `json:"video_count" gorm:"not null;default:0"`
 	Credits            BigInt          `json:"credits" gorm:"type:string;size:255;not null"`
 }
 
@@ -113,7 +116,7 @@ type ProjectModelUsageSnapshot struct {
 	Rank               uint                `json:"rank" gorm:"not null;uniqueIndex:idx_project_model_usage_snapshots_project_range_rank"`
 	Model              string              `json:"model" gorm:"type:string;size:255;not null"`
 	ModelCacheHash     string              `json:"model_cache_hash" gorm:"column:model_cache_hash;type:string;size:64;not null;default:''"`
-	ExecutionDType     string              `json:"execution_dtype" gorm:"column:execution_dtype;type:string;size:64;not null;default:''"`
+	DType              string              `json:"dtype" gorm:"column:dtype;type:string;size:64;not null;default:''"`
 	TaskType           TaskType            `json:"task_type" gorm:"not null;default:0"`
 	QuantizationConfig json.RawMessage     `json:"quantization_config" gorm:"type:longtext"`
 	Components         json.RawMessage     `json:"components" gorm:"type:longtext"`
@@ -124,6 +127,7 @@ type ProjectModelUsageSnapshot struct {
 	CompletionTokens   uint64              `json:"completion_tokens" gorm:"not null;default:0"`
 	TotalTokens        uint64              `json:"total_tokens" gorm:"not null;default:0"`
 	ImageCount         uint64              `json:"image_count" gorm:"not null;default:0"`
+	VideoCount         uint64              `json:"video_count" gorm:"not null;default:0"`
 	Credits            BigInt              `json:"credits" gorm:"type:string;size:255;not null"`
 	WindowStart        int64               `json:"window_start" gorm:"not null"`
 	WindowEnd          int64               `json:"window_end" gorm:"not null"`

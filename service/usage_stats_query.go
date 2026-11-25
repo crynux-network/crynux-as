@@ -49,6 +49,7 @@ type UsageStackedTokenPoint struct {
 	PromptTokens     uint64
 	CompletionTokens uint64
 	ImageCount       uint64
+	VideoCount       uint64
 	Complete         bool
 }
 
@@ -58,6 +59,7 @@ type AccountUsageStats struct {
 	PromptTokens     uint64
 	CompletionTokens uint64
 	ImageCount       uint64
+	VideoCount       uint64
 	Credits          *big.Int
 	SuccessCount     uint64
 	FailureCount     uint64
@@ -112,6 +114,7 @@ func GetAccountUsageStats(ctx context.Context, db *gorm.DB, userID uint, rangeTy
 			out.PromptTokens += row.PromptTokens
 			out.CompletionTokens += row.CompletionTokens
 			out.ImageCount += row.ImageCount
+			out.VideoCount += row.VideoCount
 			out.Credits.Add(out.Credits, &row.Credits.Int)
 			out.RequestsSeries = append(out.RequestsSeries, UsageCountSeriesPoint{
 				Timestamp: start,
@@ -144,6 +147,7 @@ func GetAccountUsageStats(ctx context.Context, db *gorm.DB, userID uint, rangeTy
 			agg.PromptTokens += row.PromptTokens
 			agg.CompletionTokens += row.CompletionTokens
 			agg.ImageCount += row.ImageCount
+			agg.VideoCount += row.VideoCount
 			agg.Credits.Int.Add(&agg.Credits.Int, &row.Credits.Int)
 			if !completeFlags[i] {
 				dayComplete[day] = false
@@ -157,6 +161,7 @@ func GetAccountUsageStats(ctx context.Context, db *gorm.DB, userID uint, rangeTy
 			out.PromptTokens += agg.PromptTokens
 			out.CompletionTokens += agg.CompletionTokens
 			out.ImageCount += agg.ImageCount
+			out.VideoCount += agg.VideoCount
 			out.Credits.Add(out.Credits, &agg.Credits.Int)
 			out.RequestsSeries = append(out.RequestsSeries, UsageCountSeriesPoint{
 				Timestamp: day,
@@ -223,6 +228,7 @@ func GetProjectUsageStats(ctx context.Context, db *gorm.DB, projectID uint, rang
 				PromptTokens:     row.PromptTokens,
 				CompletionTokens: row.CompletionTokens,
 				ImageCount:       row.ImageCount,
+				VideoCount:       row.VideoCount,
 				Complete:         completeFlags[i],
 			})
 		}
@@ -250,6 +256,7 @@ func GetProjectUsageStats(ctx context.Context, db *gorm.DB, projectID uint, rang
 		dayMapTokens[day].PromptTokens += row.PromptTokens
 		dayMapTokens[day].CompletionTokens += row.CompletionTokens
 		dayMapTokens[day].ImageCount += row.ImageCount
+		dayMapTokens[day].VideoCount += row.VideoCount
 		if !completeFlags[i] {
 			dayComplete[day] = false
 		}

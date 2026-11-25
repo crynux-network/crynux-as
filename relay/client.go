@@ -28,13 +28,17 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// LoadedModel is one public Relay loaded-models row. Components and Lora are
+// present for sd rows; Components and Loras are present for video rows. All
+// use the TaskArgs shape.
 type LoadedModel struct {
 	ModelID            string          `json:"model_id"`
 	ModelType          string          `json:"model_type"`
-	ModelCacheHash     string          `json:"model_cache_hash"`
-	ModelCacheConfig   json.RawMessage `json:"model_cache_config"`
-	ExecutionDType     string          `json:"execution_dtype"`
+	DType              string          `json:"dtype"`
 	QuantizationConfig json.RawMessage `json:"quantization_config"`
+	Components         json.RawMessage `json:"components"`
+	Lora               json.RawMessage `json:"lora"`
+	Loras              json.RawMessage `json:"loras"`
 	MinVRAM            uint64          `json:"min_vram"`
 	InMemoryNodeCount  int64           `json:"in_memory_node_count"`
 	OnDiskNodeCount    int64           `json:"on_disk_node_count"`
@@ -156,6 +160,13 @@ type SDExecutionTime struct {
 	SecondsPerSDPixelStep float64 `json:"seconds_per_sd_pixel_step"`
 }
 
+type VideoExecutionTime struct {
+	OverheadSeconds     float64 `json:"overhead_seconds"`
+	SecondsPerVideoUnit float64 `json:"seconds_per_video_unit"`
+}
+
+// ExecutionTimeQuery selects execution-time coefficients. Dtype MUST be
+// float16, bfloat16, or float32.
 type ExecutionTimeQuery struct {
 	Model              string
 	Dtype              string
@@ -165,58 +176,31 @@ type ExecutionTimeQuery struct {
 	GPUVRAM            *uint64
 }
 
-type getLLMExecutionTimeResponse struct {
-	Message string           `json:"message"`
-	Data    LLMExecutionTime `json:"data"`
-}
-
-type getSDExecutionTimeResponse struct {
-	Message string          `json:"message"`
-	Data    SDExecutionTime `json:"data"`
+type executionTimeResponse[T any] struct {
+	Message string `json:"message"`
+	Data    T      `json:"data"`
 }
 
 // GetLLMExecutionTime fetches LLM execution-time coefficients from
-// GET /v2/models/llm/execution-time with model and min_vram selection.
-func (c *Client) GetLLMExecutionTime(ctx context.Context, model string, minVRAM uint64) (*LLMExecutionTime, error) {
-	query := ExecutionTimeQuery{Model: model, MinVRAM: &minVRAM}
-	return c.GetLLMExecutionTimeWithQuery(ctx, query)
+// GET /v2/models/llm/execution-time.
+func (c *Client) GetLLMExecutionTime(ctx context.Context, query ExecutionTimeQuery) (*LLMExecutionTime, error) {
+	return getExecutionTime[LLMExecutionTime](ctx, c, "llm", query)
 }
 
-func (c *Client) GetLLMExecutionTimeWithQuery(ctx context.Context, query ExecutionTimeQuery) (*LLMExecutionTime, error) {
-	reqURL, err := c.executionTimeURL("/v2/models/llm/execution-time", query)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("relay llm execution-time request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var parsed getLLMExecutionTimeResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse relay llm execution-time response: %w", err)
-	}
-	return &parsed.Data, nil
-}
-
+// GetSDExecutionTime fetches image execution-time coefficients from
+// GET /v2/models/sd/execution-time.
 func (c *Client) GetSDExecutionTime(ctx context.Context, query ExecutionTimeQuery) (*SDExecutionTime, error) {
-	reqURL, err := c.executionTimeURL("/v2/models/sd/execution-time", query)
+	return getExecutionTime[SDExecutionTime](ctx, c, "sd", query)
+}
+
+// GetVideoExecutionTime fetches video execution-time coefficients from
+// GET /v2/models/video/execution-time.
+func (c *Client) GetVideoExecutionTime(ctx context.Context, query ExecutionTimeQuery) (*VideoExecutionTime, error) {
+	return getExecutionTime[VideoExecutionTime](ctx, c, "video", query)
+}
+
+func getExecutionTime[T any](ctx context.Context, c *Client, kind string, query ExecutionTimeQuery) (*T, error) {
+	reqURL, err := c.executionTimeURL("/v2/models/"+kind+"/execution-time", query)
 	if err != nil {
 		return nil, err
 	}
@@ -235,11 +219,11 @@ func (c *Client) GetSDExecutionTime(ctx context.Context, query ExecutionTimeQuer
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("relay sd execution-time request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("relay %s execution-time request failed with status %d: %s", kind, resp.StatusCode, string(body))
 	}
-	var parsed getSDExecutionTimeResponse
+	var parsed executionTimeResponse[T]
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("failed to parse relay sd execution-time response: %w", err)
+		return nil, fmt.Errorf("failed to parse relay %s execution-time response: %w", kind, err)
 	}
 	return &parsed.Data, nil
 }
@@ -257,11 +241,13 @@ func (c *Client) executionTimeURL(path string, query ExecutionTimeQuery) (string
 	if hasGPUName != hasGPUVRAM {
 		return "", fmt.Errorf("gpu_name and gpu_vram must be provided together")
 	}
+	dtype, err := models.ParseConcreteDType(query.Dtype)
+	if err != nil {
+		return "", err
+	}
 	values := url.Values{}
 	values.Set("model", query.Model)
-	if query.Dtype != "" {
-		values.Set("dtype", query.Dtype)
-	}
+	values.Set("dtype", string(dtype))
 	quantKey, err := models.QuantizationConfigKey(query.QuantizationConfig)
 	if err != nil {
 		return "", fmt.Errorf("invalid quantization_config: %w", err)

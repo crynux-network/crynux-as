@@ -16,7 +16,7 @@ func writeCatalogList(c *gin.Context, data []any) {
 	})
 }
 
-// Models returns the merged catalog of all chat and image models.
+// Models returns the merged catalog of all chat, image, and video models.
 func Models(c *gin.Context) {
 	writeCatalogList(c, service.ListModelsCatalogAll())
 }
@@ -31,6 +31,11 @@ func ImageModels(c *gin.Context) {
 	writeCatalogList(c, service.ListModelsCatalogImage())
 }
 
+// VideoModels returns Crynux video catalog rows.
+func VideoModels(c *gin.Context) {
+	writeCatalogList(c, service.ListModelsCatalogVideo())
+}
+
 // RetrieveModel implements the OpenAI-compatible retrieve model endpoint.
 // When multiple catalog rows share a model id, the response is a list envelope.
 func RetrieveModel(c *gin.Context) {
@@ -41,6 +46,9 @@ func RetrieveModel(c *gin.Context) {
 		return
 	case "image":
 		ImageModels(c)
+		return
+	case "video":
+		VideoModels(c)
 		return
 	}
 

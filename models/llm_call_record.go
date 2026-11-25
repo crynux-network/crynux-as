@@ -24,7 +24,7 @@ type TaskCallRecord struct {
 	ExecutionSource       ExecutionSource `json:"execution_source" gorm:"type:string;size:32;not null;default:crynux"`
 	SharedAPIKeyID        *uint           `json:"-" gorm:"index:idx_task_call_records_shared_api_key_id,priority:1"`
 	ModelCacheHash        string          `json:"model_cache_hash" gorm:"column:model_cache_hash;type:string;size:64;not null;default:''"`
-	ExecutionDType        string          `json:"execution_dtype" gorm:"column:execution_dtype;type:string;size:64;not null;default:''"`
+	DType                 string          `json:"dtype" gorm:"column:dtype;type:string;size:64;not null;default:''"`
 	QuantizationConfig    json.RawMessage `json:"quantization_config" gorm:"type:longtext"`
 	Components            json.RawMessage `json:"components" gorm:"type:longtext"`
 	PromptTokens          uint64          `json:"prompt_tokens" gorm:"not null;default:0"`
@@ -34,6 +34,11 @@ type TaskCallRecord struct {
 	ImageHeight           uint64          `json:"image_height" gorm:"not null;default:0"`
 	ImageSteps            uint64          `json:"image_steps" gorm:"not null;default:0"`
 	ImageCount            uint64          `json:"image_count" gorm:"not null;default:0"`
+	VideoWidth            uint64          `json:"video_width" gorm:"not null;default:0"`
+	VideoHeight           uint64          `json:"video_height" gorm:"not null;default:0"`
+	VideoNumFrames        uint64          `json:"video_num_frames" gorm:"not null;default:0"`
+	VideoSteps            uint64          `json:"video_steps" gorm:"not null;default:0"`
+	VideoCount            uint64          `json:"video_count" gorm:"not null;default:0"`
 	PriorityGwei          BigInt          `json:"priority_gwei" gorm:"type:string;size:255;not null"`
 	TokenUsageApplicable  int8            `json:"token_usage_applicable" gorm:"not null"`
 	Status                TaskCallStatus  `json:"status" gorm:"not null;default:0;index"`

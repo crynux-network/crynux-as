@@ -41,7 +41,7 @@ func TestSelectPricingExampleModelsKeepsSameVRAMDifferentQuant(t *testing.T) {
 			MinVRAM:         96,
 			NodeCount:       2,
 			OnDiskNodeCount: 19,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: "null",
 			ModelCacheHash:  "hash-full",
 		},
@@ -50,7 +50,7 @@ func TestSelectPricingExampleModelsKeepsSameVRAMDifferentQuant(t *testing.T) {
 			MinVRAM:         96,
 			NodeCount:       2,
 			OnDiskNodeCount: 19,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: `{"quant_method":"bitsandbytes","quant_kwargs":{"load_in_8bit":true}}`,
 			ModelCacheHash:  "hash-8bit",
 		},
@@ -59,7 +59,7 @@ func TestSelectPricingExampleModelsKeepsSameVRAMDifferentQuant(t *testing.T) {
 			MinVRAM:         24,
 			NodeCount:       2,
 			OnDiskNodeCount: 19,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: `{"quant_method":"bitsandbytes","quant_kwargs":{"load_in_4bit":true}}`,
 			ModelCacheHash:  "hash-4bit",
 		},
@@ -68,7 +68,7 @@ func TestSelectPricingExampleModelsKeepsSameVRAMDifferentQuant(t *testing.T) {
 			MinVRAM:         24,
 			NodeCount:       3,
 			OnDiskNodeCount: 20,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: "null",
 			ModelCacheHash:  "hash-9b",
 		},
@@ -108,7 +108,7 @@ func TestSelectPricingExampleModelsCollapsesDtypeForSameQuantAndVRAM(t *testing.
 			MinVRAM:         24,
 			NodeCount:       1,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "float16",
+			DType:           "float16",
 			QuantizationKey: "null",
 			ModelCacheHash:  "hash-f16",
 		},
@@ -117,7 +117,7 @@ func TestSelectPricingExampleModelsCollapsesDtypeForSameQuantAndVRAM(t *testing.
 			MinVRAM:         24,
 			NodeCount:       5,
 			OnDiskNodeCount: 3,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: "null",
 			ModelCacheHash:  "hash-bf16",
 		},
@@ -127,7 +127,7 @@ func TestSelectPricingExampleModelsCollapsesDtypeForSameQuantAndVRAM(t *testing.
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
-	if got[0].ExecutionDType != "bfloat16" || got[0].NodeCount != 5 {
+	if got[0].DType != "bfloat16" || got[0].NodeCount != 5 {
 		t.Fatalf("got = %+v, want bfloat16 with node count 5", got[0])
 	}
 }
@@ -139,7 +139,7 @@ func TestSelectPricingExampleModelsKeepsSameQuantDifferentVRAM(t *testing.T) {
 			MinVRAM:         24,
 			NodeCount:       2,
 			OnDiskNodeCount: 5,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: "null",
 			ModelCacheHash:  "hash-24",
 		},
@@ -148,7 +148,7 @@ func TestSelectPricingExampleModelsKeepsSameQuantDifferentVRAM(t *testing.T) {
 			MinVRAM:         48,
 			NodeCount:       2,
 			OnDiskNodeCount: 5,
-			ExecutionDType:  "bfloat16",
+			DType:           "bfloat16",
 			QuantizationKey: "null",
 			ModelCacheHash:  "hash-48",
 		},

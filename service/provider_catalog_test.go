@@ -67,8 +67,8 @@ func TestValidateProviderCrynuxCollisions(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"message": "success",
 			"data": []map[string]any{
-				testLLMRow("collide", "GPT-4o", "bfloat16", nil, 8, 1, 1),
-				testLLMRow("other", "org/other", "bfloat16", nil, 8, 1, 1),
+				testLLMRow("GPT-4o", "bfloat16", nil, 8, 1, 1),
+				testLLMRow("org/other", "bfloat16", nil, 8, 1, 1),
 			},
 		})
 	}))

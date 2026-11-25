@@ -4,7 +4,6 @@ import (
 	"crynux_as/models"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 /* Request */
@@ -197,6 +196,7 @@ type ChatCompletionsMeta struct {
 	QueueTimeout        *uint64
 	StreamOptions       *StreamOptionsMeta
 	N                   int
+	HasDtype            bool
 	Dtype               string
 	QuantizationConfig  json.RawMessage
 }
@@ -267,6 +267,7 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 		Stop:                req.Stop,
 	})
 
+	hasDtype, dtype := parseRequestDtype(raw)
 	taskArgs := models.GPTTaskArgs{
 		Version:            models.GPTTaskArgsVersion,
 		Model:              req.Model,
@@ -276,11 +277,10 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 		ResponseFormat:     responseFormat,
 		GenerationConfig:   generationConfig,
 		TemplateArgs:       buildTemplateArgs(req.ChatTemplateKwargs, req.ReasoningEffort),
-		DType:              resolveDType(req.Model),
 		QuantizationConfig: req.QuantizationConfig,
 	}
-	if strings.TrimSpace(req.Dtype) != "" {
-		taskArgs.DType = models.DType(strings.ToLower(strings.TrimSpace(req.Dtype)))
+	if hasDtype && dtype != "" {
+		taskArgs.DType = models.DType(dtype)
 	}
 
 	taskMessages, err := BuildTemplateToolCallMessages(req.Model, crynuxTaskMessages(messages))
@@ -301,7 +301,8 @@ func BuildChatCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJS
 		VramLimit:           req.VramLimit,
 		QueueTimeout:        req.QueueTimeout,
 		N:                   req.N,
-		Dtype:               strings.ToLower(strings.TrimSpace(req.Dtype)),
+		HasDtype:            hasDtype,
+		Dtype:               dtype,
 		QuantizationConfig:  req.QuantizationConfig,
 	}
 	if req.StreamOptions != nil {

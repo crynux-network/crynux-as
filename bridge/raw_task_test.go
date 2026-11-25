@@ -139,6 +139,41 @@ func TestGetTaskStatusesUsesBatchEndpoint(t *testing.T) {
 	}
 }
 
+func TestDownloadVideoResultUsesVideoEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/inference_tasks/11/video" || r.Method != http.MethodGet {
+			t.Errorf("method/path = %s %q", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Accept"); got != "video/mp4" {
+			t.Errorf("accept = %q", got)
+		}
+		w.Header().Set("Content-Type", "video/mp4")
+		_, _ = w.Write([]byte("mp4-bytes"))
+	}))
+	defer server.Close()
+
+	client := NewRawTaskClient(server.URL, "key")
+	result, err := client.DownloadVideoResult(context.Background(), 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result.Body) != "mp4-bytes" || result.ContentType != "video/mp4" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestDownloadVideoResultReturnsBridgeError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "task is not successful", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := NewRawTaskClient(server.URL, "key")
+	if _, err := client.DownloadVideoResult(context.Background(), 11); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestBridgeTaskTerminalStatus(t *testing.T) {
 	tests := []struct {
 		status   string

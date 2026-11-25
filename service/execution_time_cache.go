@@ -12,28 +12,21 @@ import (
 )
 
 type executionTimeCacheEntry struct {
-	coefficients relay.LLMExecutionTime
-	expiresAt    time.Time
-}
-
-type sdExecutionTimeCacheEntry struct {
-	coefficients relay.SDExecutionTime
+	coefficients any
 	expiresAt    time.Time
 }
 
 type executionTimeCache struct {
-	mu        sync.RWMutex
-	client    *relay.Client
-	ttl       time.Duration
-	now       func() time.Time
-	entries   map[string]executionTimeCacheEntry
-	sdEntries map[string]sdExecutionTimeCacheEntry
+	mu      sync.RWMutex
+	client  *relay.Client
+	ttl     time.Duration
+	now     func() time.Time
+	entries map[string]executionTimeCacheEntry
 }
 
 var llmExecutionTimeCache = &executionTimeCache{
-	now:       time.Now,
-	entries:   map[string]executionTimeCacheEntry{},
-	sdEntries: map[string]sdExecutionTimeCacheEntry{},
+	now:     time.Now,
+	entries: map[string]executionTimeCacheEntry{},
 }
 
 // InitExecutionTimeCache sets the Relay client and TTL used by on-demand
@@ -44,19 +37,42 @@ func InitExecutionTimeCache(client *relay.Client, ttlSeconds uint64) {
 	llmExecutionTimeCache.client = client
 	llmExecutionTimeCache.ttl = time.Duration(ttlSeconds) * time.Second
 	llmExecutionTimeCache.entries = map[string]executionTimeCacheEntry{}
-	llmExecutionTimeCache.sdEntries = map[string]sdExecutionTimeCacheEntry{}
 }
 
+// GetLLMExecutionTime returns cached LLM coefficients for query, fetching from
+// Relay when missing or expired. query.Dtype MUST be a concrete dtype.
+func GetLLMExecutionTime(ctx context.Context, query relay.ExecutionTimeQuery) (*relay.LLMExecutionTime, error) {
+	return getCachedExecutionTime(ctx, "llm", query, (*relay.Client).GetLLMExecutionTime)
+}
+
+// GetSDExecutionTime returns cached image coefficients for query, fetching from
+// Relay when missing or expired. query.Dtype MUST be a concrete dtype.
 func GetSDExecutionTime(ctx context.Context, query relay.ExecutionTimeQuery) (*relay.SDExecutionTime, error) {
-	key, err := sdExecutionTimeCacheKey(query)
+	return getCachedExecutionTime(ctx, "sd", query, (*relay.Client).GetSDExecutionTime)
+}
+
+// GetVideoExecutionTime returns cached video coefficients for query, fetching
+// from Relay when missing or expired. query.Dtype MUST be a concrete dtype.
+func GetVideoExecutionTime(ctx context.Context, query relay.ExecutionTimeQuery) (*relay.VideoExecutionTime, error) {
+	return getCachedExecutionTime(ctx, "video", query, (*relay.Client).GetVideoExecutionTime)
+}
+
+func getCachedExecutionTime[T any](
+	ctx context.Context,
+	kind string,
+	query relay.ExecutionTimeQuery,
+	fetch func(*relay.Client, context.Context, relay.ExecutionTimeQuery) (*T, error),
+) (*T, error) {
+	queryKey, err := executionTimeCacheKey(query)
 	if err != nil {
 		return nil, err
 	}
+	key := kind + "|" + queryKey
 	llmExecutionTimeCache.mu.RLock()
 	client := llmExecutionTimeCache.client
 	ttl := llmExecutionTimeCache.ttl
 	nowFn := llmExecutionTimeCache.now
-	entry, ok := llmExecutionTimeCache.sdEntries[key]
+	entry, ok := llmExecutionTimeCache.entries[key]
 	llmExecutionTimeCache.mu.RUnlock()
 	if client == nil {
 		return nil, errors.New("execution time cache is not initialized")
@@ -64,17 +80,17 @@ func GetSDExecutionTime(ctx context.Context, query relay.ExecutionTimeQuery) (*r
 	if ttl <= 0 {
 		return nil, errors.New("execution time cache ttl is not set")
 	}
-	now := nowFn()
-	if ok && now.Before(entry.expiresAt) {
-		copied := entry.coefficients
-		return &copied, nil
+	if ok && nowFn().Before(entry.expiresAt) {
+		cached := entry.coefficients.(T)
+		return &cached, nil
 	}
-	fetched, err := client.GetSDExecutionTime(ctx, query)
+
+	fetched, err := fetch(client, ctx, query)
 	if err != nil {
 		return nil, err
 	}
 	llmExecutionTimeCache.mu.Lock()
-	llmExecutionTimeCache.sdEntries[key] = sdExecutionTimeCacheEntry{
+	llmExecutionTimeCache.entries[key] = executionTimeCacheEntry{
 		coefficients: *fetched,
 		expiresAt:    nowFn().Add(ttl),
 	}
@@ -83,10 +99,14 @@ func GetSDExecutionTime(ctx context.Context, query relay.ExecutionTimeQuery) (*r
 	return &copied, nil
 }
 
-func sdExecutionTimeCacheKey(query relay.ExecutionTimeQuery) (string, error) {
+func executionTimeCacheKey(query relay.ExecutionTimeQuery) (string, error) {
 	model := strings.ToLower(strings.TrimSpace(query.Model))
 	if model == "" {
 		return "", errors.New("model is required")
+	}
+	dtype, err := models.ParseConcreteDType(query.Dtype)
+	if err != nil {
+		return "", err
 	}
 	minVRAM, gpuVRAM := uint64(0), uint64(0)
 	if query.MinVRAM != nil {
@@ -103,59 +123,11 @@ func sdExecutionTimeCacheKey(query relay.ExecutionTimeQuery) (string, error) {
 		"%s|%s|%s|%d|%s|%d",
 		model,
 		quantKey,
-		strings.ToLower(strings.TrimSpace(query.Dtype)),
+		dtype,
 		minVRAM,
 		strings.ToLower(strings.TrimSpace(query.GPUName)),
 		gpuVRAM,
 	), nil
-}
-
-// GetLLMExecutionTime returns cached coefficients for (model, effectiveVRAM),
-// fetching from Relay when missing or expired.
-func GetLLMExecutionTime(ctx context.Context, model string, effectiveVRAM uint64) (*relay.LLMExecutionTime, error) {
-	query := relay.ExecutionTimeQuery{Model: model, MinVRAM: &effectiveVRAM}
-	return GetLLMExecutionTimeForQuery(ctx, query)
-}
-
-func GetLLMExecutionTimeForQuery(ctx context.Context, query relay.ExecutionTimeQuery) (*relay.LLMExecutionTime, error) {
-	queryKey, err := sdExecutionTimeCacheKey(query)
-	if err != nil {
-		return nil, err
-	}
-	key := "llm|" + queryKey
-	llmExecutionTimeCache.mu.RLock()
-	client := llmExecutionTimeCache.client
-	ttl := llmExecutionTimeCache.ttl
-	nowFn := llmExecutionTimeCache.now
-	entry, ok := llmExecutionTimeCache.entries[key]
-	llmExecutionTimeCache.mu.RUnlock()
-	if client == nil {
-		return nil, errors.New("execution time cache is not initialized")
-	}
-	if ttl <= 0 {
-		return nil, errors.New("execution time cache ttl is not set")
-	}
-
-	now := nowFn()
-	if ok && now.Before(entry.expiresAt) {
-		copied := entry.coefficients
-		return &copied, nil
-	}
-
-	fetched, err := client.GetLLMExecutionTimeWithQuery(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-
-	llmExecutionTimeCache.mu.Lock()
-	llmExecutionTimeCache.entries[key] = executionTimeCacheEntry{
-		coefficients: *fetched,
-		expiresAt:    nowFn().Add(ttl),
-	}
-	llmExecutionTimeCache.mu.Unlock()
-
-	copied := *fetched
-	return &copied, nil
 }
 
 func resetExecutionTimeCacheForTest() {
@@ -165,7 +137,6 @@ func resetExecutionTimeCacheForTest() {
 	llmExecutionTimeCache.ttl = 0
 	llmExecutionTimeCache.now = time.Now
 	llmExecutionTimeCache.entries = map[string]executionTimeCacheEntry{}
-	llmExecutionTimeCache.sdEntries = map[string]sdExecutionTimeCacheEntry{}
 }
 
 func setExecutionTimeCacheNowForTest(now func() time.Time) {

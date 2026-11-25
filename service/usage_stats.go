@@ -138,14 +138,17 @@ func applyCallRecordToBaseStats(tx *gorm.DB, record models.TaskCallRecord, credi
 		totalInc = record.TotalTokens
 	}
 
-	imageInc := uint64(0)
-	if record.TaskType == models.TaskTypeImage {
+	var imageInc, videoInc uint64
+	switch record.TaskType {
+	case models.TaskTypeImage:
 		imageInc = record.ImageCount
+	case models.TaskTypeVideo:
+		videoInc = record.VideoCount
 	}
-	if err := upsertAccountHourlyStat(tx, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, imageInc, credits); err != nil {
+	if err := upsertAccountHourlyStat(tx, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, imageInc, videoInc, credits); err != nil {
 		return err
 	}
-	if err := upsertProjectHourlyStat(tx, record.ProjectID, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, imageInc, credits); err != nil {
+	if err := upsertProjectHourlyStat(tx, record.ProjectID, record.UserID, hourStart, successInc, failureInc, promptInc, completionInc, totalInc, imageInc, videoInc, credits); err != nil {
 		return err
 	}
 	if err := upsertProjectModel10mStat(
@@ -158,6 +161,7 @@ func applyCallRecordToBaseStats(tx *gorm.DB, record models.TaskCallRecord, credi
 		completionInc,
 		totalInc,
 		imageInc,
+		videoInc,
 		credits,
 	); err != nil {
 		return err
@@ -180,7 +184,7 @@ func upsertAccountHourlyStat(
 	tx *gorm.DB,
 	userID uint,
 	periodStart int64,
-	successInc, failureInc, promptInc, completionInc, totalInc, imageInc uint64,
+	successInc, failureInc, promptInc, completionInc, totalInc, imageInc, videoInc uint64,
 	credits *big.Int,
 ) error {
 	var row models.AccountUsageHourlyStat
@@ -198,6 +202,7 @@ func upsertAccountHourlyStat(
 			CompletionTokens: completionInc,
 			TotalTokens:      totalInc,
 			ImageCount:       imageInc,
+			VideoCount:       videoInc,
 			Credits:          models.BigInt{Int: *new(big.Int).Set(credits)},
 		}
 		return tx.Create(&row).Error
@@ -212,6 +217,7 @@ func upsertAccountHourlyStat(
 	row.CompletionTokens += completionInc
 	row.TotalTokens += totalInc
 	row.ImageCount += imageInc
+	row.VideoCount += videoInc
 	sum := new(big.Int).Add(&row.Credits.Int, credits)
 	row.Credits = models.BigInt{Int: *sum}
 	return tx.Save(&row).Error
@@ -221,7 +227,7 @@ func upsertProjectHourlyStat(
 	tx *gorm.DB,
 	projectID, userID uint,
 	periodStart int64,
-	successInc, failureInc, promptInc, completionInc, totalInc, imageInc uint64,
+	successInc, failureInc, promptInc, completionInc, totalInc, imageInc, videoInc uint64,
 	credits *big.Int,
 ) error {
 	var row models.ProjectUsageHourlyStat
@@ -240,6 +246,7 @@ func upsertProjectHourlyStat(
 			CompletionTokens: completionInc,
 			TotalTokens:      totalInc,
 			ImageCount:       imageInc,
+			VideoCount:       videoInc,
 			Credits:          models.BigInt{Int: *new(big.Int).Set(credits)},
 		}
 		return tx.Create(&row).Error
@@ -254,6 +261,7 @@ func upsertProjectHourlyStat(
 	row.CompletionTokens += completionInc
 	row.TotalTokens += totalInc
 	row.ImageCount += imageInc
+	row.VideoCount += videoInc
 	sum := new(big.Int).Add(&row.Credits.Int, credits)
 	row.Credits = models.BigInt{Int: *sum}
 	return tx.Save(&row).Error
@@ -263,16 +271,16 @@ func upsertProjectModel10mStat(
 	tx *gorm.DB,
 	record models.TaskCallRecord,
 	periodStart int64,
-	successInc, failureInc, promptInc, completionInc, totalInc, imageInc uint64,
+	successInc, failureInc, promptInc, completionInc, totalInc, imageInc, videoInc uint64,
 	credits *big.Int,
 ) error {
 	var row models.ProjectModelUsage10mStat
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where(
-			"project_id = ? AND model_cache_hash = ? AND execution_dtype = ? AND model = ? AND period_start = ?",
+			"project_id = ? AND model_cache_hash = ? AND dtype = ? AND model = ? AND period_start = ?",
 			record.ProjectID,
 			record.ModelCacheHash,
-			record.ExecutionDType,
+			record.DType,
 			record.Model,
 			periodStart,
 		).
@@ -282,7 +290,7 @@ func upsertProjectModel10mStat(
 			ProjectID:          record.ProjectID,
 			UserID:             record.UserID,
 			ModelCacheHash:     record.ModelCacheHash,
-			ExecutionDType:     record.ExecutionDType,
+			DType:              record.DType,
 			Model:              record.Model,
 			PeriodStart:        periodStart,
 			TaskType:           record.TaskType,
@@ -295,6 +303,7 @@ func upsertProjectModel10mStat(
 			CompletionTokens:   completionInc,
 			TotalTokens:        totalInc,
 			ImageCount:         imageInc,
+			VideoCount:         videoInc,
 			Credits:            models.BigInt{Int: *new(big.Int).Set(credits)},
 		}
 		return tx.Create(&row).Error
@@ -309,6 +318,7 @@ func upsertProjectModel10mStat(
 	row.CompletionTokens += completionInc
 	row.TotalTokens += totalInc
 	row.ImageCount += imageInc
+	row.VideoCount += videoInc
 	sum := new(big.Int).Add(&row.Credits.Int, credits)
 	row.Credits = models.BigInt{Int: *sum}
 	return tx.Save(&row).Error
@@ -653,7 +663,7 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 	type agg struct {
 		Model              string
 		ModelCacheHash     string
-		ExecutionDType     string
+		DType              string
 		TaskType           models.TaskType
 		QuantizationConfig json.RawMessage
 		Components         json.RawMessage
@@ -664,17 +674,18 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 		CompletionTokens   uint64
 		TotalTokens        uint64
 		ImageCount         uint64
+		VideoCount         uint64
 		Credits            *big.Int
 	}
 	byIdentity := make(map[string]*agg)
 	for _, row := range rows {
-		key := row.ModelCacheHash + "\x00" + row.ExecutionDType + "\x00" + row.Model
+		key := row.ModelCacheHash + "\x00" + row.DType + "\x00" + row.Model
 		item, ok := byIdentity[key]
 		if !ok {
 			item = &agg{
 				Model:              row.Model,
 				ModelCacheHash:     row.ModelCacheHash,
-				ExecutionDType:     row.ExecutionDType,
+				DType:              row.DType,
 				TaskType:           row.TaskType,
 				QuantizationConfig: cloneRawOrNull(row.QuantizationConfig),
 				Components:         cloneRawOrNull(row.Components),
@@ -689,6 +700,7 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 		item.CompletionTokens += row.CompletionTokens
 		item.TotalTokens += row.TotalTokens
 		item.ImageCount += row.ImageCount
+		item.VideoCount += row.VideoCount
 		item.Credits.Add(item.Credits, &row.Credits.Int)
 	}
 
@@ -710,7 +722,7 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 		if list[i].ModelCacheHash != list[j].ModelCacheHash {
 			return list[i].ModelCacheHash < list[j].ModelCacheHash
 		}
-		return list[i].ExecutionDType < list[j].ExecutionDType
+		return list[i].DType < list[j].DType
 	})
 	if len(list) > 10 {
 		list = list[:10]
@@ -723,7 +735,7 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 			Rank:               uint(i + 1),
 			Model:              item.Model,
 			ModelCacheHash:     item.ModelCacheHash,
-			ExecutionDType:     item.ExecutionDType,
+			DType:              item.DType,
 			TaskType:           item.TaskType,
 			QuantizationConfig: item.QuantizationConfig,
 			Components:         item.Components,
@@ -734,6 +746,7 @@ func rebuildModelSnapshot(tx *gorm.DB, projectID uint, rangeType models.UsageSta
 			CompletionTokens:   item.CompletionTokens,
 			TotalTokens:        item.TotalTokens,
 			ImageCount:         item.ImageCount,
+			VideoCount:         item.VideoCount,
 			Credits:            models.BigInt{Int: *new(big.Int).Set(item.Credits)},
 			WindowStart:        windowStart,
 			WindowEnd:          windowEnd,

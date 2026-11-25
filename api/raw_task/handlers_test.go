@@ -2,17 +2,16 @@ package raw_task
 
 import (
 	"context"
-	"crypto/sha256"
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/relay"
 	"crynux_as/service"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,12 +21,15 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func setupRawImagePrepareEnv(t *testing.T, loadedRows []map[string]any) {
+const testVideoSchemaURL = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/heads/main/schema/video-task.json"
+
+func setupRawPrepareEnv(t *testing.T, loadedRows []map[string]any) {
 	t.Helper()
 	cfg := &config.AppConfig{}
 	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
 	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
 	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
+	cfg.TaskSchema.VideoInference = testVideoSchemaURL
 	cfg.LLM.DefaultVramLimit = 24
 	cfg.LLM.MinCatalogOnDiskNodeCount = 1
 	cfg.LLM.CreditsPerGwei = "1"
@@ -39,6 +41,7 @@ func setupRawImagePrepareEnv(t *testing.T, loadedRows []map[string]any) {
 	cfg.LLM.MinTaskPriceCNX = map[string]string{config.MaxTaskPriceProviderCrynux: "0"}
 	cfg.LLM.EmptyQueueMedianPriorityGwei = "1"
 	cfg.LLM.MaxCrynuxTaskArgsBytes = 1000000
+	cfg.LLM.DefaultMaxTokens = 256
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() {
 		config.SetConfigForTest(nil)
@@ -57,6 +60,23 @@ func setupRawImagePrepareEnv(t *testing.T, loadedRows []map[string]any) {
 					"seconds_per_sd_pixel_step": 0.000001,
 				},
 			})
+		case strings.Contains(r.URL.Path, "/v2/models/video/execution-time"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "success",
+				"data": map[string]any{
+					"overhead_seconds":       1.0,
+					"seconds_per_video_unit": 0.0000001,
+				},
+			})
+		case strings.Contains(r.URL.Path, "/v2/models/llm/execution-time"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "success",
+				"data": map[string]any{
+					"constant_seconds":         1.0,
+					"seconds_per_input_token":  0.001,
+					"seconds_per_output_token": 0.01,
+				},
+			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -71,29 +91,145 @@ func setupRawImagePrepareEnv(t *testing.T, loadedRows []map[string]any) {
 	service.InitExecutionTimeCache(client, 60)
 }
 
-func testImageLoadedRow(seed, model, dtype string, quant any, components map[string]any, minVRAM int) map[string]any {
-	return testImageLoadedRowWithOnDisk(seed, model, dtype, quant, components, minVRAM, 2)
+func testVideoLoadedRow(model, dtype string, minVRAM, onDisk int) map[string]any {
+	return map[string]any{
+		"model_id":             model,
+		"model_type":           "video",
+		"dtype":                dtype,
+		"quantization_config":  nil,
+		"components":           map[string]any{},
+		"loras":                []any{},
+		"min_vram":             minVRAM,
+		"in_memory_node_count": 1,
+		"on_disk_node_count":   onDisk,
+	}
 }
 
-func testImageLoadedRowWithOnDisk(seed, model, dtype string, quant any, components map[string]any, minVRAM, onDisk int) map[string]any {
+func testLLMLoadedRow(model, dtype string, minVRAM int) map[string]any {
+	return map[string]any{
+		"model_id":             model,
+		"model_type":           "llm",
+		"dtype":                dtype,
+		"quantization_config":  nil,
+		"min_vram":             minVRAM,
+		"in_memory_node_count": 1,
+		"on_disk_node_count":   2,
+	}
+}
+
+func decodePreparedTaskArgs(t *testing.T, prepared *preparedTask) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(prepared.taskArgs), &payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func TestPrepareTaskRejectsUnsupportedTaskType(t *testing.T) {
+	for _, value := range []models.TaskType{2, 4} {
+		taskType := value
+		_, err := prepareTask(context.Background(), &models.Project{}, CreateTaskRequest{
+			TaskArgs: `{"version":"3.7.1","model":"example/model","messages":[]}`,
+			TaskType: &taskType,
+		})
+		if err == nil || err.Error() != "task_type must be 0, 1, or 3" {
+			t.Fatalf("task_type %d: error = %v", value, err)
+		}
+	}
+}
+
+func TestPrepareTaskLLMRejectsAutoDType(t *testing.T) {
+	setupRawPrepareEnv(t, []map[string]any{testLLMLoadedRow("org/llm", "float16", 20)})
+	taskType := models.TaskTypeLLM
+	_, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
+		TaskType: &taskType,
+		TaskArgs: `{"version":"3.7.0","model":"org/llm","messages":[{"role":"user","content":"hi"}],"dtype":"auto"}`,
+	})
+	if !errors.Is(err, service.ErrInvalidExecutionConfig) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPrepareTaskLLMOmittedDTypeUsesLoadedRow(t *testing.T) {
+	setupRawPrepareEnv(t, []map[string]any{testLLMLoadedRow("org/llm", "float16", 20)})
+	taskType := models.TaskTypeLLM
+	prepared, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
+		TaskType: &taskType,
+		TaskArgs: `{"version":"3.7.0","model":"Org/LLM","messages":[{"role":"user","content":"hi"}]}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodePreparedTaskArgs(t, prepared)
+	if payload["dtype"] != "float16" || payload["version"] != "3.7.0" {
+		t.Fatalf("dtype/version = %#v %#v", payload["dtype"], payload["version"])
+	}
+	if prepared.model != "org/llm" || prepared.minVram == nil || *prepared.minVram != 20 {
+		t.Fatalf("model=%q minVram=%#v", prepared.model, prepared.minVram)
+	}
+	if prepared.llmBilling == nil {
+		t.Fatal("missing LLM billing data")
+	}
+}
+
+func TestPrepareTaskVideoResolvesDTypeAndFee(t *testing.T) {
+	setupRawPrepareEnv(t, []map[string]any{testVideoLoadedRow("org/video", "float16", 32, 2)})
+	taskType := models.TaskTypeVideo
+	prepared, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
+		TaskType: &taskType,
+		TaskArgs: `{
+			"version": "3.8.0",
+			"base_model": {"name": "Org/Video"},
+			"prompt": "a cat",
+			"task_config": {"width": 832, "height": 480, "num_frames": 33, "steps": 10}
+		}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodePreparedTaskArgs(t, prepared)
+	if payload["dtype"] != "float16" || payload["version"] != "3.8.0" {
+		t.Fatalf("dtype/version = %#v %#v", payload["dtype"], payload["version"])
+	}
+	if prepared.model != "org/video" || prepared.minVram == nil || *prepared.minVram != 32 {
+		t.Fatalf("model=%q minVram=%#v", prepared.model, prepared.minVram)
+	}
+	if prepared.llmBilling != nil || prepared.credits == "" || prepared.credits == "0" {
+		t.Fatalf("prepared billing = %+v", prepared)
+	}
+	if !rawTaskModelReady(prepared) {
+		t.Fatal("video model with on-disk nodes must be ready")
+	}
+}
+
+func TestPrepareTaskVideoRejectsAutoDType(t *testing.T) {
+	setupRawPrepareEnv(t, []map[string]any{testVideoLoadedRow("org/video", "float16", 32, 2)})
+	taskType := models.TaskTypeVideo
+	_, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
+		TaskType: &taskType,
+		TaskArgs: `{"version":"3.8.0","base_model":{"name":"org/video"},"prompt":"a cat","dtype":"auto"}`,
+	})
+	if !errors.Is(err, service.ErrInvalidExecutionConfig) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func testImageLoadedRow(model, dtype string, quant any, components map[string]any, minVRAM int) map[string]any {
+	return testImageLoadedRowWithOnDisk(model, dtype, quant, components, minVRAM, 2)
+}
+
+func testImageLoadedRowWithOnDisk(model, dtype string, quant any, components map[string]any, minVRAM, onDisk int) map[string]any {
 	if components == nil {
 		components = map[string]any{}
 	}
-	sum := sha256.Sum256([]byte(seed))
 	return map[string]any{
-		"model_id":            model,
-		"model_type":          "sd",
-		"model_cache_hash":    hex.EncodeToString(sum[:]),
-		"execution_dtype":     dtype,
-		"quantization_config": quant,
-		"model_cache_config": map[string]any{
-			"task_kind":           "image",
-			"base_model":          map[string]any{"source_type": "huggingface", "repository": model, "format": "diffusers", "format_kwargs": map[string]any{}},
-			"components":          components,
-			"lora":                nil,
-			"dtype":               dtype,
-			"quantization_config": quant,
-		},
+		"model_id":             model,
+		"model_type":           "sd",
+		"dtype":                dtype,
+		"quantization_config":  quant,
+		"components":           components,
+		"lora":                 nil,
 		"min_vram":             minVRAM,
 		"in_memory_node_count": 1,
 		"on_disk_node_count":   onDisk,
@@ -117,6 +253,7 @@ func TestPrepareTaskRejectsRequiredGPU(t *testing.T) {
 	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
 	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
 	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
+	cfg.TaskSchema.VideoInference = testVideoSchemaURL
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() {
 		config.SetConfigForTest(nil)
@@ -187,7 +324,7 @@ func testRawImageProject() *models.Project {
 }
 
 func TestPrepareTaskImageAutoMissRejects(t *testing.T) {
-	setupRawImagePrepareEnv(t, nil)
+	setupRawPrepareEnv(t, nil)
 	taskType := models.TaskTypeImage
 	_, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
 		TaskType: &taskType,
@@ -199,14 +336,14 @@ func TestPrepareTaskImageAutoMissRejects(t *testing.T) {
 			"task_config": {"image_width": 1024, "image_height": 1024, "steps": 40, "num_images_per_prompt": 1}
 		}`,
 	})
-	if !errors.Is(err, service.ErrImageExecutionUnresolved) {
+	if !errors.Is(err, service.ErrInvalidExecutionConfig) {
 		t.Fatalf("error = %v", err)
 	}
 }
 
 func TestPrepareTaskImageAutoPersistsResolvedTaskArgs(t *testing.T) {
-	setupRawImagePrepareEnv(t, []map[string]any{
-		testImageLoadedRow("plain", "org/image", "bfloat16", nil, nil, 18),
+	setupRawPrepareEnv(t, []map[string]any{
+		testImageLoadedRow("org/image", "bfloat16", nil, nil, 18),
 	})
 	taskType := models.TaskTypeImage
 	prepared, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
@@ -234,8 +371,8 @@ func TestPrepareTaskImageAutoPersistsResolvedTaskArgs(t *testing.T) {
 }
 
 func TestPrepareTaskImagePreservesClientTaskArgsVersion(t *testing.T) {
-	setupRawImagePrepareEnv(t, []map[string]any{
-		testImageLoadedRow("plain", "org/image", "bfloat16", nil, nil, 18),
+	setupRawPrepareEnv(t, []map[string]any{
+		testImageLoadedRow("org/image", "bfloat16", nil, nil, 18),
 	})
 	taskType := models.TaskTypeImage
 	prepared, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
@@ -261,8 +398,8 @@ func TestPrepareTaskImagePreservesClientTaskArgsVersion(t *testing.T) {
 }
 
 func TestPrepareTaskRejectsOversizedFinalTaskArgs(t *testing.T) {
-	setupRawImagePrepareEnv(t, []map[string]any{
-		testImageLoadedRow("plain", "org/image", "bfloat16", nil, nil, 18),
+	setupRawPrepareEnv(t, []map[string]any{
+		testImageLoadedRow("org/image", "bfloat16", nil, nil, 18),
 	})
 	config.GetConfig().LLM.MaxCrynuxTaskArgsBytes = 200
 	taskType := models.TaskTypeImage
@@ -281,8 +418,8 @@ func TestPrepareTaskRejectsOversizedFinalTaskArgs(t *testing.T) {
 }
 
 func TestPrepareTaskImageConcreteDtypeAllowsNewModel(t *testing.T) {
-	setupRawImagePrepareEnv(t, []map[string]any{
-		testImageLoadedRow("other", "org/image", "bfloat16", nil, nil, 18),
+	setupRawPrepareEnv(t, []map[string]any{
+		testImageLoadedRow("org/image", "bfloat16", nil, nil, 18),
 	})
 	taskType := models.TaskTypeImage
 	prepared, err := prepareTask(context.Background(), testRawImageProject(), CreateTaskRequest{
@@ -384,6 +521,7 @@ func TestCreateTaskModelNotReadyReturns400WithHeldJob(t *testing.T) {
 	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
 	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
 	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
+	cfg.TaskSchema.VideoInference = testVideoSchemaURL
 	cfg.LLM.DefaultVramLimit = 24
 	cfg.LLM.MinCatalogOnDiskNodeCount = 1
 	cfg.LLM.CreditsPerGwei = "1"
@@ -408,7 +546,7 @@ func TestCreateTaskModelNotReadyReturns400WithHeldJob(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"message": "success",
 				"data": []map[string]any{
-					testImageLoadedRowWithOnDisk("cold", "org/cold-image", "bfloat16", nil, nil, 18, 0),
+					testImageLoadedRowWithOnDisk("org/cold-image", "bfloat16", nil, nil, 18, 0),
 				},
 			})
 		case strings.Contains(r.URL.Path, "/v2/models/sd/execution-time"):
@@ -445,10 +583,10 @@ func TestCreateTaskModelNotReadyReturns400WithHeldJob(t *testing.T) {
 	project := models.Project{
 		UserID: user.ID, Name: "p", EndpointToken: "ep-raw-not-ready",
 		APIKeyHash: "h", APIKeyPrefix: "pref",
-		PriorityGwei: models.BigInt{Int: *big.NewInt(1)},
-		Status:       models.ProjectStatusActive,
-		CreditsDay:   models.BigInt{Int: *big.NewInt(0)},
-		CostLevelMode: models.CostLevelModeStatic,
+		PriorityGwei:          models.BigInt{Int: *big.NewInt(1)},
+		Status:                models.ProjectStatusActive,
+		CreditsDay:            models.BigInt{Int: *big.NewInt(0)},
+		CostLevelMode:         models.CostLevelModeStatic,
 		AutoMaxCreditsPerTask: &autoMax,
 	}
 	if err := db.Create(&project).Error; err != nil {
@@ -504,6 +642,7 @@ func TestBatchCreateReturns400WhenAnyItemHasError(t *testing.T) {
 	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
 	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
 	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
+	cfg.TaskSchema.VideoInference = testVideoSchemaURL
 	cfg.LLM.LoadedModelsRefreshInterval = 1800
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() {
@@ -578,12 +717,84 @@ func TestWriteModelNotReadyErrorIncludesClientTaskID(t *testing.T) {
 	}
 }
 
+func TestDownloadVideoReturnsStoredMP4(t *testing.T) {
+	db := setupRawCreateRejectDB(t)
+	cfg := &config.AppConfig{}
+	cfg.LLM.TaskResultDir = t.TempDir()
+	config.SetConfigForTest(cfg)
+	t.Cleanup(func() { config.SetConfigForTest(nil) })
+
+	bridgeID := uint(77)
+	project := models.Project{UserID: 1, Name: "p", EndpointToken: "ep-video-dl", APIKeyHash: "h", APIKeyPrefix: "pref"}
+	if err := db.Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	other := models.Project{UserID: 2, Name: "o", EndpointToken: "ep-video-other", APIKeyHash: "h2", APIKeyPrefix: "pref2"}
+	if err := db.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	newJob := func(taskType models.TaskType, status models.TaskJobStatus) models.TaskJob {
+		job := models.TaskJob{
+			ProjectID: project.ID, UserID: project.UserID, TaskType: taskType, APIType: models.TaskAPITypeRaw,
+			Model: "org/video", TaskArgsJSON: "{}", Status: status, BridgeClientTaskID: &bridgeID,
+		}
+		if err := db.Create(&job).Error; err != nil {
+			t.Fatal(err)
+		}
+		return job
+	}
+	completed := newJob(models.TaskTypeVideo, models.TaskJobStatusCompleted)
+	running := newJob(models.TaskTypeVideo, models.TaskJobStatusInProgress)
+	image := newJob(models.TaskTypeImage, models.TaskJobStatusCompleted)
+	if err := service.SaveVideoResultMP4(completed.ID, []byte("mp4-body")); err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/:project/inference_tasks/:client_task_id/video", func(c *gin.Context) {
+		if c.Param("project") == "other" {
+			c.Set("llm_project", &other)
+		} else {
+			c.Set("llm_project", &project)
+		}
+		DownloadVideo(c)
+	})
+	get := func(projectKey string, jobID uint) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/"+projectKey+"/inference_tasks/"+strconv.FormatUint(uint64(jobID), 10)+"/video", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	w := get("own", completed.ID)
+	if w.Code != http.StatusOK || w.Body.String() != "mp4-body" {
+		t.Fatalf("status=%d body=%q", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Content-Type"); got != "video/mp4" {
+		t.Fatalf("content-type = %q", got)
+	}
+	if got := w.Header().Get("Content-Disposition"); got != "attachment; filename=0.mp4" {
+		t.Fatalf("content-disposition = %q", got)
+	}
+	if w := get("other", completed.ID); w.Code != http.StatusNotFound {
+		t.Fatalf("cross-project status=%d", w.Code)
+	}
+	if w := get("own", running.ID); w.Code != http.StatusConflict {
+		t.Fatalf("running status=%d", w.Code)
+	}
+	if w := get("own", image.ID); w.Code != http.StatusBadRequest {
+		t.Fatalf("image job status=%d", w.Code)
+	}
+}
+
 func TestCreateTaskRejectsRequiredGPUWithoutCallRecord(t *testing.T) {
 	db := setupRawCreateRejectDB(t)
 	cfg := &config.AppConfig{}
 	cfg.TaskSchema.GPTInference = "https://raw.githubusercontent.com/crynux-network/gpt-task/refs/tags/v3.7.0/schema/gpt-inference-task.json"
 	cfg.TaskSchema.StableDiffusionInference = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/image-task.json"
 	cfg.TaskSchema.StableDiffusionFinetuneLora = "https://raw.githubusercontent.com/crynux-network/stable-diffusion-task/refs/tags/v3.7.1/schema/stable-diffusion-finetune-lora-task.json"
+	cfg.TaskSchema.VideoInference = testVideoSchemaURL
 	config.SetConfigForTest(cfg)
 	t.Cleanup(func() {
 		config.SetConfigForTest(nil)

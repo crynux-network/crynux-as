@@ -230,6 +230,9 @@ func checkTaskSchemaConfig() error {
 	if strings.TrimSpace(schema.StableDiffusionFinetuneLora) == "" {
 		return errors.New("task_schema.stable_diffusion_finetune_lora is not set")
 	}
+	if strings.TrimSpace(schema.VideoInference) == "" {
+		return errors.New("task_schema.video_inference is not set")
+	}
 	return nil
 }
 
@@ -299,8 +302,11 @@ func checkLLMConfig() error {
 	if appConfig.LLM.MaxCrynuxTaskArgsBytes == 0 {
 		return errors.New("llm.max_crynux_task_args_bytes is not set")
 	}
-	if appConfig.LLM.MaxCrynuxTaskArgsBytes >= MaxCrynuxWebSocketFrameBytes {
-		return fmt.Errorf("llm.max_crynux_task_args_bytes must be less than %d", MaxCrynuxWebSocketFrameBytes)
+	if appConfig.Http.MaxBodyBytes <= 0 {
+		return errors.New("http.max_body_bytes is not set")
+	}
+	if appConfig.LLM.MaxCrynuxTaskArgsBytes >= uint64(appConfig.Http.MaxBodyBytes) {
+		return fmt.Errorf("llm.max_crynux_task_args_bytes must be less than http.max_body_bytes (%d)", appConfig.Http.MaxBodyBytes)
 	}
 	return nil
 }
@@ -402,10 +408,6 @@ func parseNonNegativeCNXDecimal(value string) (*big.Int, error) {
 	}
 	return new(big.Int).Set(scaled.Num()), nil
 }
-
-// MaxCrynuxWebSocketFrameBytes is the WebSocket frame limit enforced by Crynux
-// Node workers. Each frame carries the full TaskArgs JSON plus outer task fields.
-const MaxCrynuxWebSocketFrameBytes = 1 << 20
 
 // MaxTaskPriceProviderCrynux is the llm.max_task_price_cnx map key for Crynux Network tasks.
 const MaxTaskPriceProviderCrynux = "crynux"

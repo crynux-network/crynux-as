@@ -30,8 +30,8 @@ func TestModelNotReadyRetryMinutes(t *testing.T) {
 
 func TestCrynuxLLMModelReadyIgnoresQuantization(t *testing.T) {
 	refreshTestLoadedModels(t, 3, 24,
-		testLLMRow("a", "Org/Model", "float16", map[string]any{"quant_method": "awq"}, 24, 0, 0),
-		testLLMRow("b", "Org/Model", "bfloat16", nil, 24, 0, 3),
+		testLLMRow("Org/Model", "float16", map[string]any{"quant_method": "awq"}, 24, 0, 0),
+		testLLMRow("Org/Model", "bfloat16", nil, 24, 0, 3),
 	)
 
 	if !CrynuxLLMModelReady("ORG/MODEL") {
@@ -43,16 +43,14 @@ func TestCrynuxLLMModelReadyIgnoresQuantization(t *testing.T) {
 }
 
 func TestCrynuxImageTaskArgsReadyRequiresSameComponentsSet(t *testing.T) {
-	baseOnly := testImageRow("base", "acme/base", "float16", nil, map[string]any{}, nil, 24, 0, 5)
-	withComponent := testImageRow(
-		"comp",
-		"acme/base",
+	baseOnly := testImageRow("acme/base", "float16", nil, map[string]any{}, nil, 24, 0, 5)
+	withComponent := testImageRow("acme/base",
 		"float16",
 		nil,
 		map[string]any{
 			"transformer": map[string]any{
-				"format":     "diffusers",
-				"repository": "acme/transformer-v2",
+				"format": "diffusers",
+				"repo":   "acme/transformer-v2",
 			},
 		},
 		nil,
@@ -60,15 +58,13 @@ func TestCrynuxImageTaskArgsReadyRequiresSameComponentsSet(t *testing.T) {
 		0,
 		0,
 	)
-	withComponentReady := testImageRow(
-		"comp-ready",
-		"acme/base",
+	withComponentReady := testImageRow("acme/base",
 		"bfloat16",
 		map[string]any{"quant_method": "bitsandbytes"},
 		map[string]any{
 			"transformer": map[string]any{
-				"format":     "diffusers",
-				"repository": "acme/transformer-v2",
+				"format": "diffusers",
+				"repo":   "acme/transformer-v2",
 			},
 		},
 		map[string]any{"model": "acme/lora", "weight_file_name": "w.safetensors", "weight": "100"},

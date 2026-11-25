@@ -26,7 +26,7 @@ func handleProviderTaskJobRequest(c *gin.Context, project *models.Project, apiTy
 		writeClientError(c, http.StatusBadRequest, "Provider models do not support the Completions API")
 		return
 	}
-	if parsed.vramLimit != nil || parsed.dtype != "" || parsed.quantizationConfig != nil {
+	if parsed.vramLimit != nil || parsed.hasDtype || parsed.quantizationConfig != nil {
 		writeClientError(c, http.StatusBadRequest, "Crynux execution fields are not supported for Provider models")
 		return
 	}

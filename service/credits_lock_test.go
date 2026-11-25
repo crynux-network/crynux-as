@@ -579,7 +579,7 @@ func TestSettleDoesNotConsumeOtherJobsLockedCredits(t *testing.T) {
 	jobA, err := ReserveCreditsAndCreateRawTaskJob(ctx, db, CreateRawTaskJobInput{
 		Project: &project, TaskType: models.TaskTypeImage, APIType: models.TaskAPITypeImagesGenerations,
 		Model: "org/image", TaskArgsJSON: imageArgs, PriorityGwei: big.NewInt(10),
-		BilledVram: 8, TaskFeeWei: big.NewInt(0), ImageCredits: big.NewInt(150),
+		BilledVram: 8, TaskFeeWei: big.NewInt(0), SettlementCredits: big.NewInt(150),
 		CreditsToLock: big.NewInt(100),
 	})
 	if err != nil {
@@ -588,14 +588,14 @@ func TestSettleDoesNotConsumeOtherJobsLockedCredits(t *testing.T) {
 	jobB, err := ReserveCreditsAndCreateRawTaskJob(ctx, db, CreateRawTaskJobInput{
 		Project: &project, TaskType: models.TaskTypeImage, APIType: models.TaskAPITypeImagesGenerations,
 		Model: "org/image", TaskArgsJSON: imageArgs, PriorityGwei: big.NewInt(10),
-		BilledVram: 8, TaskFeeWei: big.NewInt(0), ImageCredits: big.NewInt(100),
+		BilledVram: 8, TaskFeeWei: big.NewInt(0), SettlementCredits: big.NewInt(100),
 		CreditsToLock: big.NewInt(100),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := CompleteAndSettleImageTaskJob(ctx, db, jobA); err != nil {
+	if _, err := CompleteAndSettleFixedCreditsTaskJob(ctx, db, jobA); err != nil {
 		t.Fatal(err)
 	}
 	var account models.CreditAccount
@@ -613,7 +613,7 @@ func TestSettleDoesNotConsumeOtherJobsLockedCredits(t *testing.T) {
 		t.Fatalf("events=%+v", events)
 	}
 
-	if _, err := CompleteAndSettleImageTaskJob(ctx, db, jobB); err != nil {
+	if _, err := CompleteAndSettleFixedCreditsTaskJob(ctx, db, jobB); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
@@ -656,7 +656,7 @@ func TestSettleChargesZeroWhenOtherLocksConsumeAvailable(t *testing.T) {
 	jobA, err := ReserveCreditsAndCreateRawTaskJob(ctx, db, CreateRawTaskJobInput{
 		Project: &project, TaskType: models.TaskTypeImage, APIType: models.TaskAPITypeImagesGenerations,
 		Model: "org/image", TaskArgsJSON: imageArgs, PriorityGwei: big.NewInt(10),
-		BilledVram: 8, TaskFeeWei: big.NewInt(0), ImageCredits: big.NewInt(150),
+		BilledVram: 8, TaskFeeWei: big.NewInt(0), SettlementCredits: big.NewInt(150),
 		CreditsToLock: big.NewInt(100),
 	})
 	if err != nil {
@@ -665,7 +665,7 @@ func TestSettleChargesZeroWhenOtherLocksConsumeAvailable(t *testing.T) {
 	if _, err := ReserveCreditsAndCreateRawTaskJob(ctx, db, CreateRawTaskJobInput{
 		Project: &project, TaskType: models.TaskTypeImage, APIType: models.TaskAPITypeImagesGenerations,
 		Model: "org/image", TaskArgsJSON: imageArgs, PriorityGwei: big.NewInt(10),
-		BilledVram: 8, TaskFeeWei: big.NewInt(0), ImageCredits: big.NewInt(100),
+		BilledVram: 8, TaskFeeWei: big.NewInt(0), SettlementCredits: big.NewInt(100),
 		CreditsToLock: big.NewInt(100),
 	}); err != nil {
 		t.Fatal(err)
@@ -676,7 +676,7 @@ func TestSettleChargesZeroWhenOtherLocksConsumeAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := CompleteAndSettleImageTaskJob(ctx, db, jobA); err != nil {
+	if _, err := CompleteAndSettleFixedCreditsTaskJob(ctx, db, jobA); err != nil {
 		t.Fatal(err)
 	}
 	var account models.CreditAccount

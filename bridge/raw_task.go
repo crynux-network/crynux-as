@@ -268,13 +268,23 @@ type DownloadedResult struct {
 }
 
 func (c *RawTaskClient) DownloadImageResult(ctx context.Context, clientTaskID uint, index uint64) (*DownloadedResult, error) {
-	url := fmt.Sprintf("%s/v1/inference_tasks/%d/images/%d", c.baseURL, clientTaskID, index)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	path := fmt.Sprintf("/v1/inference_tasks/%d/images/%d", clientTaskID, index)
+	return c.downloadFileResult(ctx, path, "image/png", "image")
+}
+
+// DownloadVideoResult downloads the MP4 result of a successful Video task.
+func (c *RawTaskClient) DownloadVideoResult(ctx context.Context, clientTaskID uint) (*DownloadedResult, error) {
+	path := fmt.Sprintf("/v1/inference_tasks/%d/video", clientTaskID)
+	return c.downloadFileResult(ctx, path, "video/mp4", "video")
+}
+
+func (c *RawTaskClient) downloadFileResult(ctx context.Context, path, accept, label string) (*DownloadedResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Accept", "image/png")
+	req.Header.Set("Accept", accept)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -285,7 +295,7 @@ func (c *RawTaskClient) DownloadImageResult(ctx context.Context, clientTaskID ui
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("bridge download image failed: %s", string(body))
+		return nil, fmt.Errorf("bridge download %s failed: %s", label, string(body))
 	}
 	return &DownloadedResult{
 		Body:               body,

@@ -5,36 +5,46 @@ import (
 	"crynux_as/models"
 	"encoding/json"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
-// TaskCallWorkloadFields are Relay identity and Image workload fields stored on
-// task_call_records and returned by Recent Requests / Charges.
+// TaskCallWorkloadFields are Relay identity and Image/Video workload fields
+// stored on task_call_records and returned by Recent Requests / Charges.
 type TaskCallWorkloadFields struct {
 	ModelCacheHash     string
-	ExecutionDType     string
+	DType              string
 	QuantizationConfig json.RawMessage
 	Components         json.RawMessage
 	ImageWidth         uint64
 	ImageHeight        uint64
 	ImageSteps         uint64
 	ImageCount         uint64
+	VideoWidth         uint64
+	VideoHeight        uint64
+	VideoNumFrames     uint64
+	VideoSteps         uint64
+	VideoCount         uint64
 }
 
-// ExtractTaskCallWorkloadFields derives display and identity fields from TaskArgs.
-// When a loaded-models exact match exists, model_cache_hash and execution_dtype
-// come from that Relay view; otherwise hash stays empty and TaskArgs values are kept.
+// ExtractTaskCallWorkloadFields derives display and identity fields from resolved
+// TaskArgs. model_cache_hash is the local deterministic hash of the TaskArgs
+// execution identity and stays empty when the TaskArgs has no concrete dtype.
 func ExtractTaskCallWorkloadFields(taskType models.TaskType, model string, taskArgsJSON string) TaskCallWorkloadFields {
 	out := TaskCallWorkloadFields{}
 	if strings.TrimSpace(taskArgsJSON) == "" {
 		return out
 	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(taskArgsJSON), &payload); err != nil {
+	payload, err := decodeJSONObjectUseNumber([]byte(taskArgsJSON))
+	if err != nil {
 		return out
 	}
 
-	if taskType == models.TaskTypeImage {
+	switch taskType {
+	case models.TaskTypeImage:
 		return extractImageTaskCallWorkload(model, taskArgsJSON, payload)
+	case models.TaskTypeVideo:
+		return extractVideoTaskCallWorkload(model, taskArgsJSON, payload)
 	}
 	return extractLLMTaskCallWorkload(model, payload)
 }
@@ -48,30 +58,30 @@ func extractLLMTaskCallWorkload(model string, payload map[string]any) TaskCallWo
 		}
 	}
 
-	if dtype, ok := payload["dtype"].(string); ok {
-		out.ExecutionDType = normalizeExecutionDType(dtype)
-	}
 	if quantRaw, ok := payload["quantization_config"]; ok {
 		out.QuantizationConfig = marshalJSONRaw(quantRaw)
 	}
-
-	hasQuant := payload["quantization_config"] != nil
-	hasDtype := out.ExecutionDType != "" && out.ExecutionDType != autoExecutionDType
-	var quant any
-	if hasQuant {
-		quant = payload["quantization_config"]
-	}
-	if loaded, ok := lookupExactOrMax(modelID, quant, out.ExecutionDType, hasQuant, hasDtype); ok {
-		out.ModelCacheHash = loaded.ModelCacheHash
-		out.ExecutionDType = loaded.ExecutionDType
-		if len(out.QuantizationConfig) == 0 {
-			out.QuantizationConfig = cloneRawOrNull(loaded.QuantizationConfig)
-		}
-	}
+	out.DType, out.ModelCacheHash = workloadModelCacheHash(modelCacheTaskKindLLM, modelID, payload)
 	return out
 }
 
-func extractImageTaskCallWorkload(model string, taskArgsJSON string, payload map[string]any) TaskCallWorkloadFields {
+// workloadModelCacheHash returns empty values for TaskArgs without a dtype,
+// such as Provider tasks.
+func workloadModelCacheHash(taskKind, modelID string, payload map[string]any) (string, string) {
+	if _, ok := payload["dtype"]; !ok {
+		return "", ""
+	}
+	dtype, hash, err := taskArgsModelCacheHash(taskKind, modelID, payload)
+	if err != nil {
+		log.Debugf("cannot derive model cache hash for %s model %q: %v", taskKind, modelID, err)
+		return "", ""
+	}
+	return dtype, hash
+}
+
+// diffusionWorkloadIdentity fills the model id, quantization_config, and
+// components shared by Image and Video TaskArgs.
+func diffusionWorkloadIdentity(model string, payload map[string]any) (string, TaskCallWorkloadFields) {
 	out := TaskCallWorkloadFields{}
 	modelID := llmadapter.NormalizeModelID(model)
 	if modelID == "" {
@@ -82,9 +92,6 @@ func extractImageTaskCallWorkload(model string, taskArgsJSON string, payload map
 		}
 	}
 
-	if dtype, ok := payload["dtype"].(string); ok {
-		out.ExecutionDType = normalizeExecutionDType(dtype)
-	}
 	if quantRaw, ok := payload["quantization_config"]; ok {
 		out.QuantizationConfig = marshalJSONRaw(quantRaw)
 	}
@@ -95,6 +102,28 @@ func extractImageTaskCallWorkload(model string, taskArgsJSON string, payload map
 			out.Components = marshalJSONRaw(componentsRaw)
 		}
 	}
+	return modelID, out
+}
+
+// extractVideoTaskCallWorkload records the billed video dimensions. One Video
+// task produces one video.
+func extractVideoTaskCallWorkload(model string, taskArgsJSON string, payload map[string]any) TaskCallWorkloadFields {
+	modelID, out := diffusionWorkloadIdentity(model, payload)
+	if dims, err := resolveVideoTaskDimensions(taskArgsJSON); err == nil {
+		out.VideoWidth = dims.Width
+		out.VideoHeight = dims.Height
+		out.VideoNumFrames = dims.NumFrames
+		out.VideoSteps = dims.Steps
+	} else {
+		log.Debugf("cannot resolve video dimensions for model %q: %v", modelID, err)
+	}
+	out.VideoCount = 1
+	out.DType, out.ModelCacheHash = workloadModelCacheHash(modelCacheTaskKindVideo, modelID, payload)
+	return out
+}
+
+func extractImageTaskCallWorkload(model string, taskArgsJSON string, payload map[string]any) TaskCallWorkloadFields {
+	modelID, out := diffusionWorkloadIdentity(model, payload)
 
 	if cfg, ok := payload["task_config"].(map[string]any); ok {
 		out.ImageWidth = uintFromAny(cfg["image_width"])
@@ -105,16 +134,7 @@ func extractImageTaskCallWorkload(model string, taskArgsJSON string, payload map
 		out.ImageCount = count
 	}
 
-	if loaded, ok, err := GetLoadedSDModelExact(modelID, taskArgsJSON); err == nil && ok {
-		out.ModelCacheHash = loaded.ModelCacheHash
-		out.ExecutionDType = loaded.ExecutionDType
-		if len(out.QuantizationConfig) == 0 {
-			out.QuantizationConfig = cloneRawOrNull(loaded.QuantizationConfig)
-		}
-		if len(out.Components) == 0 && loaded.Components != nil {
-			out.Components = marshalJSONRaw(loaded.Components)
-		}
-	}
+	out.DType, out.ModelCacheHash = workloadModelCacheHash(modelCacheTaskKindImage, modelID, payload)
 	return out
 }
 
@@ -166,8 +186,19 @@ func cloneRawOrNull(raw json.RawMessage) json.RawMessage {
 
 // TaskTypeAPIString maps stored TaskType to API string values.
 func TaskTypeAPIString(taskType models.TaskType) string {
-	if taskType == models.TaskTypeImage {
+	switch taskType {
+	case models.TaskTypeImage:
 		return "image"
+	case models.TaskTypeVideo:
+		return "video"
 	}
 	return "llm"
+}
+
+// UintPtrIfPositive maps an unset (zero) workload field to API null.
+func UintPtrIfPositive(v uint64) *uint64 {
+	if v == 0 {
+		return nil
+	}
+	return &v
 }

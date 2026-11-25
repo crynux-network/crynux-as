@@ -4,7 +4,6 @@ import (
 	"crynux_as/models"
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
 /* Request */
@@ -89,12 +88,17 @@ type CompletionsMeta struct {
 	QueueTimeout        *uint64
 	StreamOptions       *StreamOptionsMeta
 	N                   int
+	HasDtype            bool
 	Dtype               string
 	QuantizationConfig  json.RawMessage
 }
 
 // BuildCompletionsTaskArgs parses a completions request body and returns canonical task args JSON.
 func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON string, meta CompletionsMeta, err error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "", CompletionsMeta{}, newValidationError("", "invalid JSON body")
+	}
 	var req CompletionsRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return "", CompletionsMeta{}, newValidationError("", "invalid JSON body")
@@ -125,16 +129,16 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 		Stop:                req.Stop,
 	})
 
+	hasDtype, dtype := parseRequestDtype(raw)
 	taskArgs := models.GPTTaskArgs{
 		Version:            models.GPTTaskArgsVersion,
 		Model:              req.Model,
 		Messages:           messages,
 		GenerationConfig:   generationConfig,
-		DType:              resolveDType(req.Model),
 		QuantizationConfig: req.QuantizationConfig,
 	}
-	if strings.TrimSpace(req.Dtype) != "" {
-		taskArgs.DType = models.DType(strings.ToLower(strings.TrimSpace(req.Dtype)))
+	if hasDtype && dtype != "" {
+		taskArgs.DType = models.DType(dtype)
 	}
 	taskArgsPayload := buildLLMTaskArgsPayload(taskArgs, messages, req.Seed)
 	taskArgsBytes, err := json.Marshal(taskArgsPayload)
@@ -150,7 +154,8 @@ func BuildCompletionsTaskArgs(body []byte, defaultMaxTokens int) (taskArgsJSON s
 		VramLimit:           req.VramLimit,
 		QueueTimeout:        req.QueueTimeout,
 		N:                   req.N,
-		Dtype:               strings.ToLower(strings.TrimSpace(req.Dtype)),
+		HasDtype:            hasDtype,
+		Dtype:               dtype,
 		QuantizationConfig:  req.QuantizationConfig,
 	}
 	if req.Stream {
