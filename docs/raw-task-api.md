@@ -108,7 +108,14 @@ Public status MUST be `running`, `success`, or `failed`. Pending submission, sub
 
 The task view MUST include `phase`. Allowed values are `queued`, `running`, `validating`, `uploading`, `finalizing`, `success`, and `failed`. When `status` is `running`, `phase` MUST be one of `queued`, `running`, `validating`, `uploading`, or `finalizing`. When `status` is `success`, `phase` MUST be `success`. When `status` is `failed`, `phase` MUST be `failed`. A newly created job MUST use `phase` `queued` until the background worker advances it from Bridge status. When `phase` is `running` and an estimated execution completion time is known, the task view MUST include `estimated_completion_at`. Otherwise the task view MUST omit `estimated_completion_at`.
 
-For an Image or Video job, create MUST generate one unguessable random `result_download_hash` (cryptographically random, at least 32 bytes encoded as lowercase hex) and persist it on the `task_jobs` row before returning. Create, get, batch status, and abort task views for that job MUST include the same `result_download_hash` string. The hash MUST NOT be the local task id, Bridge client task id, or any Bridge/Relay `task_id_commitment`. LLM jobs MUST omit `result_download_hash`. Clients MUST build public download URLs as `{as_public_origin}/api/result/{result_download_hash}/images/{index}` for Image results and `{as_public_origin}/api/result/{result_download_hash}/video` for Video results.
+For an Image or Video job, create MUST generate one unguessable random `result_download_hash` (cryptographically random, at least 32 bytes encoded as lowercase hex) and persist it on the `task_jobs` row before returning. Create, get, batch status, and abort task views for that job MUST include the same `result_download_hash` string. The hash MUST NOT be the local task id, Bridge client task id, or any Bridge/Relay `task_id_commitment`. LLM jobs MUST omit `result_download_hash`.
+
+When status is `success`, the task view MUST also include ready-to-use public download URLs built by AS from configured `http.public_origin` and that hash. Clients MUST use these fields and MUST NOT assemble download URLs themselves:
+
+* Image: `result_download_urls` is a JSON array of absolute URLs, one per image index from `0` through `num_images_per_prompt - 1` (or Provider `n - 1`), each equal to `{http.public_origin}/api/result/{result_download_hash}/images/{index}`.
+* Video: `result_download_url` is the absolute URL `{http.public_origin}/api/result/{result_download_hash}/video`.
+
+`http.public_origin` is specified in [configuration.md](./configuration.md). Non-success Image and Video views MUST omit `result_download_urls` and `result_download_url`. LLM views MUST omit both fields.
 
 ## Batch Operations
 

@@ -26,8 +26,12 @@ type TaskView struct {
 	EstimatedCompletionAt *time.Time      `json:"estimated_completion_at,omitempty"`
 	ErrorMessage          string          `json:"error_message,omitempty"`
 	ResultDownloadHash    string          `json:"result_download_hash,omitempty"`
-	CreatedAt             time.Time       `json:"created_at"`
-	UpdatedAt             time.Time       `json:"updated_at"`
+	// ResultDownloadURLs is set for successful Image tasks: one public URL per image index.
+	ResultDownloadURLs []string `json:"result_download_urls,omitempty"`
+	// ResultDownloadURL is set for a successful Video task: the public MP4 URL.
+	ResultDownloadURL string    `json:"result_download_url,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type BatchCreateRequest struct {

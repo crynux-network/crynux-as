@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"os"
 	"strings"
 
@@ -122,6 +123,11 @@ func checkHttpConfig() error {
 	if appConfig.Http.MaxBodyBytes <= 0 {
 		return errors.New("http.max_body_bytes is not set")
 	}
+	origin, err := normalizePublicOrigin(appConfig.Http.PublicOrigin)
+	if err != nil {
+		return err
+	}
+	appConfig.Http.PublicOrigin = origin
 	if appConfig.Http.JWT.ExpiresIn == 0 {
 		return errors.New("http.jwt.expires_in is not set")
 	}
@@ -132,6 +138,39 @@ func checkHttpConfig() error {
 		return errors.New("http.turnstile.secret_key is not set")
 	}
 	return nil
+}
+
+func normalizePublicOrigin(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("http.public_origin is not set")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("http.public_origin is invalid: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("http.public_origin must use http or https")
+	}
+	if parsed.Host == "" {
+		return "", errors.New("http.public_origin must include a host")
+	}
+	if parsed.User != nil {
+		return "", errors.New("http.public_origin must not include userinfo")
+	}
+	path := strings.TrimRight(parsed.EscapedPath(), "/")
+	if path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("http.public_origin must not include a path, query, or fragment")
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
+}
+
+// PublicOrigin returns the configured absolute public AS origin used in result download URLs.
+func PublicOrigin() string {
+	if appConfig == nil {
+		return ""
+	}
+	return appConfig.Http.PublicOrigin
 }
 
 func checkDBConfig() error {

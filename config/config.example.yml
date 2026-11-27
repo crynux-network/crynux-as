@@ -19,6 +19,7 @@ http:
   host: "0.0.0.0"
   port: "8090"
   max_body_bytes: 33554432
+  public_origin: "http://127.0.0.1:8090"
   jwt:
     secret_key_file: "config/secrets/jwt_secret_key.txt"
     expires_in: 604800

@@ -146,20 +146,4 @@ Crynux Bridge jobs MUST retain their current completion-first simulated SSE beha
 
 ## Startup Order
 
-AS MUST initialize Provider Key Sharing in this order:
-
-1. load and validate ordinary configuration;
-2. read and validate every configured encryption secret file;
-3. initialize logging;
-4. initialize MySQL;
-5. run migrations;
-6. initialize blockchain clients and existing external clients;
-7. initialize Service Provider adapters;
-8. validate and remove the encryption-key file;
-9. fail submitted or in-progress Provider jobs, and `pending_submit` Provider jobs with `phase = admitting`, from the prior process until no matching rows remain, and recover Credits holds;
-10. start existing blockchain and usage workers;
-11. refresh existing Crynux model and queue caches;
-12. start Bridge poller, Provider scheduler, and the existing Credits-lock reconciler;
-13. start the HTTP server.
-
-AS MUST NOT accept a Provider call before recovery and initial catalog construction finish.
+Whole-process startup order is specified in [process-lifecycle.md](../process-lifecycle.md). AS MUST NOT accept a Provider call before prior-process Provider recovery and initial catalog construction finish.

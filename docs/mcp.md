@@ -13,16 +13,16 @@ Both forms MUST use the same project authentication as Raw Task: `Authorization:
 
 ## Public Result Download Links
 
-Image and Video Raw Task jobs MUST receive one `result_download_hash` at create time. Clients MUST build download URLs from the Crynux AS public origin and that hash:
+Image and Video Raw Task jobs MUST receive one `result_download_hash` at create time. When a task view reports `status` `success`, AS MUST include ready-to-use public download URLs on that view, built from configured `http.public_origin` ([configuration.md](./configuration.md)):
 
-* Image: `{as_public_origin}/api/result/{result_download_hash}/images/{index}`
-* Video: `{as_public_origin}/api/result/{result_download_hash}/video`
+* Image: `result_download_urls` (absolute URL array, one entry per image index)
+* Video: `result_download_url` (absolute MP4 URL)
 
-`{index}` MUST be the zero-based image index for multi-image jobs. One job uses one hash for every image under that job.
+MCP tools and guides MUST present those fields from get/status responses. Clients MUST NOT assemble public download URLs from the hash.
 
-These routes MUST NOT require `Authorization`. Unknown hash, non-Image path for an Image hash, non-Video path for a Video hash, job not successful, missing result file, and retention-cleaned jobs MUST return HTTP 404.
+These public routes MUST NOT require `Authorization`. Unknown hash, non-Image path for an Image hash, non-Video path for a Video hash, job not successful, missing result file, and retention-cleaned jobs MUST return HTTP 404.
 
-LLM jobs MUST NOT receive `result_download_hash`. Authenticated Raw Task result routes under `/api/<endpoint_token>/v1/inference_tasks/...` remain unchanged.
+LLM jobs MUST NOT receive `result_download_hash` or download URL fields. Authenticated Raw Task result routes under `/api/<endpoint_token>/v1/inference_tasks/...` remain unchanged.
 
 Result files remain under `llm.task_result_dir` and are removed with the job by `llm.job_retention_days` cleanup. After cleanup, public hash downloads MUST return HTTP 404.
 
@@ -49,7 +49,7 @@ Remote MCP MUST provide:
 
 Remote MCP MUST NOT provide any Image or Video `download_*` or `save_*` tool, including batch download or save.
 
-When an Image or Video task succeeds, tool responses and guides MUST instruct the client to present the public download URL built from `result_download_hash`. Guides MUST state that bulk local save requires the local MCP package.
+When an Image or Video task succeeds, tool responses MUST include `result_download_urls` or `result_download_url`, and guides MUST instruct the client to present those URLs. Guides MUST state that bulk local save requires the local MCP package.
 
 ### Resources and prompts
 
@@ -80,16 +80,14 @@ Local MCP MUST additionally provide:
 | `save_task_image` | Download Image PNG(s) to a local directory; return paths. Supports one task or a batch. |
 | `save_task_video` | Download Video MP4 to a local directory; return the path. Supports one task or a batch. |
 
-Save tools MUST write under `output_dir` when provided, otherwise the package default download directory from user config. Image and Video save MAY use the authenticated Raw result routes or the public hash URLs.
+Save tools MUST require `output_dir` and MUST write files under that directory. Image and Video save MAY use the authenticated Raw result routes or the public hash URLs.
 
 ### Configuration
 
 Local package user config MUST include:
 
-* `base_url`: Crynux AS public origin (no trailing path required beyond the origin used to build `/api/<endpoint_token>/v1`).
+* `base_url`: the project Base URL ending with `/api/<endpoint_token>/v1` (the same URL shown in Crynux AS WebUI).
 * `api_key`: project API key.
-* `endpoint_token`: project endpoint token.
-* `download_dir` (optional): default directory for save tools.
 
 ## Division of Use
 

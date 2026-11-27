@@ -56,6 +56,7 @@ type AppConfig struct {
 		Host         string `mapstructure:"host"`
 		Port         string `mapstructure:"port"`
 		MaxBodyBytes int64  `mapstructure:"max_body_bytes"`
+		PublicOrigin string `mapstructure:"public_origin"`
 
 		JWT struct {
 			SecretKey     string `mapstructure:"secret_key"`

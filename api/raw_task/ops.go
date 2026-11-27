@@ -2,6 +2,7 @@ package raw_task
 
 import (
 	"context"
+	"crynux_as/api/tools"
 	"crynux_as/bridge"
 	"crynux_as/config"
 	"crynux_as/models"
@@ -12,6 +13,10 @@ import (
 
 	"gorm.io/gorm"
 )
+
+func publicOrigin() string {
+	return tools.PublicOrigin()
+}
 
 var (
 	ErrTaskNotFound      = errors.New("task not found")
@@ -43,7 +48,7 @@ func CreateForProject(ctx context.Context, project *models.Project, request Crea
 		return nil, err
 	}
 	if !rawTaskModelReady(prepared) {
-		view := taskView(job)
+		view := taskView(job, publicOrigin())
 		return &CreateOutcome{
 			View:           &view,
 			ClientTaskID:   job.ID,
@@ -52,7 +57,7 @@ func CreateForProject(ctx context.Context, project *models.Project, request Crea
 			HTTPStatusHint: http.StatusBadRequest,
 		}, nil
 	}
-	view := taskView(job)
+	view := taskView(job, publicOrigin())
 	return &CreateOutcome{View: &view, ClientTaskID: job.ID, HTTPStatusHint: http.StatusOK}, nil
 }
 
@@ -99,7 +104,7 @@ func GetForProject(ctx context.Context, projectID, id uint) (*TaskView, error) {
 		}
 		return nil, err
 	}
-	view := taskView(job)
+	view := taskView(job, publicOrigin())
 	return &view, nil
 }
 
@@ -134,7 +139,7 @@ func BatchStatusForProject(ctx context.Context, projectID uint, ids []uint) ([]B
 			results = append(results, BatchStatusItem{ClientTaskID: id, Error: "task not found"})
 			continue
 		}
-		view := taskView(job)
+		view := taskView(job, publicOrigin())
 		results = append(results, BatchStatusItem{ClientTaskID: id, ClientTask: &view})
 	}
 	return results, nil
@@ -146,7 +151,7 @@ func AbortForProject(ctx context.Context, projectID, id uint) (*TaskView, error)
 	if err != nil {
 		return nil, err
 	}
-	view := taskView(job)
+	view := taskView(job, publicOrigin())
 	return &view, nil
 }
 
@@ -165,7 +170,7 @@ func BatchAbortForProject(ctx context.Context, projectID uint, ids []uint) ([]Ba
 			results = append(results, BatchAbortItem{ClientTaskID: item.ClientTaskID, Error: item.Error})
 			continue
 		}
-		view := taskView(item.Job)
+		view := taskView(item.Job, publicOrigin())
 		results = append(results, BatchAbortItem{ClientTaskID: item.ClientTaskID, ClientTask: &view})
 	}
 	return results, nil

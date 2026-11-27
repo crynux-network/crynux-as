@@ -8,7 +8,6 @@ import (
 	"crynux_as/service"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -19,10 +18,7 @@ import (
 
 type contextKey string
 
-const (
-	projectContextKey contextKey = "mcp_project"
-	originContextKey  contextKey = "mcp_public_origin"
-)
+const projectContextKey contextKey = "mcp_project"
 
 func InitRoutes(engine *gin.Engine) {
 	mcpServer := newProjectMCPServer()
@@ -39,29 +35,11 @@ func InitRoutes(engine *gin.Engine) {
 	}
 }
 
-func publicOrigin(r *http.Request) string {
-	proto := r.Header.Get("X-Forwarded-Proto")
-	if proto == "" {
-		if r.TLS != nil {
-			proto = "https"
-		} else {
-			proto = "http"
-		}
-	}
-	host := r.Header.Get("X-Forwarded-Host")
-	if host == "" {
-		host = r.Host
-	}
-	return strings.TrimRight(proto+"://"+host, "/")
-}
-
 func projectFromGin(c *gin.Context) context.Context {
 	ctx := c.Request.Context()
 	if project := llm.GetProject(c); project != nil {
 		ctx = context.WithValue(ctx, projectContextKey, project)
 	}
-	origin := publicOrigin(c.Request)
-	ctx = context.WithValue(ctx, originContextKey, origin)
 	c.Request = c.Request.WithContext(ctx)
 	return ctx
 }
@@ -72,11 +50,6 @@ func getProject(ctx context.Context) (*models.Project, error) {
 		return nil, errors.New("project is not authenticated")
 	}
 	return project, nil
-}
-
-func getOrigin(ctx context.Context) string {
-	origin, _ := ctx.Value(originContextKey).(string)
-	return origin
 }
 
 func newProjectMCPServer() *mcpserver.MCPServer {
@@ -97,7 +70,7 @@ func newProjectMCPServer() *mcpserver.MCPServer {
 
 	s.AddTool(mcp.NewTool(
 		"create_task",
-		mcp.WithDescription("Create one Raw Task. task_type is 0 Image, 1 LLM, or 3 Video. For Image/Video success, build public download URLs from result_download_hash. Remote MCP has no image/video save tools; install the local MCP package for bulk local save."),
+		mcp.WithDescription("Create one Raw Task. task_type is 0 Image, 1 LLM, or 3 Video. When get_task reports success, Image tasks include result_download_urls and Video tasks include result_download_url. Remote MCP has no image/video save tools; install the local MCP package for bulk local save."),
 		mcp.WithString("task_args", mcp.Required(), mcp.Description("TaskArgs JSON string for the selected task_type.")),
 		mcp.WithNumber("task_type", mcp.Required(), mcp.Description("0 Image, 1 LLM, or 3 Video.")),
 		mcp.WithNumber("min_vram", mcp.Description("Optional minimum VRAM in GB.")),
@@ -194,7 +167,7 @@ func handleCreateTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
 	}
 	payload := gin.H{}
 	if outcome.View != nil {
-		payload["client_task"] = enrichTaskView(*outcome.View, getOrigin(ctx))
+		payload["client_task"] = *outcome.View
 	}
 	if outcome.ModelNotReady {
 		payload["error"] = outcome.ErrorMessage
@@ -221,22 +194,7 @@ func handleBatchCreateTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		}
 		return nil, err
 	}
-	origin := getOrigin(ctx)
-	out := make([]gin.H, 0, len(results))
-	for _, item := range results {
-		row := gin.H{"index": item.Index}
-		if item.Error != "" {
-			row["error"] = item.Error
-		}
-		if item.ClientTaskID != nil {
-			row["client_task_id"] = *item.ClientTaskID
-		}
-		if item.ClientTask != nil {
-			row["client_task"] = enrichTaskView(*item.ClientTask, origin)
-		}
-		out = append(out, row)
-	}
-	return jsonToolResult(gin.H{"has_error": hasError, "data": out})
+	return jsonToolResult(gin.H{"has_error": hasError, "data": results})
 }
 
 func handleGetTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -255,7 +213,7 @@ func handleGetTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolR
 		}
 		return nil, err
 	}
-	return jsonToolResult(enrichTaskView(*view, getOrigin(ctx)))
+	return jsonToolResult(view)
 }
 
 func handleBatchGetTaskStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -274,19 +232,7 @@ func handleBatchGetTaskStatus(ctx context.Context, req mcp.CallToolRequest) (*mc
 		}
 		return nil, err
 	}
-	origin := getOrigin(ctx)
-	out := make([]gin.H, 0, len(items))
-	for _, item := range items {
-		row := gin.H{"client_task_id": item.ClientTaskID}
-		if item.Error != "" {
-			row["error"] = item.Error
-		}
-		if item.ClientTask != nil {
-			row["client_task"] = enrichTaskView(*item.ClientTask, origin)
-		}
-		out = append(out, row)
-	}
-	return jsonToolResult(gin.H{"data": out})
+	return jsonToolResult(gin.H{"data": items})
 }
 
 func handleAbortTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -302,7 +248,7 @@ func handleAbortTask(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonToolResult(enrichTaskView(*view, getOrigin(ctx)))
+	return jsonToolResult(view)
 }
 
 func handleBatchAbortTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -321,19 +267,7 @@ func handleBatchAbortTasks(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		}
 		return nil, err
 	}
-	origin := getOrigin(ctx)
-	out := make([]gin.H, 0, len(items))
-	for _, item := range items {
-		row := gin.H{"client_task_id": item.ClientTaskID}
-		if item.Error != "" {
-			row["error"] = item.Error
-		}
-		if item.ClientTask != nil {
-			row["client_task"] = enrichTaskView(*item.ClientTask, origin)
-		}
-		out = append(out, row)
-	}
-	return jsonToolResult(gin.H{"data": out})
+	return jsonToolResult(gin.H{"data": items})
 }
 
 func handleGetTaskLLM(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -353,7 +287,7 @@ func handleGetTaskLLM(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
 }
 
 func handleGuideResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-	origin := getOrigin(ctx)
+	_ = ctx
 	text := `# Crynux AS Raw Task MCP
 
 Use create_task / batch_create_tasks with task_type 0 (Image), 1 (LLM), or 3 (Video).
@@ -361,12 +295,12 @@ Use create_task / batch_create_tasks with task_type 0 (Image), 1 (LLM), or 3 (Vi
 For LLM results, call get_task_llm when status is success.
 
 For Image and Video results, Remote MCP does not download or save files.
-Use result_download_hash from the task view:
+When get_task or batch_get_task_status reports status success:
 
-- Image: ` + "`" + origin + `/api/result/{result_download_hash}/images/{index}` + "`" + `
-- Video: ` + "`" + origin + `/api/result/{result_download_hash}/video` + "`" + `
+- Image tasks include result_download_urls (one public URL per image index).
+- Video tasks include result_download_url (one public MP4 URL).
 
-For bulk local save of Image, Video, or large LLM text batches, install the local Crynux AS MCP package (stdio / mcpb) and use save_task_llm, save_task_image, and save_task_video.
+Present those URLs to the user. For bulk local save of Image, Video, or large LLM text batches, install the local Crynux AS MCP package (stdio / mcpb) and use save_task_llm, save_task_image, and save_task_video.
 `
 	return []mcp.ResourceContents{
 		mcp.TextResourceContents{
@@ -429,43 +363,6 @@ func parseIDList(raw string) ([]uint, error) {
 		return nil, errors.New("client_task_ids_json must be a JSON array of numbers")
 	}
 	return ids, nil
-}
-
-func enrichTaskView(view raw_task.TaskView, origin string) gin.H {
-	out := gin.H{
-		"id":         view.ID,
-		"task_type":  view.TaskType,
-		"status":     view.Status,
-		"phase":      view.Phase,
-		"created_at": view.CreatedAt,
-		"updated_at": view.UpdatedAt,
-	}
-	if view.EstimatedCompletionAt != nil {
-		out["estimated_completion_at"] = view.EstimatedCompletionAt
-	}
-	if view.ErrorMessage != "" {
-		out["error_message"] = view.ErrorMessage
-	}
-	if view.ResultDownloadHash != "" {
-		out["result_download_hash"] = view.ResultDownloadHash
-		if origin != "" {
-			switch view.TaskType {
-			case models.TaskTypeImage:
-				out["result_download_url_template"] = fmt.Sprintf(
-					"%s/api/result/%s/images/{index}", origin, view.ResultDownloadHash,
-				)
-				out["result_download_url_image_0"] = fmt.Sprintf(
-					"%s/api/result/%s/images/0", origin, view.ResultDownloadHash,
-				)
-			case models.TaskTypeVideo:
-				out["result_download_url"] = fmt.Sprintf(
-					"%s/api/result/%s/video", origin, view.ResultDownloadHash,
-				)
-			}
-		}
-		out["local_save_hint"] = "Remote MCP cannot save Image/Video files. Install the local Crynux AS MCP package for save_task_image / save_task_video."
-	}
-	return out
 }
 
 func jsonToolResult(v any) (*mcp.CallToolResult, error) {

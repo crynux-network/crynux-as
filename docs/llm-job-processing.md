@@ -1,6 +1,6 @@
 # Task Job Processing
 
-This document is the authority for `task_jobs`, `task_call_records`, `usage_stats_pending_call_records`, `credit_events`, and `credit_accounts` ownership during task request processing. API field contracts remain in [llm-api.md](./llm-api.md). Credits formulas remain in [credits-billing.md](./credits-billing.md). System structure remains in [architecture.md](./architecture.md).
+This document is the authority for `task_jobs`, `task_call_records`, `usage_stats_pending_call_records`, `credit_events`, and `credit_accounts` ownership during task request processing, including Credits hold and ledger consistency rules. API field contracts remain in [llm-api.md](./llm-api.md). Credits formulas remain in [credits-billing.md](./credits-billing.md). Deposit ledger events remain in [deposit-processing.md](./deposit-processing.md). System structure remains in [architecture.md](./architecture.md).
 
 ## Table Responsibilities
 

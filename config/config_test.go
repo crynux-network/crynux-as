@@ -257,6 +257,7 @@ func TestCheckHttpConfigRejectsEmptyJWTSecretOutsideTest(t *testing.T) {
 
 	cfg := &AppConfig{Environment: EnvDebug}
 	cfg.Http.MaxBodyBytes = 1024
+	cfg.Http.PublicOrigin = "https://api.example.com"
 	cfg.Http.JWT.ExpiresIn = 3600
 	cfg.Http.JWT.SecretKey = ""
 	cfg.Http.Turnstile.SecretKey = "turnstile-secret"
@@ -286,6 +287,7 @@ func TestCheckHttpConfigRejectsEmptyTurnstileSecretOutsideTest(t *testing.T) {
 
 	cfg := &AppConfig{Environment: EnvDebug}
 	cfg.Http.MaxBodyBytes = 1024
+	cfg.Http.PublicOrigin = "https://api.example.com"
 	cfg.Http.JWT.ExpiresIn = 3600
 	cfg.Http.JWT.SecretKey = "jwt-secret"
 	cfg.Http.Turnstile.SecretKey = ""
@@ -305,5 +307,24 @@ func TestCheckHttpConfigRejectsEmptyTurnstileSecretOutsideTest(t *testing.T) {
 	SetConfigForTest(cfg)
 	if err := checkHttpConfig(); err != nil {
 		t.Fatalf("empty Turnstile secret rejected in test environment: %v", err)
+	}
+}
+
+func TestNormalizePublicOrigin(t *testing.T) {
+	got, err := normalizePublicOrigin(" https://api.example.com/ ")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if got != "https://api.example.com" {
+		t.Fatalf("got %q", got)
+	}
+	if _, err := normalizePublicOrigin(""); err == nil {
+		t.Fatal("empty origin accepted")
+	}
+	if _, err := normalizePublicOrigin("https://api.example.com/v1"); err == nil {
+		t.Fatal("path accepted")
+	}
+	if _, err := normalizePublicOrigin("ftp://api.example.com"); err == nil {
+		t.Fatal("ftp scheme accepted")
 	}
 }

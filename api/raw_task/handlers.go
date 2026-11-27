@@ -3,6 +3,7 @@ package raw_task
 import (
 	"context"
 	"crynux_as/api/llm"
+	"crynux_as/api/tools"
 	"crynux_as/bridge"
 	"crynux_as/config"
 	"crynux_as/llmadapter"
@@ -67,7 +68,7 @@ func CreateTask(c *gin.Context) {
 		writeModelNotReadyError(c, gin.H{"client_task_id": job.ID})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskView(job)})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskViewFromRequest(c, job)})
 }
 
 func BatchCreate(c *gin.Context) {
@@ -110,7 +111,7 @@ func BatchCreate(c *gin.Context) {
 			})
 			continue
 		}
-		view := taskView(job)
+		view := taskViewFromRequest(c, job)
 		results = append(results, BatchCreateItem{Index: index, ClientTask: &view})
 	}
 	status := http.StatusOK
@@ -167,7 +168,7 @@ func GetTask(c *gin.Context) {
 		writeInternalError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskView(job)})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskViewFromRequest(c, job)})
 }
 
 func AbortTask(c *gin.Context) {
@@ -182,7 +183,7 @@ func AbortTask(c *gin.Context) {
 		writeAbortError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskView(job)})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskViewFromRequest(c, job)})
 }
 
 func BatchAbort(c *gin.Context) {
@@ -206,7 +207,7 @@ func BatchAbort(c *gin.Context) {
 			results = append(results, BatchAbortItem{ClientTaskID: item.ClientTaskID, Error: item.Error})
 			continue
 		}
-		view := taskView(item.Job)
+		view := taskViewFromRequest(c, item.Job)
 		results = append(results, BatchAbortItem{ClientTaskID: item.ClientTaskID, ClientTask: &view})
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": results})
@@ -248,7 +249,7 @@ func BatchStatus(c *gin.Context) {
 			results = append(results, BatchStatusItem{ClientTaskID: id, Error: "task not found"})
 			continue
 		}
-		view := taskView(job)
+		view := taskViewFromRequest(c, job)
 		results = append(results, BatchStatusItem{ClientTaskID: id, ClientTask: &view})
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": results})
@@ -536,7 +537,11 @@ func loadProjectTask(ctx context.Context, projectID, id uint) (*models.TaskJob, 
 	return &job, err
 }
 
-func taskView(job *models.TaskJob) TaskView {
+func taskViewFromRequest(_ *gin.Context, job *models.TaskJob) TaskView {
+	return taskView(job, tools.PublicOrigin())
+}
+
+func taskView(job *models.TaskJob, origin string) TaskView {
 	status := "running"
 	phase := job.Phase
 	if job.Status == models.TaskJobStatusCompleted {
@@ -565,6 +570,22 @@ func taskView(job *models.TaskJob) TaskView {
 	}
 	if job.ResultDownloadHash != nil && *job.ResultDownloadHash != "" {
 		view.ResultDownloadHash = *job.ResultDownloadHash
+	}
+	if status == "success" && view.ResultDownloadHash != "" && origin != "" {
+		switch job.TaskType {
+		case models.TaskTypeImage:
+			count := uint64(1)
+			if n, err := service.ImageCountFromTaskArgs(job.TaskArgsJSON); err == nil && n > 0 {
+				count = n
+			}
+			urls := make([]string, 0, count)
+			for i := uint64(0); i < count; i++ {
+				urls = append(urls, fmt.Sprintf("%s/api/result/%s/images/%d", origin, view.ResultDownloadHash, i))
+			}
+			view.ResultDownloadURLs = urls
+		case models.TaskTypeVideo:
+			view.ResultDownloadURL = fmt.Sprintf("%s/api/result/%s/video", origin, view.ResultDownloadHash)
+		}
 	}
 	return view
 }

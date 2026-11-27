@@ -450,7 +450,7 @@ func TestPrepareTaskImageConcreteDtypeAllowsNewModel(t *testing.T) {
 
 func TestTaskViewMapsInternalStatuses(t *testing.T) {
 	job := &models.TaskJob{Status: models.TaskJobStatusPendingSubmit}
-	view := taskView(job)
+	view := taskView(job, "")
 	if view.Status != "running" {
 		t.Fatalf("pending status = %q", view.Status)
 	}
@@ -459,35 +459,78 @@ func TestTaskViewMapsInternalStatuses(t *testing.T) {
 	}
 	job.Status = models.TaskJobStatusInProgress
 	job.Phase = "validating"
-	view = taskView(job)
+	view = taskView(job, "")
 	if view.Status != "running" || view.Phase != "validating" {
 		t.Fatalf("in-progress view = %#v", view)
 	}
 	job.Status = models.TaskJobStatusCompleted
-	if got := taskView(job).Status; got != "success" {
+	if got := taskView(job, "").Status; got != "success" {
 		t.Fatalf("completed status = %q", got)
 	}
-	if got := taskView(job).Phase; got != "success" {
+	if got := taskView(job, "").Phase; got != "success" {
 		t.Fatalf("completed phase = %q", got)
 	}
 	job.Status = models.TaskJobStatusFailed
-	if got := taskView(job).Status; got != "failed" {
+	if got := taskView(job, "").Status; got != "failed" {
 		t.Fatalf("failed status = %q", got)
 	}
-	if got := taskView(job).Phase; got != "failed" {
+	if got := taskView(job, "").Phase; got != "failed" {
 		t.Fatalf("failed phase = %q", got)
 	}
-	if got := taskView(job).ErrorMessage; got != "" {
+	if got := taskView(job, "").ErrorMessage; got != "" {
 		t.Fatalf("failed without message error_message = %q", got)
 	}
 	msg := "bridge submit failed: timeout"
 	job.ErrorMessage = &msg
-	if got := taskView(job).ErrorMessage; got != msg {
+	if got := taskView(job, "").ErrorMessage; got != msg {
 		t.Fatalf("failed error_message = %q", got)
 	}
 	job.Status = models.TaskJobStatusCompleted
-	if got := taskView(job).ErrorMessage; got != "" {
+	if got := taskView(job, "").ErrorMessage; got != "" {
 		t.Fatalf("completed error_message = %q", got)
+	}
+}
+
+func TestTaskViewIncludesPublicDownloadURLsOnSuccess(t *testing.T) {
+	hash := "abcd1234efgh5678"
+	imageJob := &models.TaskJob{
+		Status:             models.TaskJobStatusCompleted,
+		TaskType:           models.TaskTypeImage,
+		ResultDownloadHash: &hash,
+		TaskArgsJSON:       `{"task_config":{"num_images_per_prompt":2,"image_width":512,"image_height":512,"steps":20}}`,
+	}
+	imageView := taskView(imageJob, "https://as.example")
+	if len(imageView.ResultDownloadURLs) != 2 {
+		t.Fatalf("image urls = %#v", imageView.ResultDownloadURLs)
+	}
+	if imageView.ResultDownloadURLs[0] != "https://as.example/api/result/abcd1234efgh5678/images/0" {
+		t.Fatalf("image url 0 = %q", imageView.ResultDownloadURLs[0])
+	}
+	if imageView.ResultDownloadURL != "" {
+		t.Fatalf("image view must omit result_download_url, got %q", imageView.ResultDownloadURL)
+	}
+
+	videoJob := &models.TaskJob{
+		Status:             models.TaskJobStatusCompleted,
+		TaskType:           models.TaskTypeVideo,
+		ResultDownloadHash: &hash,
+	}
+	videoView := taskView(videoJob, "https://as.example")
+	if videoView.ResultDownloadURL != "https://as.example/api/result/abcd1234efgh5678/video" {
+		t.Fatalf("video url = %q", videoView.ResultDownloadURL)
+	}
+	if len(videoView.ResultDownloadURLs) != 0 {
+		t.Fatalf("video view must omit result_download_urls, got %#v", videoView.ResultDownloadURLs)
+	}
+
+	running := taskView(&models.TaskJob{
+		Status:             models.TaskJobStatusInProgress,
+		TaskType:           models.TaskTypeVideo,
+		ResultDownloadHash: &hash,
+		Phase:              "running",
+	}, "https://as.example")
+	if running.ResultDownloadURL != "" || len(running.ResultDownloadURLs) != 0 {
+		t.Fatalf("running task must omit download urls, got %#v", running)
 	}
 }
 

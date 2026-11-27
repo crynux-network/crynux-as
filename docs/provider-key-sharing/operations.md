@@ -83,9 +83,9 @@ When a later Relay loaded-model refresh introduces a name reserved by Provider c
 
 ## Startup
 
-Startup MUST follow the order in [Architecture](architecture.md).
+Whole-process startup order is specified in [process-lifecycle.md](../process-lifecycle.md).
 
-Important failure behavior:
+Provider-related startup failure behavior:
 
 * no secret file is deleted until every secret is read and validated;
 * a missing or invalid encryption key fails startup before HTTP serving;
@@ -96,16 +96,7 @@ Important failure behavior:
 
 ## Graceful Shutdown
 
-Shutdown MUST:
-
-1. stop accepting new HTTP requests;
-2. stop Provider claims and stop other intake workers through the existing context flow;
-3. allow already-accepted HTTP handlers, including Provider SSE subscribers, to finish within `shutdown_timeout_seconds`;
-4. allow active Provider calls to continue until `shutdown_timeout_seconds`;
-5. commit final usage and settlement whenever obtained, including when a downstream subscriber later disconnects;
-6. detach remaining live downstream subscribers and cancel remaining Provider job contexts only after `shutdown_timeout_seconds` elapses.
-
-Within the shutdown deadline, Provider SSE MUST continue delivering remaining events through the post-settlement terminal event and `[DONE]` marker. Forced termination or a hard timeout cannot preserve an unfinished upstream stream. Startup recovery MUST fail unrecovered in-flight Provider jobs under the pre-send or uncertain rules rather than replaying the request.
+Whole-process graceful shutdown is specified in [process-lifecycle.md](../process-lifecycle.md).
 
 ## Key Cooldown
 
