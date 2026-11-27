@@ -51,9 +51,34 @@ Remote MCP MUST NOT provide any Image or Video `download_*` or `save_*` tool, in
 
 When an Image or Video task succeeds, tool responses MUST include `result_download_urls` or `result_download_url`, and guides MUST instruct the client to present those URLs. Guides MUST state that bulk local save requires the local MCP package.
 
+`create_task` and `batch_create_tasks` tool descriptions MUST instruct the client to read resource `crynux://guides/raw-task` before calling. Those descriptions MUST also state that a `model_not_ready` create result still includes `client_task_id` and that the task keeps running so the client MUST continue with `get_task` / batch status.
+
 ### Resources and prompts
 
-Remote MCP MUST expose resources and prompts that document Raw Task usage, including cost-speed-quality tradeoffs and LLM result retrieval with `get_task_llm`.
+Remote MCP and Local MCP MUST expose the same resources and prompts. Guide markdown source of truth MUST live under `api/mcp/guides/` in this repository. After changing those files, operators MUST copy the same files into `crynux-as-webui/mcp/stdio/guides/` so the published local package stays aligned. The local package MUST NOT fetch guide text from the Remote MCP HTTP API at runtime.
+
+Resources are application-controlled. MCP does not guarantee that a client injects resource bodies into the model context before tool calls. Critical workflow rules that must be visible without a resource read MUST also appear in tool descriptions. Longer reference text MUST live in resources.
+
+Remote and Local MCP MUST expose these resources (MIME `text/markdown`):
+
+| URI | Content |
+|-----|---------|
+| `crynux://guides/raw-task` | Main guide: what MCP can do; workflow and errors (including `model_not_ready` with continuing `client_task_id`); model overview; TaskArgs overview with pointers; Cost Level |
+| `crynux://guides/task-args/llm` | LLM TaskArgs fields, schema link on `main`, examples |
+| `crynux://guides/task-args/image` | Image TaskArgs fields, schema link on `main`, examples |
+| `crynux://guides/task-args/video` | Video TaskArgs fields, schema link on `main`, examples |
+
+The main guide MUST NOT embed full TaskArgs detail. TaskArgs detail MUST be read from the three task-args resources when needed.
+
+Remote and Local MCP MUST expose these prompts, each with required argument `user_request`:
+
+| Name | Behavior |
+|------|----------|
+| `run_llm_task` | Instruct the client to run one LLM Raw Task end-to-end and return text via `get_task_llm` |
+| `run_image_task` | Instruct the client to run one Image Raw Task end-to-end and present `result_download_urls` |
+| `run_video_task` | Instruct the client to run one Video Raw Task end-to-end and present `result_download_url` |
+
+MCP guide and prompt text MUST NOT mention Provider models or Provider routing.
 
 ### Batch scope
 
@@ -81,6 +106,8 @@ Local MCP MUST additionally provide:
 | `save_task_video` | Download Video MP4 to a local directory; return the path. Supports one task or a batch. |
 
 Save tools MUST require `output_dir` and MUST write files under that directory. Image and Video save MAY use the authenticated Raw result routes or the public hash URLs.
+
+Local MCP MUST register the same resources and prompts as Remote MCP, reading bundled copies of the guide markdown shipped with the stdio package.
 
 ### Configuration
 

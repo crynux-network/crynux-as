@@ -8,6 +8,7 @@ import (
 	"crynux_as/service"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -52,6 +53,8 @@ func getProject(ctx context.Context) (*models.Project, error) {
 	return project, nil
 }
 
+const createTaskGuideHint = "Before calling, read resource crynux://guides/raw-task for usage (model selection, model_not_ready, results, Cost Level). "
+
 func newProjectMCPServer() *mcpserver.MCPServer {
 	s := mcpserver.NewMCPServer(
 		"crynux-as",
@@ -64,13 +67,13 @@ func newProjectMCPServer() *mcpserver.MCPServer {
 
 	s.AddTool(mcp.NewTool(
 		"list_models",
-		mcp.WithDescription("List Crynux AS models. catalog may be all, chat, image, or video."),
+		mcp.WithDescription("List Crynux AS models. catalog may be all, chat, image, or video. Prefer rows with on_disk_node_count >= 1 and copy one entire row's dtype/quantization_config/components/lora into TaskArgs."),
 		mcp.WithString("catalog", mcp.Description("Optional catalog filter: all, chat, image, or video. Default all.")),
 	), handleListModels)
 
 	s.AddTool(mcp.NewTool(
 		"create_task",
-		mcp.WithDescription("Create one Raw Task. task_type is 0 Image, 1 LLM, or 3 Video. When get_task reports success, Image tasks include result_download_urls and Video tasks include result_download_url. Remote MCP has no image/video save tools; install the local MCP package for bulk local save."),
+		mcp.WithDescription(createTaskGuideHint+"Create one Raw Task. task_type is 0 Image, 1 LLM, or 3 Video. model_not_ready responses still include client_task_id and the task keeps running—continue with get_task. On success, Image tasks include result_download_urls and Video tasks include result_download_url. Remote MCP has no image/video save tools; install the local MCP package for bulk local save."),
 		mcp.WithString("task_args", mcp.Required(), mcp.Description("TaskArgs JSON string for the selected task_type.")),
 		mcp.WithNumber("task_type", mcp.Required(), mcp.Description("0 Image, 1 LLM, or 3 Video.")),
 		mcp.WithNumber("min_vram", mcp.Description("Optional minimum VRAM in GB.")),
@@ -79,13 +82,13 @@ func newProjectMCPServer() *mcpserver.MCPServer {
 
 	s.AddTool(mcp.NewTool(
 		"batch_create_tasks",
-		mcp.WithDescription("Create 1 to 100 Raw Tasks in one call. Same task fields as create_task per item."),
+		mcp.WithDescription(createTaskGuideHint+"Create 1 to 100 Raw Tasks in one call. Same task fields as create_task per item. Items may return model_not_ready with client_task_id while the task keeps running."),
 		mcp.WithString("tasks_json", mcp.Required(), mcp.Description("JSON array of create task objects with task_args, task_type, and optional min_vram and queue_timeout.")),
 	), handleBatchCreateTasks)
 
 	s.AddTool(mcp.NewTool(
 		"get_task",
-		mcp.WithDescription("Get one Raw Task status view by client_task_id."),
+		mcp.WithDescription("Get one Raw Task status view by client_task_id. Use after create, including after model_not_ready. On Image/Video success the view includes result_download_urls or result_download_url."),
 		mcp.WithNumber("client_task_id", mcp.Required(), mcp.Description("Local task_jobs.id.")),
 	), handleGetTask)
 
@@ -109,21 +112,64 @@ func newProjectMCPServer() *mcpserver.MCPServer {
 
 	s.AddTool(mcp.NewTool(
 		"get_task_llm",
-		mcp.WithDescription("Fetch the LLM result JSON text for a successful LLM Raw Task and return it in the tool result."),
+		mcp.WithDescription("Fetch the LLM result JSON text for a successful LLM Raw Task and return it in the tool result. Prefer this for short chat outputs; use the local MCP save_task_llm tool for large dumps."),
 		mcp.WithNumber("client_task_id", mcp.Required(), mcp.Description("Local task_jobs.id of an LLM task.")),
 	), handleGetTaskLLM)
 
 	s.AddResource(mcp.NewResource(
-		"crynux://guides/raw-task",
+		guideURIRawTask,
 		"Raw Task and MCP guide",
-		mcp.WithResourceDescription("How to create LLM, Image, and Video Raw Tasks over MCP, read LLM results, and use public Image/Video download links."),
+		mcp.WithResourceDescription("Crynux AS MCP overview: workflow, model selection, TaskArgs pointers, Cost Level, and errors including model_not_ready."),
+		mcp.WithMIMEType("text/markdown"),
+	), handleGuideResource)
+
+	s.AddResource(mcp.NewResource(
+		guideURITaskArgsLLM,
+		"LLM TaskArgs guide",
+		mcp.WithResourceDescription("LLM TaskArgs fields, schema link, and common quantization examples."),
+		mcp.WithMIMEType("text/markdown"),
+	), handleGuideResource)
+
+	s.AddResource(mcp.NewResource(
+		guideURITaskArgsImage,
+		"Image TaskArgs guide",
+		mcp.WithResourceDescription("Image TaskArgs fields, schema link, LoRA, Bitsandbytes, and GGUF component examples."),
+		mcp.WithMIMEType("text/markdown"),
+	), handleGuideResource)
+
+	s.AddResource(mcp.NewResource(
+		guideURITaskArgsVideo,
+		"Video TaskArgs guide",
+		mcp.WithResourceDescription("Video TaskArgs fields, schema link, and T2V/I2V/FLF examples."),
 		mcp.WithMIMEType("text/markdown"),
 	), handleGuideResource)
 
 	s.AddPrompt(mcp.NewPrompt(
-		"cost_speed_quality",
-		mcp.WithPromptDescription("Guidance for balancing Cost Level, speed, and result quality on Crynux AS."),
-	), handleCostSpeedQualityPrompt)
+		"run_llm_task",
+		mcp.WithPromptDescription("Run one LLM Raw Task end-to-end and return the text result."),
+		mcp.WithArgument("user_request",
+			mcp.ArgumentDescription("What the user wants the LLM task to do."),
+			mcp.RequiredArgument(),
+		),
+	), handleRunTaskPrompt)
+
+	s.AddPrompt(mcp.NewPrompt(
+		"run_image_task",
+		mcp.WithPromptDescription("Run one Image Raw Task end-to-end and present public download URLs."),
+		mcp.WithArgument("user_request",
+			mcp.ArgumentDescription("What image the user wants to generate or edit."),
+			mcp.RequiredArgument(),
+		),
+	), handleRunTaskPrompt)
+
+	s.AddPrompt(mcp.NewPrompt(
+		"run_video_task",
+		mcp.WithPromptDescription("Run one Video Raw Task end-to-end and present the public download URL."),
+		mcp.WithArgument("user_request",
+			mcp.ArgumentDescription("What video the user wants to generate."),
+			mcp.RequiredArgument(),
+		),
+	), handleRunTaskPrompt)
 
 	return s
 }
@@ -288,20 +334,14 @@ func handleGetTaskLLM(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
 
 func handleGuideResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	_ = ctx
-	text := `# Crynux AS Raw Task MCP
-
-Use create_task / batch_create_tasks with task_type 0 (Image), 1 (LLM), or 3 (Video).
-
-For LLM results, call get_task_llm when status is success.
-
-For Image and Video results, Remote MCP does not download or save files.
-When get_task or batch_get_task_status reports status success:
-
-- Image tasks include result_download_urls (one public URL per image index).
-- Video tasks include result_download_url (one public MP4 URL).
-
-Present those URLs to the user. For bulk local save of Image, Video, or large LLM text batches, install the local Crynux AS MCP package (stdio / mcpb) and use save_task_llm, save_task_image, and save_task_video.
-`
+	path, ok := guideFiles[req.Params.URI]
+	if !ok {
+		return nil, fmt.Errorf("unknown resource %s", req.Params.URI)
+	}
+	text, err := readGuideFile(path)
+	if err != nil {
+		return nil, err
+	}
 	return []mcp.ResourceContents{
 		mcp.TextResourceContents{
 			URI:      req.Params.URI,
@@ -311,19 +351,25 @@ Present those URLs to the user. For bulk local save of Image, Video, or large LL
 	}, nil
 }
 
-func handleCostSpeedQualityPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
+func handleRunTaskPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 	_ = ctx
-	_ = req
+	userRequest := ""
+	if req.Params.Arguments != nil {
+		userRequest = req.Params.Arguments["user_request"]
+	}
+	text, err := renderPromptTemplate(req.Params.Name, userRequest)
+	if err != nil {
+		return nil, err
+	}
+	titles := map[string]string{
+		"run_llm_task":   "Run one LLM Raw Task",
+		"run_image_task": "Run one Image Raw Task",
+		"run_video_task": "Run one Video Raw Task",
+	}
 	return mcp.NewGetPromptResult(
-		"Cost, speed, and quality on Crynux AS",
+		titles[req.Params.Name],
 		[]mcp.PromptMessage{
-			mcp.NewPromptMessage(mcp.RoleAssistant, mcp.NewTextContent(
-				"Higher project Cost Level raises priority_gwei and usually shortens queue wait, at higher Credits cost. "+
-					"Lower Cost Level saves Credits and may wait longer. "+
-					"Model choice, dtype, resolution, steps, frames, and token limits dominate quality and runtime. "+
-					"Use list_models to see ready models, then create_task with concrete TaskArgs. "+
-					"Prefer get_task_llm for short LLM outputs in chat. Prefer the local MCP save tools for bulk Image/Video or large text dumps.",
-			)),
+			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent(text)),
 		},
 	), nil
 }
