@@ -11,6 +11,7 @@ var guideFS embed.FS
 
 const (
 	guideURIRawTask       = "crynux://guides/raw-task"
+	guideURICostLevel     = "crynux://guides/cost-level"
 	guideURITaskArgsLLM   = "crynux://guides/task-args/llm"
 	guideURITaskArgsImage = "crynux://guides/task-args/image"
 	guideURITaskArgsVideo = "crynux://guides/task-args/video"
@@ -18,6 +19,7 @@ const (
 
 var guideFiles = map[string]string{
 	guideURIRawTask:       "guides/raw-task.md",
+	guideURICostLevel:     "guides/cost-level.md",
 	guideURITaskArgsLLM:   "guides/task-args-llm.md",
 	guideURITaskArgsImage: "guides/task-args-image.md",
 	guideURITaskArgsVideo: "guides/task-args-video.md",

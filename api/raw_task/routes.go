@@ -4,6 +4,7 @@ import "github.com/gin-gonic/gin"
 
 func InitRoutes(group *gin.RouterGroup) {
 	group.POST("/inference_tasks", CreateTask)
+	group.POST("/inference_tasks/estimate", EstimateTask)
 	group.GET("/inference_tasks/:client_task_id", GetTask)
 	group.POST("/inference_tasks/:client_task_id/abort", AbortTask)
 	group.GET("/inference_tasks/:client_task_id/llm", DownloadLLM)

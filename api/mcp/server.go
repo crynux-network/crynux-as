@@ -4,6 +4,7 @@ import (
 	"context"
 	"crynux_as/api/llm"
 	"crynux_as/api/raw_task"
+	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/service"
 	"encoding/json"
@@ -53,7 +54,9 @@ func getProject(ctx context.Context) (*models.Project, error) {
 	return project, nil
 }
 
-const createTaskGuideHint = "Before calling, read resource crynux://guides/raw-task for usage (model selection, model_not_ready, results, Cost Level). "
+const createTaskGuideHint = "Before calling, read resource crynux://guides/raw-task for usage (model selection, model_not_ready, results, Cost Level). For Cost Level changes read crynux://guides/cost-level and use get_cost_level / set_cost_level / get_cost_level_hints. "
+
+const costLevelGuideHint = "Before calling, read resource crynux://guides/cost-level. "
 
 func newProjectMCPServer() *mcpserver.MCPServer {
 	s := mcpserver.NewMCPServer(
@@ -87,6 +90,14 @@ func newProjectMCPServer() *mcpserver.MCPServer {
 	), handleBatchCreateTasks)
 
 	s.AddTool(mcp.NewTool(
+		"estimate_task_credits",
+		mcp.WithDescription(costLevelGuideHint+"Dry-run create-time Credits and fee for one Raw Task under the current Cost Level. Same task_args, task_type, and optional min_vram as create_task. Does not create a job or lock Credits. This is a create-time estimate; LLM settlement MAY differ when actual token usage differs from precheck estimates. Image and Video settlement matches the create-time Credits."),
+		mcp.WithString("task_args", mcp.Required(), mcp.Description("TaskArgs JSON string for the selected task_type.")),
+		mcp.WithNumber("task_type", mcp.Required(), mcp.Description("0 Image, 1 LLM, or 3 Video.")),
+		mcp.WithNumber("min_vram", mcp.Description("Optional minimum VRAM in GB.")),
+	), handleEstimateTaskCredits)
+
+	s.AddTool(mcp.NewTool(
 		"get_task",
 		mcp.WithDescription("Get one Raw Task status view by client_task_id. Use after create, including after model_not_ready. On Image/Video success the view includes result_download_urls or result_download_url."),
 		mcp.WithNumber("client_task_id", mcp.Required(), mcp.Description("Local task_jobs.id.")),
@@ -116,10 +127,36 @@ func newProjectMCPServer() *mcpserver.MCPServer {
 		mcp.WithNumber("client_task_id", mcp.Required(), mcp.Description("Local task_jobs.id of an LLM task.")),
 	), handleGetTaskLLM)
 
+	s.AddTool(mcp.NewTool(
+		"get_cost_level",
+		mcp.WithDescription(costLevelGuideHint+"Return the project's Cost Level settings: cost_level_mode, priority_gwei, auto_queue_position, auto_max_credits_per_task."),
+	), handleGetCostLevel)
+
+	s.AddTool(mcp.NewTool(
+		"set_cost_level",
+		mcp.WithDescription(costLevelGuideHint+"Partially update project Cost Level. Provide at least one of cost_level_mode, priority_gwei, auto_queue_position, auto_max_credits_per_task. priority_gwei is Gwei and must be a positive multiple of 1000."),
+		mcp.WithString("cost_level_mode", mcp.Description("static or auto.")),
+		mcp.WithString("priority_gwei", mcp.Description("Static Cost Level as decimal integer Gwei string (multiple of 1000).")),
+		mcp.WithNumber("auto_queue_position", mcp.Description("Auto queue position from 0 to 100.")),
+		mcp.WithString("auto_max_credits_per_task", mcp.Description("Max Credits per task as a positive decimal integer string.")),
+	), handleSetCostLevel)
+
+	s.AddTool(mcp.NewTool(
+		"get_cost_level_hints",
+		mcp.WithDescription(costLevelGuideHint+"Return Crynux Network Static min/max priority, median, live queue high/low, default Max Credits, credits_per_gwei, and base_vram for judging Cost Level settings."),
+	), handleGetCostLevelHints)
+
 	s.AddResource(mcp.NewResource(
 		guideURIRawTask,
 		"Raw Task and MCP guide",
-		mcp.WithResourceDescription("Crynux AS MCP overview: workflow, model selection, TaskArgs pointers, Cost Level, and errors including model_not_ready."),
+		mcp.WithResourceDescription("Crynux AS MCP overview: workflow, model selection, TaskArgs pointers, Cost Level pointer, and errors including model_not_ready."),
+		mcp.WithMIMEType("text/markdown"),
+	), handleGuideResource)
+
+	s.AddResource(mcp.NewResource(
+		guideURICostLevel,
+		"Cost Level guide",
+		mcp.WithResourceDescription("Cost Level modes, field values, hints for reasonableness, create-time Credits estimate, and MCP get/set tools."),
 		mcp.WithMIMEType("text/markdown"),
 	), handleGuideResource)
 
@@ -332,6 +369,86 @@ func handleGetTaskLLM(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
 	return mcp.NewToolResultText(string(body)), nil
 }
 
+func handleEstimateTaskCredits(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project, err := getProject(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	createReq, err := parseEstimateRequest(req)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	view, err := raw_task.EstimateForProject(ctx, project, createReq)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonToolResult(view)
+}
+
+func handleGetCostLevel(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	_ = req
+	project, err := getProject(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	reloaded, err := service.ReloadProjectByID(ctx, config.GetDB(), project.ID)
+	if err != nil {
+		return nil, err
+	}
+	return jsonToolResult(service.ProjectCostLevelViewFromProject(reloaded))
+}
+
+func handleSetCostLevel(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	project, err := getProject(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	update := service.ProjectCostLevelUpdate{}
+	if mode := strings.TrimSpace(req.GetString("cost_level_mode", "")); mode != "" {
+		update.CostLevelMode = &mode
+	}
+	if priority := strings.TrimSpace(req.GetString("priority_gwei", "")); priority != "" {
+		update.PriorityGwei = &priority
+	}
+	if maxCredits := strings.TrimSpace(req.GetString("auto_max_credits_per_task", "")); maxCredits != "" {
+		update.AutoMaxCreditsPerTask = &maxCredits
+	}
+	if raw, ok := req.GetArguments()["auto_queue_position"]; ok && raw != nil {
+		pos, parseErr := intArg(raw)
+		if parseErr != nil {
+			return mcp.NewToolResultError("auto_queue_position must be an integer from 0 to 100"), nil
+		}
+		update.AutoQueuePosition = &pos
+	}
+
+	updated, fieldErr, err := service.UpdateProjectCostLevelAndSave(
+		ctx,
+		config.GetDB(),
+		project,
+		update,
+	)
+	if fieldErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("%s: %s", fieldErr.Field, fieldErr.Message)), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return jsonToolResult(service.ProjectCostLevelViewFromProject(updated))
+}
+
+func handleGetCostLevelHints(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	_ = req
+	if _, err := getProject(ctx); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	hints, err := service.BuildCostLevelHints()
+	if err != nil {
+		return nil, err
+	}
+	return jsonToolResult(hints)
+}
+
 func handleGuideResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	_ = ctx
 	path, ok := guideFiles[req.Params.URI]
@@ -375,6 +492,18 @@ func handleRunTaskPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.Ge
 }
 
 func parseCreateRequest(req mcp.CallToolRequest) (raw_task.CreateTaskRequest, error) {
+	out, err := parseEstimateRequest(req)
+	if err != nil {
+		return raw_task.CreateTaskRequest{}, err
+	}
+	if v := req.GetFloat("queue_timeout", 0); v > 0 {
+		timeout := uint64(v)
+		out.QueueTimeout = &timeout
+	}
+	return out, nil
+}
+
+func parseEstimateRequest(req mcp.CallToolRequest) (raw_task.CreateTaskRequest, error) {
 	taskArgs := strings.TrimSpace(req.GetString("task_args", ""))
 	if taskArgs == "" {
 		return raw_task.CreateTaskRequest{}, errors.New("task_args is required")
@@ -392,10 +521,6 @@ func parseCreateRequest(req mcp.CallToolRequest) (raw_task.CreateTaskRequest, er
 		minVram := uint64(v)
 		out.MinVram = &minVram
 	}
-	if v := req.GetFloat("queue_timeout", 0); v > 0 {
-		timeout := uint64(v)
-		out.QueueTimeout = &timeout
-	}
 	return out, nil
 }
 
@@ -409,6 +534,25 @@ func parseIDList(raw string) ([]uint, error) {
 		return nil, errors.New("client_task_ids_json must be a JSON array of numbers")
 	}
 	return ids, nil
+}
+
+func intArg(raw any) (int, error) {
+	switch v := raw.(type) {
+	case float64:
+		return int(v), nil
+	case int:
+		return v, nil
+	case int64:
+		return int(v), nil
+	case json.Number:
+		n, err := v.Int64()
+		if err != nil {
+			return 0, err
+		}
+		return int(n), nil
+	default:
+		return 0, fmt.Errorf("not an integer")
+	}
 }
 
 func jsonToolResult(v any) (*mcp.CallToolResult, error) {

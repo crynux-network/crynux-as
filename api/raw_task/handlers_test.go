@@ -889,3 +889,123 @@ func TestCreateTaskRejectsRequiredGPUWithoutCallRecord(t *testing.T) {
 		t.Fatalf("jobs=%d records=%d pending=%d, want all 0", jobs, records, pending)
 	}
 }
+
+func TestEstimateForProjectReturnsCreditsWithoutLocking(t *testing.T) {
+	db := setupRawCreateRejectDB(t)
+	setupRawPrepareEnv(t, []map[string]any{testLLMLoadedRow("org/llm", "float16", 20)})
+
+	user := models.User{Address: "0xrawestimate1"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CreditAccount{
+		UserID:  user.ID,
+		Balance: models.BigInt{Int: *big.NewInt(1_000_000)},
+		Locked:  models.BigInt{Int: *big.NewInt(100)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	autoMax := models.BigInt{Int: *big.NewInt(1_000_000_000)}
+	project := &models.Project{
+		UserID:                user.ID,
+		Name:                  "estimate",
+		EndpointToken:         "ep-estimate",
+		APIKeyHash:            "h-estimate",
+		APIKeyPrefix:          "pref",
+		PriorityGwei:          models.BigInt{Int: *big.NewInt(10)},
+		Status:                models.ProjectStatusActive,
+		CreditsDay:            models.BigInt{Int: *big.NewInt(0)},
+		CostLevelMode:         models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMax,
+	}
+	if err := db.Create(project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	taskType := models.TaskTypeLLM
+	view, err := EstimateForProject(context.Background(), project, CreateTaskRequest{
+		TaskType: &taskType,
+		TaskArgs: `{"version":"3.7.0","model":"org/llm","messages":[{"role":"user","content":"hi"}]}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.EstimatedCredits == "" || view.EstimatedCredits == "0" {
+		t.Fatalf("estimated_credits=%q", view.EstimatedCredits)
+	}
+	if view.AvailableCredits != "999900" {
+		t.Fatalf("available_credits=%q", view.AvailableCredits)
+	}
+	if !view.Sufficient {
+		t.Fatal("expected sufficient=true")
+	}
+	if view.Model != "org/llm" {
+		t.Fatalf("model=%q", view.Model)
+	}
+	if view.PromptTokensEstimate == nil || view.CompletionTokensEstimate == nil {
+		t.Fatal("missing LLM token estimates")
+	}
+
+	var jobs int64
+	if err := db.Model(&models.TaskJob{}).Count(&jobs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("jobs=%d, want 0", jobs)
+	}
+	var account models.CreditAccount
+	if err := db.Where("user_id = ?", user.ID).First(&account).Error; err != nil {
+		t.Fatal(err)
+	}
+	if account.Locked.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("locked=%s, want 100", account.Locked.String())
+	}
+}
+
+func TestEstimateForProjectRejectsMaxCreditsExceeded(t *testing.T) {
+	db := setupRawCreateRejectDB(t)
+	setupRawPrepareEnv(t, []map[string]any{testLLMLoadedRow("org/llm", "float16", 20)})
+
+	user := models.User{Address: "0xrawestimate2"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.CreditAccount{
+		UserID:  user.ID,
+		Balance: models.BigInt{Int: *big.NewInt(1_000_000)},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	autoMax := models.BigInt{Int: *big.NewInt(1)}
+	project := &models.Project{
+		UserID:                user.ID,
+		Name:                  "estimate-max",
+		EndpointToken:         "ep-estimate-max",
+		APIKeyHash:            "h-estimate-max",
+		APIKeyPrefix:          "pref",
+		PriorityGwei:          models.BigInt{Int: *big.NewInt(10)},
+		Status:                models.ProjectStatusActive,
+		CreditsDay:            models.BigInt{Int: *big.NewInt(0)},
+		CostLevelMode:         models.CostLevelModeStatic,
+		AutoMaxCreditsPerTask: &autoMax,
+	}
+	if err := db.Create(project).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	taskType := models.TaskTypeLLM
+	_, err := EstimateForProject(context.Background(), project, CreateTaskRequest{
+		TaskType: &taskType,
+		TaskArgs: `{"version":"3.7.0","model":"org/llm","messages":[{"role":"user","content":"hi"}]}`,
+	})
+	if !errors.Is(err, service.ErrMaxCreditsExceeded) {
+		t.Fatalf("err=%v, want ErrMaxCreditsExceeded", err)
+	}
+	var jobs int64
+	if err := db.Model(&models.TaskJob{}).Count(&jobs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 0 {
+		t.Fatalf("jobs=%d, want 0", jobs)
+	}
+}

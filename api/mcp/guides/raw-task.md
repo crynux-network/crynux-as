@@ -24,9 +24,9 @@ Image and video results come back as download links in the conversation. To save
 
 - **`model_not_ready`:** The required model files are not on disk yet, but the task **was created** and **keeps running** on Crynux AS. Keep the returned `client_task_id` and poll with `get_task` / batch status until `success` or `failed`. Do not treat this as a simple invalid-argument failure and drop the id.
 - **TaskArgs / schema validation failure:** Create fails and there is no usable task id. Fix `task_args` and retry.
-- **Credits / Cost Level rejection:** Create fails (insufficient Credits, estimate over Max Credits, or fee below admission). Check project Credits and Cost Level in the Crynux AS WebUI. MCP cannot change Cost Level.
+- **Credits / Cost Level rejection:** Create fails (insufficient Credits, estimate over Max Credits, or fee below admission). Check Credits; for Cost Level read `crynux://guides/cost-level` and use `get_cost_level_hints` / `set_cost_level`.
 - **`failed` with `error_message`:** read the message and act on it. Current Crynux Network job values:
-  - `timeout` — queue wait ended before a ready run could start, or execution timed out after start (raise Cost Level in the WebUI, pick a catalog row that is already ready, and/or set a larger `queue_timeout` on a **new** create)
+  - `timeout` — queue wait ended before a ready run could start, or execution timed out after start (raise Cost Level with `set_cost_level`, pick a catalog row that is already ready, and/or set a larger `queue_timeout` on a **new** create)
   - `result_upload_timeout` — result upload timed out after validation; create again
   - `group_timeout` — validation group timed out; create again
   - `incorrect_result` / `error_reported` — execution or validation failed; change TaskArgs or model config and create again
@@ -88,11 +88,6 @@ Top-level shape (details and examples live in separate resources — read only w
 
 ## Cost Level
 
-**Cost Level** is a **project** setting. On each create, Crynux AS resolves it to that request's effective `priority_gwei`, which sets the submitted task fee and Credits charge. Queued tasks are matched in **priority descending** order (higher priority first; same priority uses task id). A higher Cost Level therefore raises fee/Credits and places the task ahead of lower-priority queued tasks. It does not by itself guarantee a short wall-clock wait if no eligible node is free.
+**Cost Level** is a **project** setting that sets each create's effective priority, task fee, and Credits charge. Read resource `crynux://guides/cost-level` for modes, field values, how to judge settings with `get_cost_level_hints`, and how to dry-run Credits with `estimate_task_credits`. Use `get_cost_level` / `set_cost_level` to read or change the project settings. MCP cannot set `task_fee` on create.
 
-- **Static:** fixed `priority_gwei` for the project. If the estimate exceeds the project's Max Credits, create is rejected.
-- **Auto:** targets a relative position in the live queue, then adjusts within Max Credits while meeting the minimum fee.
-
-MCP tools can only create, query, and abort tasks. They **cannot** change Cost Level and **cannot** set `task_fee` (AS computes the fee from the project Cost Level). To change Cost Level, use the Crynux AS WebUI project settings.
-
-Create fails when fee/Credits fail admission or exceed Max Credits, or when available Credits are insufficient. A Cost Level that sits behind many higher-priority queued tasks waits longer in the queue. `queue_timeout` only caps how long to wait; it does not raise Cost Level.
+Create fails when fee/Credits fail admission or exceed Max Credits, or when available Credits are insufficient.

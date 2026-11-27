@@ -71,6 +71,20 @@ func CreateTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": taskViewFromRequest(c, job)})
 }
 
+func EstimateTask(c *gin.Context) {
+	project := llm.GetProject(c)
+	var request CreateTaskRequest
+	if !bindJSON(c, &request) {
+		return
+	}
+	view, err := EstimateForProject(c.Request.Context(), project, request)
+	if err != nil {
+		writePrepareTaskError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": view})
+}
+
 func BatchCreate(c *gin.Context) {
 	project := llm.GetProject(c)
 	var request BatchCreateRequest
@@ -444,6 +458,8 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	}
 	var estimate *service.CalcTaskFeeResult
 	var llmBilling *models.LLMTaskBillingData
+	var promptTokensEstimate *uint64
+	var completionTokensEstimate *uint64
 	switch taskType {
 	case models.TaskTypeImage:
 		estimate, err = service.EstimateImageTaskFee(ctx, service.CalcImageTaskFeeInput{
@@ -457,6 +473,9 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 		})
 	default:
 		promptTokens := uint64((utf8.RuneCountInString(taskArgs) + 3) / 4)
+		completionTokens := maxTokens
+		promptTokensEstimate = &promptTokens
+		completionTokensEstimate = &completionTokens
 		estimate, err = service.EstimateLLMTaskFeeWithQuery(ctx, project, query, billedVram, priority, promptTokens, maxTokens)
 		if err == nil {
 			llmBilling = &models.LLMTaskBillingData{
@@ -473,9 +492,20 @@ func prepareTask(ctx context.Context, project *models.Project, request CreateTas
 	priority = estimate.PriorityGwei
 	taskFeeWei := new(big.Int).Mul(estimate.TaskFeeGwei, big.NewInt(weiPerGwei))
 	return &preparedTask{
-		request: request, model: model, taskArgs: taskArgs, minVram: minVram,
-		billedVram: billedVram, priority: priority.String(),
-		taskFeeWei: taskFeeWei.String(), credits: estimate.Credits.String(), llmBilling: llmBilling,
+		request:                  request,
+		model:                    model,
+		taskArgs:                 taskArgs,
+		minVram:                  minVram,
+		billedVram:               billedVram,
+		priority:                 priority.String(),
+		taskFeeGwei:              estimate.TaskFeeGwei.String(),
+		taskFeeWei:               taskFeeWei.String(),
+		credits:                  estimate.Credits.String(),
+		estimatedNodeSeconds:     estimate.EstimatedNodeSeconds,
+		vramWeight:               estimate.VramWeight,
+		promptTokensEstimate:     promptTokensEstimate,
+		completionTokensEstimate: completionTokensEstimate,
+		llmBilling:               llmBilling,
 	}, nil
 }
 

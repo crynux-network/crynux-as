@@ -218,54 +218,21 @@ func UpdateProject(c *gin.Context, in *UpdateProjectInput) (*ProjectResponse, er
 		project.Name = name
 	}
 
-	if in.PriorityGwei != nil {
-		parsed, err := service.ParsePriorityGwei(*in.PriorityGwei)
-		if err != nil {
-			return nil, response.NewValidationErrorResponse("priority_gwei", err.Error())
+	if in.CostLevelMode != nil ||
+		in.PriorityGwei != nil ||
+		in.AutoQueuePosition != nil ||
+		in.AutoMaxCreditsPerTask != nil {
+		if fieldErr := service.ApplyProjectCostLevelUpdate(project, service.ProjectCostLevelUpdate{
+			CostLevelMode:         in.CostLevelMode,
+			PriorityGwei:          in.PriorityGwei,
+			AutoQueuePosition:     in.AutoQueuePosition,
+			AutoMaxCreditsPerTask: in.AutoMaxCreditsPerTask,
+		}); fieldErr != nil {
+			return nil, response.NewValidationErrorResponse(fieldErr.Field, fieldErr.Message)
 		}
-		project.PriorityGwei = models.BigInt{Int: *parsed}
 	}
 
-	if in.AutoQueuePosition != nil {
-		parsed, err := service.ParseAutoQueuePosition(*in.AutoQueuePosition)
-		if err != nil {
-			return nil, response.NewValidationErrorResponse("auto_queue_position", err.Error())
-		}
-		project.AutoQueuePosition = &parsed
-	}
-
-	if in.AutoMaxCreditsPerTask != nil {
-		parsed, err := service.ParseAutoMaxCreditsPerTask(*in.AutoMaxCreditsPerTask)
-		if err != nil {
-			return nil, response.NewValidationErrorResponse("auto_max_credits_per_task", err.Error())
-		}
-		project.AutoMaxCreditsPerTask = &models.BigInt{Int: *parsed}
-	}
-
-	if in.CostLevelMode != nil {
-		mode, err := service.ParseCostLevelMode(*in.CostLevelMode)
-		if err != nil {
-			return nil, response.NewValidationErrorResponse("cost_level_mode", err.Error())
-		}
-		if project.AutoMaxCreditsPerTask == nil || project.AutoMaxCreditsPerTask.Sign() <= 0 {
-			return nil, response.NewValidationErrorResponse(
-				"auto_max_credits_per_task",
-				"auto_max_credits_per_task is required",
-			)
-		}
-		if mode == models.CostLevelModeAuto {
-			if project.AutoQueuePosition == nil {
-				pos := service.DefaultAutoQueuePosition
-				project.AutoQueuePosition = &pos
-			}
-		}
-		project.CostLevelMode = mode
-	}
-
-	dbCtx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-
-	if err := db.WithContext(dbCtx).Save(project).Error; err != nil {
+	if err := service.SaveProject(c.Request.Context(), db, project); err != nil {
 		log.Errorf("Error updating project %d for user %d: %v", in.ProjectID, user.ID, err)
 		return nil, response.NewExceptionResponse(err)
 	}

@@ -22,4 +22,7 @@ func InitRoutes(engine *gin.Engine) {
 	group.GET("/responses/:response_id", responses.GetResponse)
 	group.GET("/models", Models)
 	group.GET("/models/*model", RetrieveModel)
+	group.GET("/cost_level", GetCostLevel)
+	group.PUT("/cost_level", PutCostLevel)
+	group.GET("/cost_level/hints", GetCostLevelHints)
 }

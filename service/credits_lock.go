@@ -30,6 +30,20 @@ func AvailableCredits(balance, locked *big.Int) *big.Int {
 	return available
 }
 
+// AvailableCreditsForUser returns balance - locked for the user's Credits account.
+// Missing accounts are treated as zero available Credits.
+func AvailableCreditsForUser(ctx context.Context, db *gorm.DB, userID uint) (*big.Int, error) {
+	var account models.CreditAccount
+	err := db.WithContext(ctx).Where("user_id = ?", userID).First(&account).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return big.NewInt(0), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return AvailableCredits(&account.Balance.Int, &account.Locked.Int), nil
+}
+
 // EnsureSufficientAvailable returns ErrInsufficientBalance when available Credits
 // (balance - locked) are strictly below required.
 func EnsureSufficientAvailable(balance, locked, required *big.Int) error {

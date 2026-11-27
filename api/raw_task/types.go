@@ -66,13 +66,35 @@ type BatchAbortItem struct {
 }
 
 type preparedTask struct {
-	request    CreateTaskRequest
-	model      string
-	taskArgs   string
-	minVram    *uint64
-	billedVram uint64
-	priority   string
-	taskFeeWei string
-	credits    string
-	llmBilling *models.LLMTaskBillingData
+	request                  CreateTaskRequest
+	model                    string
+	taskArgs                 string
+	minVram                  *uint64
+	billedVram               uint64
+	priority                 string
+	taskFeeGwei              string
+	taskFeeWei               string
+	credits                  string
+	estimatedNodeSeconds     float64
+	vramWeight               float64
+	promptTokensEstimate     *uint64
+	completionTokensEstimate *uint64
+	llmBilling               *models.LLMTaskBillingData
+}
+
+// TaskEstimateView is the create-time Credits and fee dry-run response.
+type TaskEstimateView struct {
+	EstimatedCredits         string  `json:"estimated_credits"`
+	PriorityGwei             string  `json:"priority_gwei"`
+	TaskFeeGwei              string  `json:"task_fee_gwei"`
+	TaskFeeWei               string  `json:"task_fee_wei"`
+	EstimatedNodeSeconds     float64 `json:"estimated_node_seconds"`
+	BilledVram               uint64  `json:"billed_vram"`
+	VramWeight               float64 `json:"vram_weight"`
+	Model                    string  `json:"model"`
+	ModelReady               bool    `json:"model_ready"`
+	AvailableCredits         string  `json:"available_credits"`
+	Sufficient               bool    `json:"sufficient"`
+	PromptTokensEstimate     *uint64 `json:"prompt_tokens_estimate,omitempty"`
+	CompletionTokensEstimate *uint64 `json:"completion_tokens_estimate,omitempty"`
 }

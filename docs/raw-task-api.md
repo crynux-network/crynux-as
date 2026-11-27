@@ -7,6 +7,7 @@ Each project MUST expose the Raw Task API under `/api/<endpoint_token>/v1`. Ever
 The API MUST expose:
 
 * `POST /inference_tasks`
+* `POST /inference_tasks/estimate`
 * `GET /inference_tasks/:client_task_id`
 * `POST /inference_tasks/:client_task_id/abort`
 * `GET /inference_tasks/:client_task_id/llm`
@@ -19,6 +20,9 @@ The API MUST expose:
 * `GET /models/chat`
 * `GET /models/image`
 * `GET /models/video`
+* `GET /cost_level`
+* `PUT /cost_level`
+* `GET /cost_level/hints`
 
 Crynux AS MUST also expose unauthenticated result download routes outside the project prefix:
 
@@ -117,6 +121,41 @@ When status is `success`, the task view MUST also include ready-to-use public do
 
 `http.public_origin` is specified in [configuration.md](./configuration.md). Non-success Image and Video views MUST omit `result_download_urls` and `result_download_url`. LLM views MUST omit both fields.
 
+## Task Credits Estimate
+
+`POST /inference_tasks/estimate` MUST accept the same body fields as create for `task_args`, `task_type` (`0`, `1`, or `3`), and optional `min_vram`. Optional `queue_timeout` MUST be validated with the same rules as create when present, and MUST NOT appear in the estimate response. A body that includes `task_fee` MUST be rejected. The request MUST NOT accept Cost Level override fields; estimation MUST use the project's current Cost Level settings.
+
+AS MUST run the same create preparation path used before Credits reservation: schema validation, model-name normalization, execution resolution, Hub checks when needed, Relay execution-time coefficients, fee and Credits estimation, and Cost Level admission (including Max Credits and minimum fee). Preparation failures MUST return the same HTTP 400 messages as create preparation. Estimate MUST NOT return HTTP 402.
+
+Estimate MUST NOT create a `task_jobs` row, MUST NOT write call records, and MUST NOT change `credit_accounts.locked`. AS MUST read available Credits as `balance - locked` (clamped at zero) and set `sufficient` to whether available Credits are greater than or equal to `estimated_credits`. Insufficient available Credits MUST still return HTTP 200 with `sufficient` false.
+
+Estimate MUST NOT apply the create-time `model_not_ready` gate. Response `data` MUST include a read-only `model_ready` boolean using the same inventory rules as create, and MUST NOT block estimation when false.
+
+On success the response MUST be:
+
+```json
+{
+  "message": "success",
+  "data": {
+    "estimated_credits": "123",
+    "priority_gwei": "34000",
+    "task_fee_gwei": "123",
+    "task_fee_wei": "123000000000",
+    "estimated_node_seconds": 1.5,
+    "billed_vram": 20,
+    "vram_weight": 2.5,
+    "model": "org/llm",
+    "model_ready": true,
+    "available_credits": "999900",
+    "sufficient": true,
+    "prompt_tokens_estimate": 10,
+    "completion_tokens_estimate": 256
+  }
+}
+```
+
+`estimated_credits`, `priority_gwei`, `task_fee_gwei`, and `task_fee_wei` MUST match the create-time values that create would use to lock Credits for the same request under the current Cost Level. `prompt_tokens_estimate` and `completion_tokens_estimate` MUST be present for LLM estimates only, using the same precheck rules as create: `(utf8(task_args) + 3) / 4` and `generation_config.max_new_tokens` or the configured default. Image and Video estimates MUST omit those two fields. This estimate is create-time only. Image and Video settlement uses the same create-time Credits; LLM settlement MAY differ when actual token usage differs from the precheck estimates.
+
 ## Batch Operations
 
 `POST /inference_tasks/batch` MUST accept `{"tasks":[...]}` with between 1 and 100 items. AS MUST validate and price items in request order. The response MUST contain one item result per input index in the same order. One invalid item MUST NOT prevent valid items from being accepted. Each item MUST contain `index` and either `client_task` or `error`. A model-not-ready item MUST use `error` with the model-not-ready message and MUST include `client_task_id` for the created job; it MUST NOT include `client_task`.
@@ -159,7 +198,37 @@ A result request whose path does not match the job task type MUST return HTTP 40
 
 Image PNG bytes and Video MP4 bytes MUST be stored only on the local filesystem under `llm.task_result_dir`. Image PNG bytes, Video MP4 bytes, base64 encodings, and result directory paths MUST NOT be stored in MySQL. OpenAI Images API responses MUST encode PNG files from disk into the HTTP response body and MUST NOT persist that encoded body on the job row. Raw LLM clients MUST receive the raw Bridge JSON result.
 
-MCP access to Raw Task create, status, abort, models, LLM result text, and local save tools is specified in [mcp.md](./mcp.md).
+MCP access to Raw Task create, status, abort, models, Cost Level, LLM result text, and local save tools is specified in [mcp.md](./mcp.md).
+
+## Project Cost Level
+
+The project-authenticated Cost Level routes MUST use the same `ProjectAuth` rules as Raw Task. Stored fields, Static bounds, Auto resolution, and Max Credits rules MUST match [llm-api.md](./llm-api.md) Project Cost Level. The JWT management APIs `PUT /v1/projects/:project_id` and `GET /v1/llm/billing_config` remain for the WebUI; ProjectAuth Cost Level routes MUST apply the same Cost Level validation as project update.
+
+### `GET /cost_level`
+
+Response `data` MUST contain:
+
+* `cost_level_mode` (`static` or `auto`)
+* `priority_gwei` (decimal integer Gwei string)
+* `auto_queue_position` (integer in `[0, 100]`, or `null` when unset)
+* `auto_max_credits_per_task` (positive decimal integer Credits string, or `null` when unset)
+
+### `PUT /cost_level`
+
+The body MUST be a partial update with at least one of `cost_level_mode`, `priority_gwei`, `auto_queue_position`, or `auto_max_credits_per_task`. Omitted fields MUST remain unchanged. Validation MUST match JWT project Cost Level update: `priority_gwei` MUST be a positive multiple of `1000` Gwei inside Static project bounds; `auto_queue_position` MUST be in `[0, 100]`; `auto_max_credits_per_task` MUST be a positive decimal integer; setting `cost_level_mode` MUST require a valid Max Credits on the project after applying the same payload; switching to `auto` with a missing queue position MUST set `auto_queue_position` to `50`. On success the response `data` MUST match `GET /cost_level`.
+
+### `GET /cost_level/hints`
+
+Response `data` MUST contain Crynux Network reasonableness fields only:
+
+* `base_vram`
+* `credits_per_gwei`
+* `min_priority_gwei` and `max_priority_gwei` (Static project bounds)
+* `median_priority_gwei`
+* `highest_priority_gwei` and `lowest_priority_gwei` (live non-empty Crynux queue bounds, or both `null`)
+* `default_auto_max_credits_per_task`
+
+The response MUST NOT include Provider queue or Provider admission hint fields. Those remain on JWT `GET /v1/llm/billing_config` as specified in [credits-billing.md](./credits-billing.md).
 
 ## Models
 
