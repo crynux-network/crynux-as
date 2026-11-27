@@ -68,6 +68,7 @@ type TaskJob struct {
 	Model                 string      `gorm:"type:string;size:255;not null"`
 	BilledVram            uint64      `gorm:"not null;default:0"`
 	PublicID              string      `gorm:"type:string;size:128;index:idx_task_jobs_project_public_id,priority:2;index"`
+	ResultDownloadHash    *string     `gorm:"type:string;size:64;uniqueIndex:idx_task_jobs_result_download_hash"`
 	Background            bool        `gorm:"not null;default:false"`
 	Stream                bool        `gorm:"not null;default:false"`
 	TaskArgsJSON          string      `gorm:"type:longtext;not null"`

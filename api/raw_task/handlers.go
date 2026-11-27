@@ -563,6 +563,9 @@ func taskView(job *models.TaskJob) TaskView {
 	if status != "running" || phase != "running" {
 		view.EstimatedCompletionAt = nil
 	}
+	if job.ResultDownloadHash != nil && *job.ResultDownloadHash != "" {
+		view.ResultDownloadHash = *job.ResultDownloadHash
+	}
 	return view
 }
 

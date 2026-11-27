@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crynux_as/models"
+	"crynux_as/utils"
 	"errors"
 	"fmt"
 	"math/big"
@@ -105,6 +106,13 @@ func ReserveCreditsAndCreateRawTaskJob(ctx context.Context, db *gorm.DB, in Crea
 		BillingData:       billingJSON,
 		CreditsLocked:     models.BigInt{Int: *new(big.Int).Set(in.CreditsToLock)},
 		CreditsLockStatus: models.TaskJobCreditsLockHeld,
+	}
+	if in.TaskType == models.TaskTypeImage || in.TaskType == models.TaskTypeVideo {
+		hash, hashErr := utils.GenerateRandomToken(32)
+		if hashErr != nil {
+			return nil, fmt.Errorf("generate result download hash: %w", hashErr)
+		}
+		job.ResultDownloadHash = &hash
 	}
 	if in.QueueTimeout != nil {
 		job.QueueTimeout = *in.QueueTimeout

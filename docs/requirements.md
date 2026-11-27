@@ -111,6 +111,8 @@ Each project exposes the following endpoints under its private base URL:
 * `GET /api/<endpoint_token>/v1/models/chat`
 * `GET /api/<endpoint_token>/v1/models/image`
 * `GET /api/<endpoint_token>/v1/models/video`
+* `POST|GET|DELETE /api/<endpoint_token>/mcp` (Remote Streamable HTTP MCP; see [mcp.md](./mcp.md))
+* `GET /api/result/<result_download_hash>/images/<index>` and `GET /api/result/<result_download_hash>/video` (unauthenticated Image/Video result downloads)
 * `GET /api/<endpoint_token>/v1/models/<model>`
 
 The request and response formats are OpenAI-compatible for the supported fields of each endpoint.

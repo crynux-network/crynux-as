@@ -5,6 +5,7 @@ import (
 	"crynux_as/config"
 	"crynux_as/models"
 	"crynux_as/provider"
+	"crynux_as/utils"
 	"errors"
 	"fmt"
 	"math/big"
@@ -88,6 +89,13 @@ func ReserveCreditsAndCreateProviderTaskJob(ctx context.Context, db *gorm.DB, in
 		CreditsLocked:     models.BigInt{Int: *new(big.Int).Set(in.CreditsToLock)},
 		CreditsLockStatus: models.TaskJobCreditsLockHeld,
 		PublicID:          in.PublicID,
+	}
+	if taskType == models.TaskTypeImage {
+		hash, hashErr := utils.GenerateRandomToken(32)
+		if hashErr != nil {
+			return nil, fmt.Errorf("generate result download hash: %w", hashErr)
+		}
+		job.ResultDownloadHash = &hash
 	}
 	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

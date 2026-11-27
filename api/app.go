@@ -1,8 +1,10 @@
 package api
 
 import (
+	asmcp "crynux_as/api/mcp"
 	"crynux_as/api/llm"
 	"crynux_as/api/raw_task"
+	"crynux_as/api/result"
 	"crynux_as/api/tools"
 	v1 "crynux_as/api/v1"
 	responseV1 "crynux_as/api/v1/response"
@@ -64,6 +66,8 @@ func GetHttpApplication(appConfig *config.AppConfig) *gin.Engine {
 	rawTaskGroup := engine.Group("/api/:endpoint_token/v1")
 	rawTaskGroup.Use(llm.ProjectAuthMiddleware())
 	raw_task.InitRoutes(rawTaskGroup)
+	asmcp.InitRoutes(engine)
+	result.InitRoutes(engine)
 
 	// Serve OpenAPI specifications
 	infos := &openapi.Info{

@@ -25,6 +25,7 @@ type TaskView struct {
 	Phase                 string          `json:"phase"`
 	EstimatedCompletionAt *time.Time      `json:"estimated_completion_at,omitempty"`
 	ErrorMessage          string          `json:"error_message,omitempty"`
+	ResultDownloadHash    string          `json:"result_download_hash,omitempty"`
 	CreatedAt             time.Time       `json:"created_at"`
 	UpdatedAt             time.Time       `json:"updated_at"`
 }

@@ -20,7 +20,12 @@ The API MUST expose:
 * `GET /models/image`
 * `GET /models/video`
 
-The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge ClientTask ID, Bridge client ID, or platform client ID MUST NOT appear in a public response. Every lookup and result download MUST select by both project ID and local task ID.
+Crynux AS MUST also expose unauthenticated result download routes outside the project prefix:
+
+* `GET /api/result/:result_download_hash/images/:index`
+* `GET /api/result/:result_download_hash/video`
+
+The public `client_task_id` MUST be the Crynux AS `task_jobs.id`. A Bridge ClientTask ID, Bridge client ID, or platform client ID MUST NOT appear in a public response. Every authenticated lookup and authenticated result download MUST select by both project ID and local task ID.
 
 ## Task Creation
 
@@ -103,6 +108,8 @@ Public status MUST be `running`, `success`, or `failed`. Pending submission, sub
 
 The task view MUST include `phase`. Allowed values are `queued`, `running`, `validating`, `uploading`, `finalizing`, `success`, and `failed`. When `status` is `running`, `phase` MUST be one of `queued`, `running`, `validating`, `uploading`, or `finalizing`. When `status` is `success`, `phase` MUST be `success`. When `status` is `failed`, `phase` MUST be `failed`. A newly created job MUST use `phase` `queued` until the background worker advances it from Bridge status. When `phase` is `running` and an estimated execution completion time is known, the task view MUST include `estimated_completion_at`. Otherwise the task view MUST omit `estimated_completion_at`.
 
+For an Image or Video job, create MUST generate one unguessable random `result_download_hash` (cryptographically random, at least 32 bytes encoded as lowercase hex) and persist it on the `task_jobs` row before returning. Create, get, batch status, and abort task views for that job MUST include the same `result_download_hash` string. The hash MUST NOT be the local task id, Bridge client task id, or any Bridge/Relay `task_id_commitment`. LLM jobs MUST omit `result_download_hash`. Clients MUST build public download URLs as `{as_public_origin}/api/result/{result_download_hash}/images/{index}` for Image results and `{as_public_origin}/api/result/{result_download_hash}/video` for Video results.
+
 ## Batch Operations
 
 `POST /inference_tasks/batch` MUST accept `{"tasks":[...]}` with between 1 and 100 items. AS MUST validate and price items in request order. The response MUST contain one item result per input index in the same order. One invalid item MUST NOT prevent valid items from being accepted. Each item MUST contain `index` and either `client_task` or `error`. A model-not-ready item MUST use `error` with the model-not-ready message and MUST include `client_task_id` for the created job; it MUST NOT include `client_task`.
@@ -139,7 +146,13 @@ A Video result request MUST succeed only for a successful Video job owned by the
 
 A result request whose path does not match the job task type MUST return HTTP 400. A result request for a job that is not successful MUST return HTTP 409.
 
+### Public hash downloads
+
+`GET /api/result/:result_download_hash/images/:index` and `GET /api/result/:result_download_hash/video` MUST NOT require authentication. AS MUST look up the job by exact `result_download_hash`. When the hash is unknown, the job task type does not match the path, the job is not successful, the local result file is missing or empty, or the job row has been removed by retention cleanup, the response MUST be HTTP 404. A successful Image hash download MUST return the same PNG bytes and headers as the authenticated Image result route. A successful Video hash download MUST return the same MP4 bytes and headers as the authenticated Video result route. One Image job MUST use one `result_download_hash` for every `images/{index}` under that job.
+
 Image PNG bytes and Video MP4 bytes MUST be stored only on the local filesystem under `llm.task_result_dir`. Image PNG bytes, Video MP4 bytes, base64 encodings, and result directory paths MUST NOT be stored in MySQL. OpenAI Images API responses MUST encode PNG files from disk into the HTTP response body and MUST NOT persist that encoded body on the job row. Raw LLM clients MUST receive the raw Bridge JSON result.
+
+MCP access to Raw Task create, status, abort, models, LLM result text, and local save tools is specified in [mcp.md](./mcp.md).
 
 ## Models
 
