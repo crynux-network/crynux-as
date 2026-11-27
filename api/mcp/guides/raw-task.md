@@ -37,12 +37,12 @@ The same HuggingFace model name can appear as **several** `list_models` rows. Di
 
 Two checks matter, and they are not the same:
 
-1. **Required model files (download / on-disk readiness).**  
-   - LLM: the base model repository only.  
-   - Image/Video: the base model repository plus every repository under `components`.  
+1. **Required model files (download / on-disk readiness).**
+   - LLM: the base model repository only.
+   - Image/Video: the base model repository plus every repository under `components`.
    - `quantization_config`, `dtype`, and LoRA (`lora` / `loras`) are **not** required model files and do **not** change this file set.
 
-2. **Exact run config (in-memory warm load).**  
+2. **Exact run config (in-memory warm load).**
    `quantization_config`, `dtype`, `components`, and LoRA together identify one run config. Same on-disk files with a different quantization are a different run config. Matching prefers a node that already has that exact config in memory; otherwise the selected node must load it before running, which takes longer.
 
 Create returns `model_not_ready` when the **required model file set** has no on-disk coverage yet:
@@ -60,6 +60,29 @@ Prefer rows with `on_disk_node_count >= 1`. Copy **one entire row** into TaskArg
 - **Image:** `id` → `base_model.name`; copy `dtype`, `quantization_config`, `components`, `lora`, and that row's `min_vram`.
 - **Video:** `id` → `base_model.name`; copy `dtype`, `quantization_config`, `components`, `loras`, and that row's `min_vram`.
 
+### Related guides (VRAM vs TaskArgs)
+
+These resources split **which model to pick** from **how to write TaskArgs**. Read only what you need.
+
+| Resource | What it contains | What it does not contain |
+|----------|------------------|--------------------------|
+| `crynux://guides/vram-models` | One primary LLM / Image / Video (T2V) pick per 24 / 32 / 80 / 96 GB tier; video T2V / I2V / FLF2V checkpoint table; platform notes (BitsAndBytes / GGUF / AWQ) | Field definitions; full TaskArgs JSON; Cost Level / Credits |
+| `crynux://guides/task-args/llm` | LLM field reference (schema link, defaults, AS create rules) and complete example TaskArgs JSON for each VRAM-tier LLM pick | Image / Video shapes; cross-type VRAM comparison tables |
+| `crynux://guides/task-args/image` | Image field reference and complete example TaskArgs JSON for each VRAM-tier Image pick (including `components` / GGUF / BitsAndBytes) | LLM / Video shapes; cross-type VRAM comparison tables |
+| `crynux://guides/task-args/video` | Video field reference (media modes, `task_config`, `components`, quant) and complete example TaskArgs JSON for T2V / I2V / FLF2V per VRAM tier | LLM / Image shapes; the short VRAM pick tables (those stay in `vram-models`) |
+| `crynux://guides/cost-level` | Cost Level modes, hints, create-time Credits estimate | Model / VRAM picks; TaskArgs field docs |
+
+Typical order: choose a tier row in `vram-models` → open the matching task-args guide for the full JSON → set create `min_vram` from that row (or higher). Do not invent a large-model + low-`min_vram` combination outside those guides. Do not use Wan 2.2 A14B on 24 GB.
+
+Short summary of the primary picks (full tables and video modes: `vram-models`):
+
+| Tier | LLM | Image | Video (T2V) |
+|------|-----|-------|-------------|
+| 24 GB | `Qwen/Qwen3.5-9B` bf16 | `Qwen/Qwen-Image-2.1-Turbo` GGUF Q4 + text_encoder BitsAndBytes NF4 | `Wan-AI/Wan2.2-TI2V-5B-Diffusers` BitsAndBytes NF4 |
+| 32 GB | `Qwen/Qwen3.8-27B` BitsAndBytes INT8 | `Qwen/Qwen-Image-2.1` BitsAndBytes NF4 | `Wan-AI/Wan2.2-T2V-A14B-Diffusers` BitsAndBytes NF4 |
+| 80 GB | `Qwen/Qwen3.8-27B` bf16 | `black-forest-labs/FLUX.2-klein-4B` bf16 | `Wan-AI/Wan2.2-T2V-A14B-Diffusers` BitsAndBytes NF4 |
+| 96 GB | `Qwen/Qwen3.8-27B` bf16 (`min_vram` 96) | `Qwen/Qwen-Image-2.1` bf16 | `Wan-AI/Wan2.2-T2V-A14B-Diffusers` bf16 |
+
 ### Changing a config
 
 - Change **`components`** → changes the required model file set. If that set has no on-disk coverage, create returns `model_not_ready`.
@@ -72,13 +95,11 @@ You can submit a HuggingFace model that is not in `list_models` when TaskArgs ma
 
 ## TaskArgs overview
 
-`task_args` is a JSON string validated against the task schema before the job is created.
+`task_args` is a JSON string validated against the task schema before the job is created. Field-by-field rules and **complete example JSON** (including the VRAM-tier picks above) live only in the type-specific guides.
 
 - LLM schema: https://github.com/crynux-network/gpt-task/blob/main/schema/gpt-inference-task.json
 - Image schema: https://github.com/crynux-network/stable-diffusion-task/blob/main/schema/image-task.json
 - Video schema: https://github.com/crynux-network/stable-diffusion-task/blob/main/schema/video-task.json
-
-Top-level shape (details and examples live in separate resources — read only what you need):
 
 | Type | Resource | Required highlights |
 |------|----------|---------------------|

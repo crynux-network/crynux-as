@@ -13,7 +13,7 @@
 | [model-compatibility/](./model-compatibility/) | OpenAI-compatible request conversion, canonical task persistence and raw-task transport, raw assistant-text parsing, and public response construction |
 | [credits-billing.md](./credits-billing.md) | Credits billing and shared `billable_gwei` task-fee inputs: project Cost Level `priority_gwei`, Relay execution-time coefficients, VRAM weight, settle rules, and pricing-examples API |
 | [raw-task-api.md](./raw-task-api.md) | Project-authenticated Raw Task routes, Cost Level get/set/hints, create-time Credits estimate, local ID isolation, batch behavior, LLM, Image, and Video results, public result download hashes, concrete dtype resolution, model catalogs, pricing, and settlement |
-| [mcp.md](./mcp.md) | Remote Streamable HTTP MCP and local stdio/mcpb packages: auth, Raw Task, Cost Level, and estimate tools, Image/Video public download links, local save tools, and release layout |
+| [mcp.md](./mcp.md) | Remote Streamable HTTP MCP and local stdio/mcpb packages: auth, Raw Task, Cost Level, estimate, and VRAM-tier model guides/tools, Image/Video public download links, local save tools, and release layout |
 | [provider-key-sharing/](./provider-key-sharing/) | Provider Key Sharing specification: Service Provider model routing, encrypted Shared API Keys, independent Bridge and Provider workers, real streaming, pricing, Key Owner earnings, Wallet-compatible withdrawals, APIs, operations, and testing |
 
 ## Architecture Document Scope

@@ -54,7 +54,7 @@ func getProject(ctx context.Context) (*models.Project, error) {
 	return project, nil
 }
 
-const createTaskGuideHint = "Before calling, read resource crynux://guides/raw-task for usage (model selection, model_not_ready, results, Cost Level). For Cost Level changes read crynux://guides/cost-level and use get_cost_level / set_cost_level / get_cost_level_hints. "
+const createTaskGuideHint = "Before calling, read resource crynux://guides/raw-task for usage (model selection, model_not_ready, results, Cost Level, and what vram-models vs task-args guides contain). For which model/quant to run on a GPU class read crynux://guides/vram-models. For TaskArgs fields and full example JSON read crynux://guides/task-args/llm, crynux://guides/task-args/image, or crynux://guides/task-args/video. For Cost Level changes read crynux://guides/cost-level and use get_cost_level / set_cost_level / get_cost_level_hints. "
 
 const costLevelGuideHint = "Before calling, read resource crynux://guides/cost-level. "
 
@@ -149,7 +149,7 @@ func newProjectMCPServer() *mcpserver.MCPServer {
 	s.AddResource(mcp.NewResource(
 		guideURIRawTask,
 		"Raw Task and MCP guide",
-		mcp.WithResourceDescription("Crynux AS MCP overview: workflow, model selection, TaskArgs pointers, Cost Level pointer, and errors including model_not_ready."),
+		mcp.WithResourceDescription("Crynux AS MCP overview: workflow, model selection, what vram-models vs task-args guides contain, Cost Level pointer, and errors including model_not_ready."),
 		mcp.WithMIMEType("text/markdown"),
 	), handleGuideResource)
 
@@ -161,23 +161,30 @@ func newProjectMCPServer() *mcpserver.MCPServer {
 	), handleGuideResource)
 
 	s.AddResource(mcp.NewResource(
+		guideURIVramModels,
+		"VRAM and model guide",
+		mcp.WithResourceDescription("Model/quant selection only: primary LLM/Image/Video picks and video T2V/I2V/FLF2V checkpoints by 24/32/80/96 GB. No TaskArgs JSON — use the task-args guides for fields and examples."),
+		mcp.WithMIMEType("text/markdown"),
+	), handleGuideResource)
+
+	s.AddResource(mcp.NewResource(
 		guideURITaskArgsLLM,
 		"LLM TaskArgs guide",
-		mcp.WithResourceDescription("LLM TaskArgs fields, schema link, and common quantization examples."),
+		mcp.WithResourceDescription("LLM TaskArgs field reference and complete example JSON for each VRAM-tier LLM pick. Model/quant tables are in crynux://guides/vram-models."),
 		mcp.WithMIMEType("text/markdown"),
 	), handleGuideResource)
 
 	s.AddResource(mcp.NewResource(
 		guideURITaskArgsImage,
 		"Image TaskArgs guide",
-		mcp.WithResourceDescription("Image TaskArgs fields, schema link, LoRA, Bitsandbytes, and GGUF component examples."),
+		mcp.WithResourceDescription("Image TaskArgs field reference and complete example JSON for each VRAM-tier Image pick. Model/quant tables are in crynux://guides/vram-models."),
 		mcp.WithMIMEType("text/markdown"),
 	), handleGuideResource)
 
 	s.AddResource(mcp.NewResource(
 		guideURITaskArgsVideo,
 		"Video TaskArgs guide",
-		mcp.WithResourceDescription("Video TaskArgs fields, schema link, and T2V/I2V/FLF examples."),
+		mcp.WithResourceDescription("Video TaskArgs field reference and complete example JSON for T2V/I2V/FLF2V per VRAM tier. Checkpoint pick tables are in crynux://guides/vram-models."),
 		mcp.WithMIMEType("text/markdown"),
 	), handleGuideResource)
 

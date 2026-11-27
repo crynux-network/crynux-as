@@ -112,58 +112,16 @@ Object fields (all required when the object is present):
 
 `quantization_config` does **not** change the required download file set by itself (weights still come from `base_model` / `components`). It does change run-config identity. Prefer copying the full `list_models` row rather than inventing a new quant mix.
 
-## Examples
+## Examples by VRAM tier
 
-### Text to image
+Which model and quant to pick for each GPU class is listed in `crynux://guides/vram-models`. Create with `task_type=0` and the matching `min_vram`.
 
-```json
-{
-  "version": "3.7.0",
-  "base_model": {"name": "Qwen/Qwen-Image-2.1"},
-  "dtype": "bfloat16",
-  "prompt": "A product photo of a white ceramic cup on a wooden table",
-  "task_config": {
-    "image_width": 1024,
-    "image_height": 1024,
-    "steps": 30,
-    "seed": 0,
-    "num_images_per_prompt": 1,
-    "guidance_scale": 4
-  }
-}
-```
-
-### LoRA
+### 24 GB — `Qwen/Qwen-Image-2.1-Turbo` GGUF Q4 + text_encoder BitsAndBytes NF4
 
 ```json
 {
-  "version": "3.7.0",
-  "base_model": {"name": "Qwen/Qwen-Image"},
-  "dtype": "bfloat16",
-  "prompt": "Valentin standing at a cafe entrance in natural daylight",
-  "negative_prompt": "blurry, low quality",
-  "task_config": {
-    "image_width": 1024,
-    "image_height": 1024,
-    "steps": 50,
-    "seed": 0,
-    "num_images_per_prompt": 1,
-    "guidance_scale": 4
-  },
-  "lora": {
-    "model": "flymy-ai/qwen-image-lora",
-    "weight_file_name": "pytorch_lora_weights.safetensors",
-    "weight": 100
-  }
-}
-```
-
-### Bitsandbytes on transformer + text_encoder
-
-```json
-{
-  "version": "3.7.0",
-  "base_model": {"name": "Qwen/Qwen-Image-2.1"},
+  "version": "3.7.1",
+  "base_model": {"name": "Qwen/Qwen-Image-2.1-Turbo", "revision": null},
   "dtype": "bfloat16",
   "prompt": "A product photo of a white ceramic cup on a wooden table",
   "task_config": {
@@ -173,6 +131,43 @@ Object fields (all required when the object is present):
     "seed": 0,
     "num_images_per_prompt": 1
   },
+  "components": {
+    "transformer": {
+      "format": "gguf",
+      "repo": "chilozk1022/Qwen-Image-2.1-Turbo-Quantized",
+      "revision": null,
+      "format_kwargs": {"filename": "qwen-image-2.1-turbo-Q4_K_M.gguf"}
+    }
+  },
+  "quantization_config": {
+    "quant_method": "bitsandbytes",
+    "components_to_quantize": ["text_encoder"],
+    "quant_kwargs": {
+      "load_in_4bit": true,
+      "bnb_4bit_quant_type": "nf4",
+      "bnb_4bit_compute_dtype": "bfloat16",
+      "bnb_4bit_use_double_quant": false
+    }
+  }
+}
+```
+
+### 32 GB — `Qwen/Qwen-Image-2.1` BitsAndBytes NF4
+
+```json
+{
+  "version": "3.7.1",
+  "base_model": {"name": "Qwen/Qwen-Image-2.1", "revision": null},
+  "dtype": "bfloat16",
+  "prompt": "A product photo of a white ceramic cup on a wooden table",
+  "task_config": {
+    "image_width": 1024,
+    "image_height": 1024,
+    "steps": 8,
+    "seed": 0,
+    "num_images_per_prompt": 1
+  },
+  "components": {},
   "quantization_config": {
     "quant_method": "bitsandbytes",
     "components_to_quantize": ["transformer", "text_encoder"],
@@ -186,30 +181,69 @@ Object fields (all required when the object is present):
 }
 ```
 
-### GGUF component replacement
+### 80 GB — `black-forest-labs/FLUX.2-klein-4B` bf16
 
 ```json
 {
-  "version": "3.7.0",
-  "base_model": {"name": "Tongyi-MAI/Z-Image-Turbo"},
+  "version": "3.7.1",
+  "base_model": {"name": "black-forest-labs/FLUX.2-klein-4B", "revision": null},
   "dtype": "bfloat16",
   "prompt": "A product photo of a white ceramic cup on a wooden table",
   "task_config": {
     "image_width": 1024,
     "image_height": 1024,
-    "steps": 9,
+    "steps": 4,
+    "seed": 0,
+    "num_images_per_prompt": 1,
+    "guidance_scale": 1
+  },
+  "quantization_config": null
+}
+```
+
+### 96 GB — `Qwen/Qwen-Image-2.1` bf16
+
+```json
+{
+  "version": "3.7.1",
+  "base_model": {"name": "Qwen/Qwen-Image-2.1", "revision": null},
+  "dtype": "bfloat16",
+  "prompt": "A product photo of a white ceramic cup on a wooden table",
+  "task_config": {
+    "image_width": 1024,
+    "image_height": 1024,
+    "steps": 8,
     "seed": 0,
     "num_images_per_prompt": 1
   },
-  "components": {
-    "transformer": {
-      "format": "gguf",
-      "repo": "jayn7/Z-Image-Turbo-GGUF",
-      "revision": null,
-      "format_kwargs": {
-        "filename": "z_image_turbo-Q4_K_M.gguf"
-      }
-    }
+  "components": {},
+  "quantization_config": null
+}
+```
+
+### LoRA (optional)
+
+`lora` is not part of the required model file set. Use a LoRA trained for the same base as `base_model.name`. Example on the 96 GB `Qwen/Qwen-Image-2.1` bf16 stack — replace `lora.model` with a HuggingFace LoRA repo for that base:
+
+```json
+{
+  "version": "3.7.1",
+  "base_model": {"name": "Qwen/Qwen-Image-2.1", "revision": null},
+  "dtype": "bfloat16",
+  "prompt": "A product photo of a white ceramic cup on a wooden table",
+  "task_config": {
+    "image_width": 1024,
+    "image_height": 1024,
+    "steps": 8,
+    "seed": 0,
+    "num_images_per_prompt": 1
+  },
+  "components": {},
+  "quantization_config": null,
+  "lora": {
+    "model": "<huggingface-lora-repo-for-qwen-image-2.1>",
+    "weight_file_name": "pytorch_lora_weights.safetensors",
+    "weight": 100
   }
 }
 ```

@@ -122,30 +122,69 @@ Runner-supported shape:
 
 Do not combine a non-null task-time `quantization_config` with a Hub checkpoint that already embeds its own quantization metadata; the runner rejects that overlap.
 
-## Examples
+## Examples by VRAM tier
 
-### Plain chat
+Which model and quant to pick for each GPU class is listed in `crynux://guides/vram-models`. Create with `task_type=1` and the matching `min_vram`.
+
+### 24 GB — `Qwen/Qwen3.5-9B` bf16
 
 ```json
 {
   "version": "3.7.0",
-  "model": "Qwen/Qwen3-8B",
-  "messages": [{"role": "user", "content": "Say hello in one sentence."}],
-  "generation_config": {"max_new_tokens": 128},
+  "model": "Qwen/Qwen3.5-9B",
   "dtype": "bfloat16",
+  "messages": [{"role": "user", "content": "Say hello in one sentence."}],
+  "generation_config": {"max_new_tokens": 256},
+  "quantization_config": null,
   "seed": 42
 }
 ```
 
-### Bitsandbytes 4-bit NF4
+### 32 GB — `Qwen/Qwen3.8-27B` BitsAndBytes INT8
 
 ```json
 {
   "version": "3.7.0",
-  "model": "Qwen/Qwen2.5-14B-Instruct",
-  "messages": [{"role": "user", "content": "Say hello in one sentence."}],
-  "generation_config": {"max_new_tokens": 64},
+  "model": "Qwen/Qwen3.8-27B",
   "dtype": "bfloat16",
+  "messages": [{"role": "user", "content": "Say hello in one sentence."}],
+  "generation_config": {"max_new_tokens": 256},
+  "quantization_config": {
+    "quant_method": "bitsandbytes",
+    "quant_kwargs": {
+      "load_in_8bit": true,
+      "llm_int8_threshold": 6.0
+    }
+  },
+  "seed": 42
+}
+```
+
+### 80 GB / 96 GB — `Qwen/Qwen3.8-27B` bf16
+
+```json
+{
+  "version": "3.7.0",
+  "model": "Qwen/Qwen3.8-27B",
+  "dtype": "bfloat16",
+  "messages": [{"role": "user", "content": "Say hello in one sentence."}],
+  "generation_config": {"max_new_tokens": 256},
+  "quantization_config": null,
+  "seed": 42
+}
+```
+
+Use `min_vram=80` or `min_vram=96`.
+
+### BitsAndBytes 4-bit NF4 (optional)
+
+```json
+{
+  "version": "3.7.0",
+  "model": "Qwen/Qwen3.8-27B",
+  "dtype": "bfloat16",
+  "messages": [{"role": "user", "content": "Say hello in one sentence."}],
+  "generation_config": {"max_new_tokens": 256},
   "quantization_config": {
     "quant_method": "bitsandbytes",
     "quant_kwargs": {
@@ -159,35 +198,15 @@ Do not combine a non-null task-time `quantization_config` with a Hub checkpoint 
 }
 ```
 
-### Bitsandbytes 8-bit
+### Fine-grained FP8 (optional)
 
 ```json
 {
   "version": "3.7.0",
-  "model": "Qwen/Qwen3-8B",
+  "model": "Qwen/Qwen3.8-27B",
+  "dtype": "bfloat16",
   "messages": [{"role": "user", "content": "Say hello in one sentence."}],
   "generation_config": {"max_new_tokens": 64},
-  "dtype": "bfloat16",
-  "quantization_config": {
-    "quant_method": "bitsandbytes",
-    "quant_kwargs": {
-      "load_in_8bit": true,
-      "llm_int8_threshold": 6.0
-    }
-  },
-  "seed": 42
-}
-```
-
-### Fine-grained FP8
-
-```json
-{
-  "version": "3.7.0",
-  "model": "Qwen/Qwen3-8B",
-  "messages": [{"role": "user", "content": "Say hello in one sentence."}],
-  "generation_config": {"max_new_tokens": 64},
-  "dtype": "bfloat16",
   "quantization_config": {
     "quant_method": "fp8",
     "quant_kwargs": {
@@ -201,17 +220,17 @@ Do not combine a non-null task-time `quantization_config` with a Hub checkpoint 
 }
 ```
 
-### Pre-quantized Hub model (AWQ / GPTQ style)
+### Pre-quantized Hub model (optional)
 
-Use the quantized Hub repo as `model` and set `quantization_config` to `null` (or omit it when the catalog row does).
+Use the quantized Hub repo as `model` and set `quantization_config` to `null`. Linux / Docker only for AWQ / GPTQ.
 
 ```json
 {
   "version": "3.7.0",
-  "model": "Qwen/Qwen2.5-32B-Instruct-AWQ",
+  "model": "mattbucci/Qwen3.8-27B-AWQ",
+  "dtype": "bfloat16",
   "messages": [{"role": "user", "content": "Say hello in one sentence."}],
   "generation_config": {"max_new_tokens": 64},
-  "dtype": "bfloat16",
   "quantization_config": null,
   "seed": 42
 }

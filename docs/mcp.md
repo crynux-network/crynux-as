@@ -73,13 +73,14 @@ Remote and Local MCP MUST expose these resources (MIME `text/markdown`):
 
 | URI | Content |
 |-----|---------|
-| `crynux://guides/raw-task` | Main guide: what MCP can do; workflow and errors (including `model_not_ready` with continuing `client_task_id`); model overview; TaskArgs overview with pointers; short Cost Level pointer |
+| `crynux://guides/raw-task` | Main guide: what MCP can do; workflow and errors (including `model_not_ready` with continuing `client_task_id`); model overview; **explicit split** of what `vram-models` vs each `task-args/*` guide contains; short primary-pick summary; TaskArgs overview pointers; Cost Level pointer |
 | `crynux://guides/cost-level` | Cost Level modes, field values, how to use hints for reasonableness, queue/Credits relationship, and create-time Credits estimate |
-| `crynux://guides/task-args/llm` | LLM TaskArgs fields, schema link on `main`, examples |
-| `crynux://guides/task-args/image` | Image TaskArgs fields, schema link on `main`, examples |
-| `crynux://guides/task-args/video` | Video TaskArgs fields, schema link on `main`, examples |
+| `crynux://guides/vram-models` | **Model/quant selection only:** one primary LLM / Image / Video (T2V) pick per 24/32/80/96 GB tier; video T2V / I2V / FLF2V checkpoint table; platform notes. MUST NOT include full TaskArgs JSON or field reference |
+| `crynux://guides/task-args/llm` | **LLM TaskArgs only:** field reference (schema link on `main`, defaults, AS create rules) and complete example JSON for each VRAM-tier LLM pick listed in `vram-models` |
+| `crynux://guides/task-args/image` | **Image TaskArgs only:** field reference and complete example JSON for each VRAM-tier Image pick (including `components` / GGUF / BitsAndBytes) |
+| `crynux://guides/task-args/video` | **Video TaskArgs only:** field reference (media modes, `task_config`, quant) and complete example JSON for T2V / I2V / FLF2V per VRAM tier |
 
-The main guide MUST NOT embed full TaskArgs detail or full Cost Level detail. Those MUST be read from the dedicated resources when needed.
+The main guide MUST state what each of `vram-models` and `task-args/*` contains and what it omits. It MAY include a short primary-pick summary table, but MUST NOT embed full TaskArgs detail, full Cost Level detail, or the full VRAM / video-mode tables. Those MUST be read from the dedicated resources when needed.
 
 Remote and Local MCP MUST expose these prompts, each with required argument `user_request`:
 

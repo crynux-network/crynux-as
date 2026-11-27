@@ -141,17 +141,19 @@ Object fields (all required when the object is present):
 
 `quantization_config` does **not** change the required download file set by itself. It does change run-config identity. Prefer copying the full `list_models` row.
 
-## Examples
+## Examples by VRAM tier and mode
 
-### Text to video with Bitsandbytes
+Which checkpoint and quant to pick for T2V / I2V / FLF2V on each GPU class is listed in `crynux://guides/vram-models`. Create with `task_type=3` and the matching `min_vram`. Replace `"data:image/png;base64,..."` with real image data URLs.
+
+### 24 GB — T2V — `Wan-AI/Wan2.2-TI2V-5B-Diffusers` BitsAndBytes NF4
 
 ```json
 {
   "version": "3.8.0",
   "base_model": {"name": "Wan-AI/Wan2.2-TI2V-5B-Diffusers"},
   "dtype": "bfloat16",
-  "prompt": "A golden retriever runs across a sunny meadow, cinematic natural lighting",
-  "negative_prompt": "blurry, low quality, static, deformed",
+  "prompt": "A golden retriever runs across a sunny meadow, camera tracking from the side, soft wind in the grass, cinematic natural lighting",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, extra limbs, frozen frame, cluttered background",
   "task_config": {
     "width": 832,
     "height": 480,
@@ -174,16 +176,15 @@ Object fields (all required when the object is present):
 }
 ```
 
-### Image to video
-
-Same as text-to-video, plus an `image` data URL (and optionally keep the same quantization / components as the catalog row).
+### 24 GB — I2V — same TI2V-5B + `image`
 
 ```json
 {
   "version": "3.8.0",
   "base_model": {"name": "Wan-AI/Wan2.2-TI2V-5B-Diffusers"},
   "dtype": "bfloat16",
-  "prompt": "The camera slowly pushes in while the subject turns to smile",
+  "prompt": "The yellow sun slowly rises over a calm blue lake, gentle ripples on the water, soft morning mist, smooth camera push-in",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, frozen frame, cluttered background",
   "image": "data:image/png;base64,...",
   "task_config": {
     "width": 832,
@@ -207,26 +208,27 @@ Same as text-to-video, plus an `image` data URL (and optionally keep the same qu
 }
 ```
 
-### First-last-frame style
+### 24 GB — FLF2V — `Wan-AI/Wan2.1-FLF2V-14B-720P-Diffusers` BitsAndBytes NF4
 
-Use a model that supports FLF2V, set both `image` and `last_image`, and keep the row's `dtype` / `quantization_config` / `components` when taken from `list_models`.
+Prefer about 480p landscape (for example `832x480`) on 24 GB.
 
 ```json
 {
   "version": "3.8.0",
   "base_model": {"name": "Wan-AI/Wan2.1-FLF2V-14B-720P-Diffusers"},
   "dtype": "bfloat16",
-  "prompt": "Smooth motion between the first and last frames",
+  "prompt": "Smooth continuous motion between the first and last frames, cinematic lighting",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, extra limbs, frozen frame, morphing face, sudden cut, discontinuous motion",
   "image": "data:image/png;base64,...",
   "last_image": "data:image/png;base64,...",
   "task_config": {
     "width": 832,
     "height": 480,
-    "num_frames": 49,
+    "num_frames": 81,
     "fps": 16,
-    "steps": 20,
+    "steps": 30,
     "seed": 0,
-    "guidance_scale": 5.0
+    "guidance_scale": 5.5
   },
   "quantization_config": {
     "quant_method": "bitsandbytes",
@@ -238,6 +240,181 @@ Use a model that supports FLF2V, set both `image` and `last_image`, and keep the
       "bnb_4bit_use_double_quant": false
     }
   }
+}
+```
+
+### 32 GB / 80 GB — T2V — `Wan-AI/Wan2.2-T2V-A14B-Diffusers` BitsAndBytes NF4
+
+Do not use this A14B stack on 24 GB.
+
+```json
+{
+  "version": "3.8.0",
+  "base_model": {"name": "Wan-AI/Wan2.2-T2V-A14B-Diffusers"},
+  "dtype": "bfloat16",
+  "prompt": "Two anthropomorphic cats in comfy boxing gear fight on a spotlighted stage, dynamic camera orbit, cinematic lighting",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, extra limbs, frozen frame, cluttered background",
+  "task_config": {
+    "width": 832,
+    "height": 480,
+    "num_frames": 81,
+    "fps": 16,
+    "steps": 40,
+    "seed": 0,
+    "guidance_scale": 4.0
+  },
+  "pipeline_args": {"guidance_scale_2": 3.0},
+  "quantization_config": {
+    "quant_method": "bitsandbytes",
+    "components_to_quantize": ["transformer", "transformer_2", "text_encoder"],
+    "quant_kwargs": {
+      "load_in_4bit": true,
+      "bnb_4bit_quant_type": "nf4",
+      "bnb_4bit_compute_dtype": "bfloat16",
+      "bnb_4bit_use_double_quant": false
+    }
+  }
+}
+```
+
+### 32 GB / 80 GB — I2V — `Wan-AI/Wan2.2-I2V-A14B-Diffusers` BitsAndBytes NF4
+
+```json
+{
+  "version": "3.8.0",
+  "base_model": {"name": "Wan-AI/Wan2.2-I2V-A14B-Diffusers"},
+  "dtype": "bfloat16",
+  "prompt": "The camera slowly pushes in while the subject turns to smile",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, frozen frame, cluttered background",
+  "image": "data:image/png;base64,...",
+  "task_config": {
+    "width": 832,
+    "height": 480,
+    "num_frames": 81,
+    "fps": 16,
+    "steps": 40,
+    "seed": 0,
+    "guidance_scale": 4.0
+  },
+  "pipeline_args": {"guidance_scale_2": 3.0},
+  "quantization_config": {
+    "quant_method": "bitsandbytes",
+    "components_to_quantize": ["transformer", "transformer_2", "text_encoder"],
+    "quant_kwargs": {
+      "load_in_4bit": true,
+      "bnb_4bit_quant_type": "nf4",
+      "bnb_4bit_compute_dtype": "bfloat16",
+      "bnb_4bit_use_double_quant": false
+    }
+  }
+}
+```
+
+### 32 GB / 80 GB — FLF2V — `Wan-AI/Wan2.2-I2V-A14B-Diffusers` BitsAndBytes NF4
+
+Same checkpoint as I2V-A14B; add `last_image`. On 32 GB you may also keep the 24 GB Wan2.1 FLF2V BitsAndBytes NF4 stack.
+
+```json
+{
+  "version": "3.8.0",
+  "base_model": {"name": "Wan-AI/Wan2.2-I2V-A14B-Diffusers"},
+  "dtype": "bfloat16",
+  "prompt": "Smooth continuous motion between the first and last frames, cinematic lighting",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, extra limbs, frozen frame, morphing face, sudden cut, discontinuous motion",
+  "image": "data:image/png;base64,...",
+  "last_image": "data:image/png;base64,...",
+  "task_config": {
+    "width": 832,
+    "height": 480,
+    "num_frames": 81,
+    "fps": 16,
+    "steps": 30,
+    "seed": 0,
+    "guidance_scale": 4.0
+  },
+  "pipeline_args": {"guidance_scale_2": 3.0},
+  "quantization_config": {
+    "quant_method": "bitsandbytes",
+    "components_to_quantize": ["transformer", "transformer_2", "text_encoder"],
+    "quant_kwargs": {
+      "load_in_4bit": true,
+      "bnb_4bit_quant_type": "nf4",
+      "bnb_4bit_compute_dtype": "bfloat16",
+      "bnb_4bit_use_double_quant": false
+    }
+  }
+}
+```
+
+### 96 GB — T2V — `Wan-AI/Wan2.2-T2V-A14B-Diffusers` bf16
+
+```json
+{
+  "version": "3.8.0",
+  "base_model": {"name": "Wan-AI/Wan2.2-T2V-A14B-Diffusers"},
+  "dtype": "bfloat16",
+  "prompt": "Two anthropomorphic cats in comfy boxing gear fight on a spotlighted stage, dynamic camera orbit, cinematic lighting",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, extra limbs, frozen frame, cluttered background",
+  "task_config": {
+    "width": 832,
+    "height": 480,
+    "num_frames": 49,
+    "fps": 16,
+    "steps": 40,
+    "seed": 0,
+    "guidance_scale": 4.0
+  },
+  "pipeline_args": {"guidance_scale_2": 3.0},
+  "quantization_config": null
+}
+```
+
+### 96 GB — I2V — `Wan-AI/Wan2.2-I2V-A14B-Diffusers` bf16
+
+```json
+{
+  "version": "3.8.0",
+  "base_model": {"name": "Wan-AI/Wan2.2-I2V-A14B-Diffusers"},
+  "dtype": "bfloat16",
+  "prompt": "The camera slowly pushes in while the subject turns to smile",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, frozen frame, cluttered background",
+  "image": "data:image/png;base64,...",
+  "task_config": {
+    "width": 832,
+    "height": 480,
+    "num_frames": 49,
+    "fps": 16,
+    "steps": 40,
+    "seed": 0,
+    "guidance_scale": 4.0
+  },
+  "pipeline_args": {"guidance_scale_2": 3.0},
+  "quantization_config": null
+}
+```
+
+### 96 GB — FLF2V — `Wan-AI/Wan2.2-I2V-A14B-Diffusers` bf16
+
+```json
+{
+  "version": "3.8.0",
+  "base_model": {"name": "Wan-AI/Wan2.2-I2V-A14B-Diffusers"},
+  "dtype": "bfloat16",
+  "prompt": "Smooth continuous motion between the first and last frames, cinematic lighting",
+  "negative_prompt": "oversaturated, overexposed, static, blurry, low quality, jpeg artifacts, deformed, extra limbs, frozen frame, morphing face, sudden cut, discontinuous motion",
+  "image": "data:image/png;base64,...",
+  "last_image": "data:image/png;base64,...",
+  "task_config": {
+    "width": 480,
+    "height": 832,
+    "num_frames": 81,
+    "fps": 16,
+    "steps": 30,
+    "seed": 0,
+    "guidance_scale": 4.0
+  },
+  "pipeline_args": {"guidance_scale_2": 3.0},
+  "quantization_config": null
 }
 ```
 
